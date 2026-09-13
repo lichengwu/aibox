@@ -5,10 +5,15 @@
 ## 安装 / 卸载 / 更新（经 aibox）
 
 ```bash
-aibox install pi-web        # 安装并启动服务
-aibox update pi-web         # 升级 npm 包并重启
-aibox uninstall pi-web      # 停服 + 清理 plist
+aibox install pi-web              # 安装并启动服务
+aibox update pi-web               # 有更新则询问是否重启（无更新不重启）
+aibox update pi-web --restart     # 有更新则直接重启，不询问
+aibox update pi-web --no-restart  # 有更新也不重启
+aibox update --all                # 更新所有已装模块
+aibox uninstall pi-web            # 停服 + 清理 plist
 ```
+
+`update` 先比对 `@agegr/pi-web` 已装版本与 npm latest：**无更新则一律不重启**（无论参数）；有更新则升级 npm 包并重写 plist，再按 `--restart`（直接重启）/ `--no-restart`（不重启）/ 无参数（交互询问 `[Y/n]`，非交互默认不重启）决定是否重启服务。
 
 ## 服务运维
 

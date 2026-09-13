@@ -21,7 +21,7 @@ aibox install pi-web
 ```
 aibox install <module>           安装模块
 aibox uninstall <module>         卸载模块
-aibox update <module> | --all    更新模块
+aibox update <module> [--restart|--no-restart] | --all   更新模块（无更新则不重启）
 aibox list                       已安装模块
 aibox list-available             可用模块
 aibox <module> <action> [args]   调用模块服务动作（如 aibox pi-web start）

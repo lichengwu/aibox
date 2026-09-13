@@ -10,9 +10,12 @@ PASSWORD="${PI_WEB_PASSWORD:-ai-coding}"
 BIND="${PI_WEB_BIND:-0.0.0.0}"
 UID_="$(id -u)"
 
-log()  { printf '\033[36m[pi-web]\033[0m %s\n' "$*"; }
+log() { printf '\033[36m[pi-web]\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m[!]\033[0m %s\n' "$*"; }
-die()  { printf '\033[31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
+die() {
+  printf '\033[31m[x]\033[0m %s\n' "$*" >&2
+  exit 1
+}
 
 # ---------- node 探测 ----------
 resolve_node() {
@@ -53,6 +56,7 @@ resolve_node() {
     fi
   fi
   log "node: $NODE_BIN ($($NODE_BIN -v))"
+  export PATH="$NODE_DIR:$PATH"
 }
 
 # ---------- 清理旧残留 ----------
@@ -69,7 +73,10 @@ cleanup_old() {
   # 端口占用兜底
   if command -v lsof >/dev/null 2>&1; then
     pids="$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)"
-    [ -n "$pids" ] && { warn "端口 $PORT 被 $pids 占用，杀之"; echo "$pids" | xargs kill -9 2>/dev/null || true; }
+    [ -n "$pids" ] && {
+      warn "端口 $PORT 被 $pids 占用，杀之"
+      echo "$pids" | xargs kill -9 2>/dev/null || true
+    }
   fi
   sleep 1
 }
@@ -79,7 +86,7 @@ write_plist() {
   local pi_bin="$NODE_DIR/pi-web"
   [ ! -x "$pi_bin" ] && die "未找到 $pi_bin，请确认 npm i -g @agegr/pi-web 已成功"
   mkdir -p "$LOG_DIR" "$(dirname "$PLIST")"
-  cat > "$PLIST" <<EOF
+  cat >"$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
