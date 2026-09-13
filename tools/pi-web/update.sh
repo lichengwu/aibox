@@ -45,7 +45,7 @@ case "$restart_arg" in
     do_restart=0
   fi
   ;;
-*) die "未知参数: $restart_arg（可用 --restart | --no-restart）" ;;
+*) die "未知参数: ${restart_arg}（可用 --restart | --no-restart）" ;;
 esac
 
 if [ "$do_restart" = "1" ]; then

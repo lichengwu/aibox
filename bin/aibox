@@ -79,7 +79,7 @@ installed_names() {
 download_module() {
   local name="$1" dir files f
   load_registry
-  module_exists "$name" || die "未知模块: $name（aibox list-available 查看可用模块）"
+  module_exists "$name" || die "未知模块: ${name}（aibox list-available 查看可用模块）"
   dir="$(module_field "$name" dir)"
   files="$(module_field "$name" files)"
   [ -n "$dir" ] || die "模块 $name 缺少 dir 字段"
@@ -100,7 +100,7 @@ cmd_install() {
   local dest="$AIBOX_LAST_DEST"
   local plat; plat="$(module_field "$name" platform)"
   if [ -n "$plat" ] && [ "$plat" != "$(uname -s | tr '[:upper:]' '[:lower:]')" ]; then
-    warn "模块 $name 目标平台 $plat，当前 $(uname -s)（继续可能有错）"
+    warn "模块 $name 目标平台 ${plat}，当前 $(uname -s)（继续可能有错）"
   fi
   local inst; inst="$(module_field "$name" install)"
   log "安装 $name ..."
@@ -139,7 +139,7 @@ cmd_update() {
   [ -n "$name" ] || die "用法: aibox update <module> [--restart|--no-restart] | --all"
   shift
   is_installed "$name" || die "$name 未安装"
-  log "更新 $name（重新拉取模块脚本）..."
+  log "更新 ${name}（重新拉取模块脚本）..."
   download_module "$name"
   local dest="$AIBOX_LAST_DEST"
   local upd; upd="$(module_field "$name" update)"
@@ -171,7 +171,7 @@ cmd_list() {
 
 cmd_list_available() {
   load_registry
-  echo "可用模块（registry @ $AIBOX_BRANCH）："
+  echo "可用模块（registry @ ${AIBOX_BRANCH}）："
   local m desc ver inst
   for m in ${AIBOX_MODULES:-}; do
     desc="$(module_field "$m" description)"
@@ -187,13 +187,13 @@ cmd_module_action() {
   shift
   local action="${1:-}"
   if [ -z "$action" ]; then
-    echo "模块 $name。用法: aibox $name <action>"
+    echo "模块 ${name}。用法: aibox $name <action>"
     return
   fi
   shift
-  is_installed "$name" || die "$name 未安装（先: aibox install $name）"
+  is_installed "$name" || die "$name 未安装（先: aibox install ${name}）"
   local svc="$AIBOX_MOD_DIR/$name/svc.sh"
-  [ -f "$svc" ] || die "缺少 $svc（试 aibox update $name）"
+  [ -f "$svc" ] || die "缺少 ${svc}（试 aibox update ${name}）"
   AIBOX_MODULE="$name" bash "$svc" "$action" "$@"
 }
 

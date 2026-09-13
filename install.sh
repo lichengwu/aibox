@@ -44,7 +44,7 @@ if ! echo ":$PATH:" | grep -q ":$BIN_DIR:"; then
     log "$shell_rc 已含 ~/.local/bin，重开 shell 或 source 后生效"
   else
     printf '\n# aibox\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"$shell_rc"
-    log "已追加 PATH 到 $shell_rc，执行: source $shell_rc 或重开终端"
+    log "已追加 PATH 到 ${shell_rc}，执行: source $shell_rc 或重开终端"
   fi
 fi
 

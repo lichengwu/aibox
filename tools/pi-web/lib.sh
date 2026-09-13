@@ -84,7 +84,7 @@ cleanup_old() {
 # ---------- 生成 plist ----------
 write_plist() {
   local pi_bin="$NODE_DIR/pi-web"
-  [ ! -x "$pi_bin" ] && die "未找到 $pi_bin，请确认 npm i -g @agegr/pi-web 已成功"
+  [ ! -x "$pi_bin" ] && die "未找到 ${pi_bin}，请确认 npm i -g @agegr/pi-web 已成功"
   mkdir -p "$LOG_DIR" "$(dirname "$PLIST")"
   cat >"$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
