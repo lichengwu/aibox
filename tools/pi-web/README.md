@@ -9,7 +9,8 @@ aibox install pi-web              # 安装并启动服务
 aibox update pi-web               # 有更新则询问是否重启（无更新不重启）
 aibox update pi-web --restart     # 有更新则直接重启，不询问
 aibox update pi-web --no-restart  # 有更新也不重启
-aibox update --all                # 更新所有已装模块
+aibox update --all                # 更新所有已装模块 + aibox 自身
+aibox update pi-web --all         # 更新 pi-web + aibox 自身
 aibox uninstall pi-web            # 停服 + 清理 plist
 ```
 

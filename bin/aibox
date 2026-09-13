@@ -129,27 +129,41 @@ cmd_uninstall() {
 }
 
 cmd_update() {
-  local name="${1:-}"
-  if [ "$name" = "--all" ]; then
+  local name="" self_flag=0 restart_arg="" a
+  for a in "$@"; do
+    case "$a" in
+      --all)                  self_flag=1 ;;
+      --restart|--no-restart) restart_arg="$a" ;;
+      *)                      [ -z "$name" ] && name="$a" ;;
+    esac
+  done
+
+  if [ -n "$name" ]; then
+    is_installed "${name}" || die "${name} 未安装"
+    log "更新 ${name}（重新拉取模块脚本）..."
+    download_module "${name}"
+    local dest="$AIBOX_LAST_DEST" upd
+    upd="$(module_field "${name}" update)"
+    if [ -n "$upd" ] && [ -f "$dest/$upd" ]; then
+      # shellcheck disable=SC2086
+      AIBOX_MODULE="${name}" bash "$dest/$upd" ${restart_arg:+"$restart_arg"}
+    else
+      warn "无 update 钩子，已刷新脚本缓存"
+    fi
+    mark_installed "${name}" "$(module_field "${name}" version)"
+    log "${name} 已更新到 $(module_field "${name}" version)"
+  elif [ "$self_flag" = "1" ]; then
     log "更新所有已装模块 ..."
     local m
     for m in $(installed_names); do cmd_update "$m"; done
-    return
-  fi
-  [ -n "$name" ] || die "用法: aibox update <module> [--restart|--no-restart] | --all"
-  shift
-  is_installed "$name" || die "$name 未安装"
-  log "更新 ${name}（重新拉取模块脚本）..."
-  download_module "$name"
-  local dest="$AIBOX_LAST_DEST"
-  local upd; upd="$(module_field "$name" update)"
-  if [ -n "$upd" ] && [ -f "$dest/$upd" ]; then
-    AIBOX_MODULE="$name" bash "$dest/$upd" "$@"
   else
-    warn "无 update 钩子，已刷新脚本缓存"
+    die "用法: aibox update <module> [--restart|--no-restart] [--all] | --all"
   fi
-  mark_installed "$name" "$(module_field "$name" version)"
-  log "$name 已更新到 $(module_field "$name" version)"
+
+  if [ "$self_flag" = "1" ]; then
+    log "更新 aibox 主程序 ..."
+    cmd_self_update || warn "aibox 自身更新失败（网络？），模块已更新"
+  fi
 }
 
 cmd_list() {
