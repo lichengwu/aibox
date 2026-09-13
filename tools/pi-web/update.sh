@@ -34,18 +34,18 @@ write_plist
 # ---------- 决定是否重启 ----------
 do_restart=""
 case "$restart_arg" in
-  --restart)    do_restart=1 ;;
-  --no-restart) do_restart=0 ;;
-  "")
-    if [ -t 0 ]; then
-      read -r -p "更新完成，是否重启 pi-web 服务？[Y/n] " ans
-      case "${ans:-y}" in [nN]*) do_restart=0 ;; *) do_restart=1 ;; esac
-    else
-      warn "非交互环境且未指定 --restart/--no-restart，默认不重启"
-      do_restart=0
-    fi
-    ;;
-  *) die "未知参数: $restart_arg（可用 --restart | --no-restart）" ;;
+--restart) do_restart=1 ;;
+--no-restart) do_restart=0 ;;
+"")
+  if [ -t 0 ]; then
+    read -r -p "更新完成，是否重启 pi-web 服务？[Y/n] " ans
+    case "${ans:-y}" in [nN]*) do_restart=0 ;; *) do_restart=1 ;; esac
+  else
+    warn "非交互环境且未指定 --restart/--no-restart，默认不重启"
+    do_restart=0
+  fi
+  ;;
+*) die "未知参数: $restart_arg（可用 --restart | --no-restart）" ;;
 esac
 
 if [ "$do_restart" = "1" ]; then
