@@ -36,20 +36,6 @@ aibox self version | version | help
 | --- | --- |
 | [`pi-web`](tools/pi-web/README.md) | 把 `@agegr/pi-web` 部署为 macOS launchd 常驻服务（HTTP Basic Auth + 自动重启） |
 
-## 从 `pi-web-ctl` 迁移
-
-原 `pi-web-ctl` 单脚本已拆解为 `pi-web` 模块钩子，功能等价：
-
-| 原 `pi-web-ctl` | 现在 |
-| --- | --- |
-| `pi-web-ctl install` | `aibox install pi-web` |
-| `pi-web-ctl start` | `aibox pi-web start` |
-| `pi-web-ctl status` | `aibox pi-web status` |
-| `pi-web-ctl uninstall` | `aibox uninstall pi-web` |
-| `pi-web-ctl install-cli` | （删除，由 `aibox` 主 CLI 取代） |
-
-其余动作（`stop / restart / logs / diagnose`）同理：`aibox pi-web <action>`。
-
 ## 开发新模块
 
 模块 = `tools/<name>/` 目录 + 在 `registry.sh` 登记。钩子契约见 [`docs/module-spec.md`](docs/module-spec.md)。最小模块只需一个 `install.sh`。
