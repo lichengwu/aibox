@@ -13,6 +13,7 @@ bin/aibox            主 CLI（install.sh 下载到 ~/.local/bin/aibox）
 install.sh           bootstrap（curl|bash 安装 / 自更新，幂等）
 registry.sh          模块清单（shell-sourced 变量；模块名连字符→下划线）
 tools/<name>/        模块目录：lib.sh + install/uninstall/update/svc.sh
+                     现有：pi-web（macOS launchd 服务）、openmaic（Linux 部署主机的运维 CLI）
 docs/module-spec.md  模块钩子契约
 .github/workflows/   CI（release 自动化）
 ```
@@ -69,12 +70,38 @@ sed -n <行号>p <文件> | xxd   # 看变量名后是否紧跟 ef bc 8c 等全�
 LC_ALL=zh_CN.UTF-8 bash <脚本> # 用 UTF-8 locale 复现（C locale 复现不出）
 ```
 
+**自查一行**（正则要求非 ASCII 紧贴变量名才算命中）：
+
+```bash
+grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[，。、；：！？（）「」]' <文件>
+```
+
+### #2 下发到别的机器的脚本，别用 bash 4 专有语法
+
+**症状**：模块里 `svc.sh` 只是转发给下发的脚本，但在 macOS 上连 `--version` 都跑不起来，报
+`syntax error near unexpected token '>'`，看不出跟本机 bash 版本有关。
+
+**根因**：macOS 自带 bash 3.2，而脚本用了 bash 4 的 `exec {fd}>file`（自动分配文件描述符）
+语法。注意这属于**解析阶段**错误 —— 整个文件都执行不了，任何分支都进不去，所以不是"某个功能
+不可用"，而是"这个命令完全不存在"。
+
+**修复**：改用固定 fd（`exec 9>file` / `flock -n 9`）。若确实需要 bash 4+，那就必须保证脚本
+只在目标机器上被解析 —— 别让它出现在会在 macOS 上被 source 或执行的路径里。
+
+**为什么值得为"可解析"让步**：保持可解析，才能在不受支持的平台上给出明确提示
+（"此命令需要在 Linux 部署主机上运行"），而不是甩一个语法错误。参见 `tools/openmaic/openmaic`
+里的 `require_deploy_host`。
+
 ## 开发新模块
 
 1. 建 `tools/<name>/`，至少含 `install.sh`（钩子契约见 [`docs/module-spec.md`](docs/module-spec.md)）。
 2. 在 `registry.sh` 登记（模块名连字符 → 下划线，如 `pi-web` → `AIBOX_MODULE_pi_web_*`）。
 3. 如要服务常驻，实现 `svc.sh` 的 `start/stop/restart/status/logs/diagnose`。
 4. 模块脚本会被下载缓存到 `~/.aibox/modules/<name>/`，可复用 `lib.sh`。
+5. **安装落点要可覆盖**：从 `${AIBOX_BIN_DIR:-$HOME/.local/bin}` 起手，并提供一个本次任务专属的覆盖变量（如 `OPENMAIC_BIN_DIR`）—— 目标机器常想装到 `/usr/local/bin`。
+6. **`svc.sh` 是「动作入口」而不是「必须是守护进程」**：常驻服务（pi-web）用 `start/stop/restart`，纯 CLI 分发（openmaic）可以直接把动作透传给下发的命令。
+7. **平台差异只告警不硬拦**：安装本身通常跨平台（就是拷文件），真正跑不动的限制由脚本在执行时报清楚，比安装期拦截更少误伤。
+8. 本机是 macOS（bash 3.2），钩子必须兼容；钩子**下发给别的平台**的脚本则要注意别用 bash 4 语法 —— 见踩坑记录 #2。
 
 ## License
 

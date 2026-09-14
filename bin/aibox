@@ -23,6 +23,11 @@ AIBOX_BIN_DIR="${AIBOX_BIN_DIR:-$HOME/.local/bin}"
 AIBOX_VERSION="0.1.1"
 AIBOX_LAST_DEST=""
 
+# 注入给模块钩子（钩子契约见 docs/module-spec.md）。
+# 此前只在文档里写了会注入，实际只注入了 AIBOX_MODULE；这里补齐。
+# AIBOX_BIN_DIR 一并导出，模块才能把东西装到与主 CLI 相同的目录。
+export AIBOX_HOME AIBOX_RAW AIBOX_BIN_DIR
+
 log()  { printf '\033[36m[aibox]\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m[!]\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m[x]\033[0m %s\n' "$*" >&2; exit 1; }

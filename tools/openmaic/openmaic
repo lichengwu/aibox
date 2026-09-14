@@ -1,0 +1,1464 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  openmaic — OpenMAIC 统一运维 CLI
+#
+#  归属：aibox 模块 tools/openmaic（仓库 https://github.com/lichengwu/aibox）
+#  运行位置：**部署主机**（Linux，需 docker；默认部署目录 /opt/openmaic）
+#            由 `aibox install openmaic` 分发到目标主机，本仓库即为唯一源头。
+#  站点信息：不含任何硬编码地址。主机相关项（代理等）通过
+#            /etc/openmaic/openmaic.conf 或 OPENMAIC_* 环境变量传入。
+#
+#  设计约定
+#    * 一个入口：所有运维动作都通过 `openmaic <命令>` 完成
+#    * 统一退出码（见 EXIT_* 常量），可被监控系统消费
+#    * 危险操作默认要求交互确认；非交互环境必须显式 --yes
+#    * 全局支持 --dry-run / --json / --quiet / --no-color
+#    * 幂等：up / backup / doctor 可重复执行
+#    * 并发保护：upgrade / restore / down 持锁；backup 抢不到锁则跳过
+#    * 配置与运行时分离：/etc/openmaic 存密钥（可跨重装复用）
+#                          /opt/openmaic 存运行时产物（可整体清理）
+# =============================================================================
+set -uo pipefail
+
+OPENMAIC_CLI_VERSION="1.0.0"
+REPO="THU-MAIC/OpenMAIC"
+
+# ---------------------------------------------------------------- 退出码
+EXIT_OK=0            # 成功
+EXIT_ERR=1           # 通用运行错误
+EXIT_USAGE=2         # 用法错误
+EXIT_DEP=3           # 依赖缺失（docker / curl / git ...）
+EXIT_PRECHECK=4      # 前置校验失败（doctor 发现阻断问题）
+EXIT_ROLLED_BACK=10  # 升级失败但已自动回滚
+EXIT_MANUAL=20       # 失败且需人工介入
+EXIT_NOT_READY=30    # 服务未就绪（健康检查超时）
+EXIT_LOCKED=40       # 并发冲突（拿不到锁）
+EXIT_CANCELLED=50    # 用户取消
+
+# ---------------------------------------------------------------- 路径
+CONF_DIR="${OPENMAIC_CONF_DIR:-/etc/openmaic}"
+CONF_FILE="$CONF_DIR/openmaic.conf"
+PERSIST_BUILD="$CONF_DIR/env.build"
+PERSIST_RUNTIME="$CONF_DIR/env.runtime"
+
+BASE_DIR="${OPENMAIC_BASE_DIR:-/opt/openmaic}"
+
+# 配置文件可覆盖以下默认值（环境变量优先级最高）
+if [ -f "$CONF_FILE" ]; then
+  # shellcheck disable=SC1090
+  . "$CONF_FILE"
+fi
+
+APP_DIR="${OPENMAIC_APP_DIR:-$BASE_DIR/app}"
+BACKUP_DIR="${OPENMAIC_BACKUP_DIR:-$BASE_DIR/backups}"
+LOG_DIR="${OPENMAIC_LOG_DIR:-$BASE_DIR/logs}"
+STATE_DIR="${OPENMAIC_STATE_DIR:-$BASE_DIR/state}"
+RUN_DIR="${OPENMAIC_RUN_DIR:-$BASE_DIR/run}"
+
+HEALTH_URL="${OPENMAIC_HEALTH_URL:-http://127.0.0.1:3000/api/health}"
+HEALTH_TIMEOUT="${OPENMAIC_HEALTH_TIMEOUT:-300}"
+BACKUP_KEEP="${OPENMAIC_BACKUP_KEEP:-14}"
+BUILD_TIMEOUT_MAIN="${OPENMAIC_BUILD_TIMEOUT_MAIN:-3600}"
+BUILD_TIMEOUT_RENDER="${OPENMAIC_BUILD_TIMEOUT_RENDER:-2400}"
+# 源码拉取代理：部署主机若无法直连 GitHub，可在此指定 HTTP 代理（如 10.0.0.2:7897）。
+# 留空 = 不尝试代理通道，只用直连与公共镜像站。站点相关，故不给默认值。
+PROXY_HOST="${OPENMAIC_PROXY_HOST:-}"
+RENDER_ENABLED="${OPENMAIC_RENDER_ENABLED:-1}"
+
+C_TAG="$STATE_DIR/current-tag"
+P_TAG="$STATE_DIR/previous-tag"
+HISTORY="$STATE_DIR/upgrade-history.tsv"
+
+DB_USER="openmaic"
+DB_NAME="openmaic"
+SERVICE_APP="openmaic"
+
+# ---------------------------------------------------------------- 全局状态
+JSON_MODE=0
+QUIET=0
+ASSUME_YES=0
+DRY_RUN=0
+NO_COLOR=0
+[ -t 1 ] || NO_COLOR=1
+
+C_BOLD=''; C_RED=''; C_GRN=''; C_YEL=''; C_BLU=''; C_DIM=''; C_RST=''
+if [ "$NO_COLOR" = 0 ]; then
+  C_BOLD=$'\033[1m'; C_RED=$'\033[31m'; C_GRN=$'\033[32m'
+  C_YEL=$'\033[33m'; C_BLU=$'\033[36m'; C_DIM=$'\033[2m'; C_RST=$'\033[0m'
+fi
+
+# =============================================================================
+#  输出层
+# =============================================================================
+say()  { [ "$QUIET" = 1 ] || printf '%s\n' "$*"; }
+info() { [ "$QUIET" = 1 ] || printf '%s%s%s\n' "$C_BOLD" "$*" "$C_RST"; }
+ok()   { [ "$QUIET" = 1 ] || printf '%s✔%s %s\n' "$C_GRN" "$C_RST" "$*"; }
+warn() { printf '%s!%s %s\n' "$C_YEL" "$C_RST" "$*" >&2; }
+err()  { printf '%s✘%s %s\n' "$C_RED" "$C_RST" "$*" >&2; }
+dim()  { [ "$QUIET" = 1 ] || printf '%s%s%s\n' "$C_DIM" "$*" "$C_RST"; }
+step() { [ "$QUIET" = 1 ] || printf '\n%s▸ %s%s\n' "$C_BLU" "$*" "$C_RST"; }
+hint() { [ "$QUIET" = 1 ] || printf '  %s%s%s\n' "$C_DIM" "$*" "$C_RST"; }
+ts()   { date '+%F %T'; }
+
+json_escape() {
+  local s="$1"
+  s=${s//\\/\\\\}; s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}; s=${s//$'\t'/\\t}; s=${s//$'\r'/}
+  printf '%s' "$s"
+}
+
+human_dur() {
+  local s="${1:-0}"
+  if   [ "$s" -lt 60 ];    then echo "${s}秒"
+  elif [ "$s" -lt 3600 ];  then echo "$((s/60))分$((s%60))秒"
+  elif [ "$s" -lt 86400 ]; then echo "$((s/3600))小时$((s%3600/60))分"
+  else echo "$((s/86400))天$((s%86400/3600))小时"; fi
+}
+
+human_size() {
+  local k="${1:-0}"
+  if   [ "$k" -lt 1024 ];      then echo "${k}K"
+  elif [ "$k" -lt 1048576 ];   then echo "$((k/1024))M"
+  else echo "$((k/1048576))G"; fi
+}
+
+# =============================================================================
+#  工具层
+# =============================================================================
+require_cmd() {
+  local missing=0 c
+  for c in "$@"; do
+    command -v "$c" >/dev/null 2>&1 || { err "缺少命令：$c"; missing=1; }
+  done
+  [ "$missing" = 0 ] || return "$EXIT_DEP"
+}
+
+# 需要「部署主机」环境的命令 —— 它们读取 $APP_DIR 的运行时状态或通过 docker compose 操作它。
+# 其余命令（help / version / doctor / health / models / backup list / backup verify / completion）
+# 在任何平台都可用，因此在 Mac 等非 Linux 机器上仍能查阅与自检。
+NEEDS_HOST_CMDS="status url powerlog up down restart logs render upgrade rollback restore db install clean shell"
+
+require_deploy_host() {
+  local cmd="$1"
+  [ "$(uname -s)" = "Linux" ] && return 0
+  err "命令 ${cmd} 需要在部署主机上运行（当前系统：$(uname -s)）"
+  hint "本 CLI 面向 Linux 部署主机：需要 docker compose 与 ${APP_DIR}"
+  hint "在 Mac 上可用的只读命令：help / version / doctor / health / models"
+  return "$EXIT_DEP"
+}
+
+ensure_dirs() {
+  mkdir -p "$BACKUP_DIR" "$LOG_DIR" "$STATE_DIR" "$RUN_DIR" 2>/dev/null || true
+}
+
+# 有副作用命令的统一出口（--dry-run 时只打印）
+run() {
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '  %s[dry-run]%s %s\n' "$C_DIM" "$C_RST" "$*"
+    return 0
+  fi
+  "$@"
+}
+
+# 危险操作确认；非交互 + 未给 --yes 时直接拒绝（不挂起等待输入）
+confirm() {
+  local prompt="$1"
+  if [ "$ASSUME_YES" = 1 ]; then
+    dim "  --yes 已指定，跳过确认：$prompt"
+    return 0
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '  %s[dry-run]%s 将询问：%s\n' "$C_DIM" "$C_RST" "$prompt"
+    return 0
+  fi
+  if [ ! -t 0 ]; then
+    err "非交互环境，拒绝执行危险操作（如需强制执行请加 --yes）"
+    return "$EXIT_USAGE"
+  fi
+  printf '%s%s%s [y/N] ' "$C_YEL" "$prompt" "$C_RST"
+  local ans=""
+  read -r ans || ans=""
+  case "$ans" in
+    y|Y|yes|YES) return 0 ;;
+    *) warn "已取消"; return "$EXIT_CANCELLED" ;;
+  esac
+}
+
+# 并发锁：拿不到锁返回 EXIT_LOCKED
+# 用固定 fd 9，而不是 bash 4 的 `exec {fd}>` 语法 —— 后者会让本文件在 macOS 自带
+# bash 3.2 下**解析阶段**就失败，连 `--help` 都跑不起来。目标运行环境是 Linux bash 5，
+# 但保持「可解析」才能在不支持的平台上给出清楚提示而不是语法错误。
+with_lock() {
+  local wait_mode="${1:-nowait}"; shift
+  ensure_dirs
+  exec 9>"$RUN_DIR/openmaic.lock" || return "$EXIT_ERR"
+  if [ "$wait_mode" = "try" ]; then
+    flock -n 9 || { err "另一项运维操作正在进行，已跳过"; return "$EXIT_LOCKED"; }
+  else
+    flock -n 9 || { err "另一项运维操作正在进行，请稍后再试"; return "$EXIT_LOCKED"; }
+  fi
+  "$@"
+  local rc=$?
+  exec 9>&- 2>/dev/null || true
+  return $rc
+}
+
+# =============================================================================
+#  服务层
+# =============================================================================
+compose_profiles() {
+  printf -- '--profile server-persistence'
+  if [ "$RENDER_ENABLED" = 1 ]; then printf -- ' --profile video-export'; fi
+  return 0
+}
+
+compose() {
+  ( cd "$APP_DIR" || exit 1
+    # shellcheck disable=SC2046
+    docker compose $(compose_profiles) "$@" )
+}
+
+# 带超时的调用 —— 网络被墙时 docker build 会静默挂起而非报错，必须有上限
+compose_timed() {
+  local secs="$1"; shift
+  ( cd "$APP_DIR" || exit 1
+    # shellcheck disable=SC2046
+    timeout "$secs" docker compose $(compose_profiles) "$@" )
+}
+
+run_logged() {
+  local name="$1"; shift
+  local stamp logf
+  stamp=$(date +%Y%m%d-%H%M%S)
+  logf="$LOG_DIR/${stamp}-${name}.log"
+  ensure_dirs
+  log "→ ${name}（日志 ${logf}）"
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '  %s[dry-run]%s %s\n' "$C_DIM" "$C_RST" "$*"
+    return 0
+  fi
+  local rc=0
+  "$@" >"$logf" 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ]; then ok "$name 完成"; return 0; fi
+  if [ "$rc" -eq 124 ]; then
+    err "$name 超时被中止"
+    hint "排查：确认本地补丁在位 → grep -- '--registry=' \"$APP_DIR/render-service/Dockerfile\""
+    hint "构建日志：$logf"
+    return 1
+  fi
+  err "$name 失败，末尾 30 行："
+  tail -n 30 "$logf" >&2
+  return 1
+}
+
+log() { [ "$QUIET" = 1 ] || printf '%s[%s]%s %s\n' "$C_DIM" "$(ts)" "$C_RST" "$*"; }
+
+health_ok()   { curl -fsS --max-time 8 "$HEALTH_URL" >/dev/null 2>&1; }
+health_body() { curl -fsS --max-time 8 "$HEALTH_URL" 2>/dev/null || echo '{}'; }
+
+wait_health() {
+  local limit="${1:-$HEALTH_TIMEOUT}" waited=0
+  info "等待服务就绪（上限 ${limit}s）..."
+  while [ "$waited" -lt "$limit" ]; do
+    if health_ok; then ok "服务已就绪（${waited}s）"; return 0; fi
+    sleep 5; waited=$((waited+5))
+    [ $((waited % 30)) -eq 0 ] && dim "  ...已等待 ${waited}s"
+  done
+  err "等待超时：服务未就绪"
+  return "$EXIT_NOT_READY"
+}
+
+current_tag() {
+  if [ -f "$C_TAG" ]; then cat "$C_TAG"; return; fi
+  ( cd "$APP_DIR" 2>/dev/null && git describe --tags --always 2>/dev/null ) || echo "unknown"
+}
+
+previous_tag() { [ -f "$P_TAG" ] && cat "$P_TAG" || echo ""; }
+
+current_commit() { ( cd "$APP_DIR" 2>/dev/null && git rev-parse --short HEAD 2>/dev/null ) || echo "unknown"; }
+
+latest_tag() {
+  local api="https://api.github.com/repos/$REPO/releases/latest" out=""
+  out=$(curl -fsS --max-time 20 "$api" 2>/dev/null) || out=""
+  if [ -z "$out" ] && [ -n "$PROXY_HOST" ]; then
+    out=$(curl -fsS --max-time 25 -x "http://$PROXY_HOST" "$api" 2>/dev/null) || out=""
+  fi
+  [ -n "$out" ] || return 1
+  printf '%s' "$out" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
+    | sed -E 's/.*"([^"]*)"$/\1/'
+}
+
+# 多通道 fallback 拉取源码。代理通道仅在 PROXY_HOST 非空时尝试。
+git_fetch_tag() {
+  local tag="$1" url
+  if [ -n "$PROXY_HOST" ]; then
+    url="https://github.com/$REPO.git"
+    log "通道：直连（经代理 ${PROXY_HOST}）"
+    if ( cd "$APP_DIR" && env "https_proxy=http://$PROXY_HOST" "http_proxy=http://$PROXY_HOST" \
+           GIT_TERMINAL_PROMPT=0 git fetch --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
+  fi
+  log "通道：直连（无代理）"
+  url="https://github.com/$REPO.git"
+  if ( cd "$APP_DIR" && GIT_TERMINAL_PROMPT=0 git fetch --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
+
+  local base
+  for base in "https://ghproxy.net/https://github.com" "https://gh-proxy.com/https://github.com"; do
+    url="$base/$REPO.git"
+    log "通道：$base"
+    if ( cd "$APP_DIR" && GIT_TERMINAL_PROMPT=0 git fetch --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
+  done
+  return 1
+}
+
+# git checkout --force 会覆盖本地改动，因此每次检出后必须重建补丁
+apply_local_patches() {
+  local f="$APP_DIR/render-service/Dockerfile"
+  [ -f "$f" ] || { warn "找不到 ${f}，跳过补丁"; return 0; }
+
+  if grep -q -- '--registry=' "$f"; then
+    dim "  补丁已在位，跳过"
+    return 0
+  fi
+  if ! grep -qE '^RUN npm ci' "$f"; then
+    err "上游 npm ci 行格式已变化，拒绝静默修改 —— 请人工检查 $f"
+    hint "期望匹配：RUN npm ci ... ；实际未找到"
+    return 1
+  fi
+
+  if [ "$DRY_RUN" = 1 ]; then
+    dim "  [dry-run] 将重建 render-service npm 镜像源补丁"
+    return 0
+  fi
+
+  cp -a "$f" "$f.bak"
+  if ! grep -qE '^COPY package\.json package-lock\.json \./' "$f"; then
+    err "上游 Dockerfile 的 COPY 行格式已变化，拒绝静默修改 —— 需人工检查"
+    mv -f "$f.bak" "$f"
+    return 1
+  fi
+  # 1) 在 COPY package.json / package-lock.json 之后注入 ARG
+  sed -i '/^COPY package\.json package-lock\.json \.\//a ARG NPM_REGISTRY=https://registry.npmmirror.com' "$f"
+  # 2) 给 npm ci 追加 registry 参数
+  sed -i -E 's#^(RUN npm ci.*)$#\1 --registry=${NPM_REGISTRY}#' "$f"
+
+  if grep -q -- '--registry=${NPM_REGISTRY}' "$f"; then
+    ok "已重建 render-service 补丁"
+    rm -f "$f.bak"
+    return 0
+  fi
+  err "补丁重建失败，已还原"
+  mv -f "$f.bak" "$f"
+  return 1
+}
+
+sync_config_to_persist() {
+  [ "$DRY_RUN" = 1 ] && { dim "  [dry-run] 将同步配置到 $CONF_DIR"; return 0; }
+  mkdir -p "$CONF_DIR"
+  [ -f "$APP_DIR/.env" ]       && cp -a "$APP_DIR/.env"       "$PERSIST_BUILD"
+  [ -f "$APP_DIR/.env.local" ] && cp -a "$APP_DIR/.env.local" "$PERSIST_RUNTIME"
+  chmod 600 "$PERSIST_BUILD" "$PERSIST_RUNTIME" 2>/dev/null || true
+  return 0
+}
+
+restore_config_from_persist() {
+  mkdir -p "$CONF_DIR"
+  local restored=0
+  if [ ! -f "$APP_DIR/.env" ] && [ -f "$PERSIST_BUILD" ]; then
+    cp -a "$PERSIST_BUILD" "$APP_DIR/.env"; chmod 600 "$APP_DIR/.env"; restored=1
+  fi
+  if [ ! -f "$APP_DIR/.env.local" ] && [ -f "$PERSIST_RUNTIME" ]; then
+    cp -a "$PERSIST_RUNTIME" "$APP_DIR/.env.local"; chmod 600 "$APP_DIR/.env.local"; restored=1
+  fi
+  [ "$restored" = 1 ] && ok "已从 $CONF_DIR 复用持久化配置"
+  return 0
+}
+
+mask_file() {
+  local f="$1"
+  [ -f "$f" ] || { warn "找不到 $f"; return 0; }
+  grep -vE '^\s*#|^\s*$' "$f" \
+    | sed -E 's/(TOKEN=)(.{0,6}).*/\1\2***/;
+              s/(API_KEY=)(.{0,5}).*/\1\2***/;
+              s/(PASSWORD=)(.{0,3}).*/\1\2***/;
+              s/(ACCESS_CODE=)(.{0,3}).*/\1\2***/;
+              s#(postgres://openmaic:)[^@]*#\1***#'
+}
+
+# 从备份文件名解析来源标签（供 backup list 显示）
+backup_source() {
+  local b="${1##*/}"
+  b="${b#pg-}"; b="${b%.sql.gz}"
+  b=$(printf '%s' "$b" | sed -E 's/-[0-9]{8}-[0-9]{6}$//')
+  case "$b" in
+    manual)       printf '手动' ;;
+    daily)        printf '旧·定时' ;;
+    prerestore)   printf '恢复前' ;;
+    preupgrade-*) printf '升级前' ;;
+    *)            printf '%s' "$b" ;;
+  esac
+}
+
+# 备份。第一个参数是来源标签，用于文件名，便于事后分辨这份备份从哪来：
+#   manual      手动 openmaic backup
+#   preupgrade  升级前自动（带目标版本号）
+#   prerestore  恢复前自动
+# 注：本机不设定时备份（由 VM 级整体备份覆盖），故不再使用 pg-daily- 前缀；
+#     轮转仍用 pg-*.sql.gz 通配，旧文件不受影响。
+do_backup_inner() {
+  require_deploy_host backup || return $?
+  ensure_dirs
+  local label="${1:-manual}" stamp out total
+  stamp=$(date +%Y%m%d-%H%M%S)
+  out="$BACKUP_DIR/pg-${label}-$stamp.sql.gz"
+
+  if ! compose ps --status running --services 2>/dev/null | grep -qx postgres; then
+    err "postgres 未运行，跳过备份"
+    return 1
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    dim "  [dry-run] 将备份到 $out"
+    return 0
+  fi
+  if compose exec -T postgres pg_dump -U "$DB_USER" -d "$DB_NAME" 2>/dev/null | gzip >"$out"; then
+    if [ -s "$out" ] && gzip -t "$out" 2>/dev/null; then
+      ok "备份成功 $(basename "$out")（$(human_size "$(du -k "$out" | cut -f1)")）"
+    else
+      err "备份文件无效，已删除"; rm -f "$out"; return 1
+    fi
+  else
+    err "pg_dump 失败"; rm -f "$out"; return 1
+  fi
+
+  total=$(ls -1 "$BACKUP_DIR"/pg-*.sql.gz 2>/dev/null | wc -l | tr -d ' ')
+  if [ "${total:-0}" -gt "$BACKUP_KEEP" ]; then
+    ls -1t "$BACKUP_DIR"/pg-*.sql.gz | tail -n +$((BACKUP_KEEP + 1)) | while read -r old; do
+      dim "  清理旧备份 $(basename "$old")"; rm -f "$old"
+    done
+  fi
+  return 0
+}
+
+# =============================================================================
+#  命令：诊断与自检
+# =============================================================================
+cmd_status() {
+  local tag commit body
+  tag=$(current_tag); commit=$(current_commit); body=$(health_body)
+
+  if [ "$JSON_MODE" = 1 ]; then
+    local healthy="false"
+    health_ok && healthy="true"
+    printf '{"command":"status","tag":"%s","commit":"%s","healthy":%s,"health":%s,"containers":[%s]}\n' \
+      "$(json_escape "$tag")" "$(json_escape "$commit")" "$healthy" \
+      "$body" \
+      "$(compose ps --format json 2>/dev/null | paste -sd, - || true)"
+    return 0
+  fi
+
+  info "OpenMAIC 状态"
+  printf '  版本    %s  (%s)\n' "$tag" "$commit"
+  printf '  地址    http://%s:3000\n' "$(hostname -I 2>/dev/null | awk '{print $1}')"
+  printf '  健康    '
+  if health_ok; then printf '%s正常%s  %s\n' "$C_GRN" "$C_RST" "$body"; else printf '%s异常%s\n' "$C_RED" "$C_RST"; fi
+  printf '  渲染    '
+  if compose ps --status running --services 2>/dev/null | grep -qx render-service; then
+    printf '%s运行中%s（约占 8G 内存）\n' "$C_GRN" "$C_RST"
+  else
+    printf '%s已停止%s（视频导出降级为 ZIP）\n' "$C_DIM" "$C_RST"
+  fi
+  echo
+  info "容器"
+  compose ps 2>/dev/null
+  echo
+  info "资源"
+  docker stats --no-stream --format "  {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" 2>/dev/null | head -6
+  return 0
+}
+
+cmd_health() {
+  local wait=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --wait) wait="${2:-$HEALTH_TIMEOUT}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [ "$wait" -gt 0 ]; then wait_health "$wait"; return $?; fi
+  local body; body=$(health_body)
+  if health_ok; then
+    if [ "$JSON_MODE" = 1 ]; then
+      printf '{"healthy":true,"health":%s}\n' "$body"
+    else
+      ok "健康"; say "$body"
+    fi
+    return 0
+  fi
+  if [ "$JSON_MODE" = 1 ]; then printf '{"healthy":false}\n'; else err "健康检查失败"; fi
+  return "$EXIT_NOT_READY"
+}
+
+cmd_doctor() {
+  local issues=0 warns=0
+  info "OpenMAIC 环境自检"
+  if [ "$(uname -s)" != "Linux" ]; then
+    hint "当前系统 $(uname -s) 不是部署主机 —— 下方目录/容器类检查普遍不通过属预期，只作参考"
+  fi
+
+  chk_ok()   { printf '  %s✔%s %-28s %s\n' "$C_GRN" "$C_RST" "$1" "${2:-}"; }
+  chk_warn() { printf '  %s!%s %-28s %s\n' "$C_YEL" "$C_RST" "$1" "${2:-}"; warns=$((warns+1)); }
+  chk_bad()  { printf '  %s✘%s %-28s %s\n' "$C_RED" "$C_RST" "$1" "${2:-}"; issues=$((issues+1)); }
+
+  echo; info "运行时"
+  command -v docker >/dev/null 2>&1 && chk_ok "docker" "$(docker --version 2>/dev/null | cut -d, -f1)" || chk_bad "docker" "未安装"
+  docker info >/dev/null 2>&1 && chk_ok "docker daemon" "运行中" || chk_bad "docker daemon" "未运行"
+  command -v curl >/dev/null 2>&1 && chk_ok "curl" || chk_bad "curl" "未安装"
+  command -v git  >/dev/null 2>&1 && chk_ok "git"  || chk_warn "git" "未安装（升级会失败）"
+  command -v flock >/dev/null 2>&1 && chk_ok "flock" || chk_warn "flock" "未安装（无并发保护）"
+
+  echo; info "目录与配置"
+  for d in "$APP_DIR" "$BACKUP_DIR" "$LOG_DIR"; do
+    [ -d "$d" ] && chk_ok "$d" "存在" || chk_warn "$d" "不存在"
+  done
+  for d in "$STATE_DIR" "$RUN_DIR"; do
+    [ -d "$d" ] && chk_ok "$d" "存在" || chk_ok "$d" "按需创建"
+  done
+  [ -f "$APP_DIR/.env" ]       && chk_ok ".env" "存在" || chk_bad ".env" "缺失（构建参数不可用）"
+  [ -f "$APP_DIR/.env.local" ] && chk_ok ".env.local" "存在" || chk_bad ".env.local" "缺失（运行时配置不可用）"
+  for f in "$APP_DIR/.env" "$APP_DIR/.env.local"; do
+    if [ -f "$f" ]; then
+      local perm; perm=$(stat -c '%a' "$f" 2>/dev/null || echo "?")
+      [ "$perm" = "600" ] && chk_ok "$(basename "$f") 权限" "600" || chk_warn "$(basename "$f") 权限" "${perm}（建议 600）"
+    fi
+  done
+
+  echo; info "网络与源"
+  local dns_ok=1 n
+  for n in dashscope.aliyuncs.com registry.npmmirror.com; do
+    if getent hosts "$n" >/dev/null 2>&1 || nslookup "$n" >/dev/null 2>&1; then :; else dns_ok=0; fi
+  done
+  [ "$dns_ok" = 1 ] && chk_ok "DNS 解析" "域名可解析" || chk_bad "DNS 解析" "解析失败（检查 /etc/resolv.conf）"
+
+  if [ -f /etc/docker/daemon.json ]; then
+    grep -q '"dns"' /etc/docker/daemon.json \
+      && chk_ok "docker daemon.json dns" "$(grep -o '"dns": *\[[^]]*\]' /etc/docker/daemon.json | head -1)" \
+      || chk_warn "docker daemon.json dns" "未固定 DNS，构建容器可能继承不可用解析器"
+    grep -q 'registry-mirrors' /etc/docker/daemon.json \
+      && chk_ok "docker registry-mirrors" "已配置" \
+      || chk_warn "docker registry-mirrors" "未配置（拉取镜像可能超时）"
+  else
+    chk_warn "/etc/docker/daemon.json" "不存在"
+  fi
+
+  # 注意：不能加 curl -f —— 根路径可能返回非 2xx，会把"网络可达"误判为"不可达"
+  local http_code
+  http_code=$(curl -sS --max-time 6 -o /dev/null -w '%{http_code}' https://dashscope.aliyuncs.com 2>/dev/null || echo "000")
+  if [ "$http_code" != "000" ]; then
+    chk_ok "百炼连通性" "可达（HTTP ${http_code}）"
+  else
+    chk_bad "百炼连通性" "不可达（模型调用会失败）"
+  fi
+
+  if [ -f "$APP_DIR/render-service/Dockerfile" ]; then
+    grep -q -- '--registry=' "$APP_DIR/render-service/Dockerfile" \
+      && chk_ok "render-service npm 补丁" "在位" \
+      || chk_bad "render-service npm 补丁" "缺失（构建会静默挂起）"
+  fi
+
+  echo; info "系统资源"
+  # /proc/meminfo 与 df -k 均为 kB，human_size 亦以 kB 为输入
+  local avail_k total_k swap_k disk_k
+  avail_k=$(awk '/MemAvailable/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+  total_k=$(awk '/MemTotal/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+  swap_k=$(awk '/SwapTotal/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+  disk_k=$(df -k "$BASE_DIR" 2>/dev/null | awk 'NR==2{print $4}' || echo 0)
+  [ "$avail_k" -gt 2000000 ] && chk_ok "可用内存" "$(human_size "$avail_k") / $(human_size "$total_k")" \
+                             || chk_warn "可用内存" "$(human_size "$avail_k")（偏低）"
+  [ "$swap_k" -gt 1000000 ]  && chk_ok "Swap" "$(human_size "$swap_k")" \
+                             || chk_warn "Swap" "$(human_size "$swap_k")（建议 ≥4G）"
+  [ "$disk_k" -gt 5000000 ]  && chk_ok "磁盘可用" "$(human_size "$disk_k")" \
+                             || chk_warn "磁盘可用" "$(human_size "$disk_k")（偏低）"
+
+  echo; info "服务"
+  compose ps --status running --services 2>/dev/null | grep -qx "$SERVICE_APP" \
+    && chk_ok "应用容器" "运行中" || chk_bad "应用容器" "未运行"
+  compose ps --status running --services 2>/dev/null | grep -qx postgres \
+    && chk_ok "PostgreSQL" "运行中" || chk_bad "PostgreSQL" "未运行"
+  health_ok && chk_ok "健康检查" "$HEALTH_URL" || chk_bad "健康检查" "无响应"
+
+  echo; info "备份"
+  # 本机刻意不设定时备份（由 VM 级整体备份覆盖）。此处只做状态告知，
+  # 因此两种情况都记为 ok —— 避免把「按设计不启用」误报成配置缺失。
+  local bk_cnt bk_fmt
+  bk_cnt=$(ls -1 "$BACKUP_DIR"/pg-*.sql.gz 2>/dev/null | wc -l | tr -d ' ')
+  bk_fmt=$(ls -1t "$BACKUP_DIR"/pg-*.sql.gz 2>/dev/null | head -1 || true)
+  if command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -q "openmaic.*backup"; then
+    chk_ok "定时备份" "已启用（cron）"
+  else
+    chk_ok "定时备份" "未启用（由 VM 级备份覆盖，符合预期）"
+  fi
+  chk_ok "现有备份" "${bk_cnt} 份${bk_fmt:+，最新 $(basename "$bk_fmt")}"
+
+  echo
+  if [ "$issues" -gt 0 ]; then
+    err "自检完成：$issues 项阻断性问题，$warns 项警告"
+    return "$EXIT_PRECHECK"
+  fi
+  [ "$warns" -gt 0 ] && { warn "自检完成：$warns 项警告，无阻断性问题"; return 0; }
+  ok "自检完成：全部通过"
+  return 0
+}
+
+_boot_end_mode() {
+  local id="$1"
+  if [ "$id" = "0" ]; then echo "running"; return 0; fi
+  if journalctl -b "$id" --no-pager 2>/dev/null \
+       | grep -qE "Journal stopped|Shutting down\.|systemd-shutdown\[1\]"; then
+    echo "clean"
+  else
+    echo "unclean"
+  fi
+}
+
+cmd_powerlog() {
+  local n=12 only_last=0
+  case "${1:-}" in
+    --last) only_last=1 ;;
+    ''|*[!0-9]*) ;;
+    *) n="$1" ;;
+  esac
+
+  # --last：只判定最近一次「已结束」的开机，供巡检脚本消费
+  #   退出码 0 = 正常关机 / 1 = 异常断电
+  if [ "$only_last" = 1 ]; then
+    local lf bid sd ed mode
+    lf=$(journalctl --list-boots --no-pager 2>/dev/null | grep -vE '^[[:space:]]*0[[:space:]]' | tail -1)
+    if [ -z "$lf" ]; then say "无历史开机记录"; return 0; fi
+    bid=$(awk '{print $1}' <<<"$lf")
+    sd=$(awk '{print $4" "$5}' <<<"$lf")
+    ed=$(awk '{print $8" "$9}' <<<"$lf")
+    mode=$(_boot_end_mode "$bid")
+    if [ "$mode" = "unclean" ]; then
+      printf '异常断电  %s → %s\n' "$sd" "$ed"
+      return 1
+    fi
+    printf '正常关机  %s → %s\n' "$sd" "$ed"
+    return 0
+  fi
+
+  info "开机记录分析 —— 异常断电检测"
+  printf '  主机 %s   生成时间 %s\n\n' "$(hostname)" "$(ts)"
+  printf '  %-5s %-17s %-17s %-12s %s\n' "BOOT" "启动" "结束" "运行时长" "结束方式"
+  echo "  ----------------------------------------------------------------------"
+
+  local unclean_count=0 line bid sd ed se ee dur mode label
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    bid=$(awk '{print $1}'  <<<"$line")
+    sd=$(awk '{print $4" "$5}' <<<"$line")
+    ed=$(awk '{print $8" "$9}' <<<"$line")
+    se=$(date -d "$sd" +%s 2>/dev/null || echo 0)
+    ee=$(date -d "$ed" +%s 2>/dev/null || echo 0)
+    dur=$(( ee - se )); [ "$dur" -lt 0 ] && dur=0
+    mode=$(_boot_end_mode "$bid")
+    case "$mode" in
+      running) label="${C_GRN}运行中${C_RST}" ;;
+      clean)   label="${C_GRN}正常关机${C_RST}" ;;
+      unclean) label="${C_RED}异常断电${C_RST}"; unclean_count=$((unclean_count+1)) ;;
+    esac
+    printf '  %-5s %-17s %-17s %-12s %b\n' "$bid" "$sd" "$ed" "$(human_dur "$dur")" "$label"
+  done < <(journalctl --list-boots --no-pager 2>/dev/null | tail -n "$n")
+
+  echo "  ----------------------------------------------------------------------"
+  printf '\n  统计（最近 %s 次）：异常断电 %s 次\n' "$n" "$unclean_count"
+
+  if [ "$unclean_count" -gt 0 ]; then
+    echo
+    hint "异常断电 = 关机瞬间无任何关机流程，等同被拔电源，原因通常在 PVE 宿主侧："
+    hint "  1. 宿主内存耗尽，OOM Killer 杀掉 QEMU 进程"
+    hint "  2. 有人在 PVE 点了「停止 / Stop」（强制断电）而非「关机」"
+    hint "  3. 宿主内核崩溃、重启或物理断电"
+    hint "在 PVE 宿主上排查："
+    hint "  dmesg -T | grep -iE 'out of memory|oom-kill|killed process'"
+    hint "  grep -iE 'qmstop|qmshutdown' /var/log/pve/tasks/index | tail -20"
+  fi
+  return 0
+}
+
+cmd_version() {
+  local check=0
+  [ "${1:-}" = "--check" ] && check=1
+  local cur; cur=$(current_tag)
+  if [ "$JSON_MODE" = 1 ]; then
+    local latest=""
+    [ "$check" = 1 ] && latest=$(latest_tag 2>/dev/null || true)
+    printf '{"command":"version","cli":"%s","current":"%s","commit":"%s","latest":"%s"}\n' \
+      "$OPENMAIC_CLI_VERSION" "$(json_escape "$cur")" "$(json_escape "$(current_commit)")" "$(json_escape "$latest")"
+    return 0
+  fi
+  printf '  CLI      %s\n' "$OPENMAIC_CLI_VERSION"
+  printf '  已部署   %s  (%s)\n' "$cur" "$(current_commit)"
+  [ "$check" = 0 ] && return 0
+  printf '  上游     '
+  local l; l=$(latest_tag) || { printf '%s检查失败（网络不可达）%s\n' "$C_YEL" "$C_RST"; return "$EXIT_ERR"; }
+  if [ "$l" = "$cur" ]; then printf '%s%s（已是最新）%s\n' "$C_GRN" "$l" "$C_RST"
+  else printf '%s%s（有新版本，执行 openmaic upgrade）%s\n' "$C_YEL" "$l" "$C_RST"; fi
+  return 0
+}
+
+# =============================================================================
+#  命令：服务生命周期
+# =============================================================================
+cmd_up() {
+  [ "${1:-}" = "--no-render" ] && RENDER_ENABLED=0
+  require_cmd docker || return $?
+  step "启动容器"
+  run compose up -d --remove-orphans || { err "启动失败"; return "$EXIT_ERR"; }
+  if [ "$DRY_RUN" = 1 ]; then hint "跳过健康检查（dry-run）"; return 0; fi
+  wait_health
+}
+
+cmd_down() {
+  step "停止容器"
+  confirm "确认停止全部 OpenMAIC 容器？" || return $?
+  if [ "$DRY_RUN" = 1 ]; then hint "将执行 docker compose down"; return 0; fi
+  with_lock nowait _down_body
+}
+
+_down_body() {
+  compose down || { err "停止失败"; return "$EXIT_ERR"; }
+  ok "已停止"
+  return 0
+}
+
+cmd_restart() {
+  local svc="${1:-$SERVICE_APP}"
+  step "重启 $svc"
+  if ! compose ps --status running --services 2>/dev/null | grep -qx "$svc"; then
+    hint "$svc 未运行，改为启动"
+    run compose up -d "$svc" || return "$EXIT_ERR"
+  else
+    run compose restart "$svc" || return "$EXIT_ERR"
+  fi
+  if [ "$DRY_RUN" = 1 ]; then hint "跳过健康检查（dry-run）"; return 0; fi
+  [ "$svc" = "$SERVICE_APP" ] && wait_health
+  return 0
+}
+
+cmd_logs() {
+  local follow=0 lines=200 svc="$SERVICE_APP"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -f|--follow) follow=1; shift ;;
+      -n) lines="$2"; shift 2 ;;
+      -*) shift ;;
+      *) svc="$1"; shift ;;
+    esac
+  done
+  if [ "$follow" = 1 ]; then compose logs -f --tail="$lines" "$svc"
+  else compose logs --tail="$lines" "$svc"; fi
+}
+
+cmd_render() {
+  case "${1:-}" in
+    on)
+      step "启动渲染服务"
+      RENDER_ENABLED=1
+      run compose up -d render-service || return "$EXIT_ERR"
+      ok "渲染服务已启动（内存上限约 8G）"
+      ;;
+    off)
+      step "停止渲染服务"
+      run compose stop render-service || return "$EXIT_ERR"
+      ok "渲染服务已停止（内存已释放，视频导出降级为 ZIP 下载）"
+      ;;
+    *) err "用法：openmaic render on|off"; return "$EXIT_USAGE" ;;
+  esac
+  return 0
+}
+
+# =============================================================================
+#  命令：升级与回滚
+# =============================================================================
+record_history() {
+  ensure_dirs
+  printf '%s\t%s\t%s\t%s\n' "$(ts)" "$1" "$2" "$3" >>"$HISTORY"
+}
+
+cmd_upgrade() {
+  local check=0 to="" 
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --check) check=1; shift ;;
+      --to) to="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  local cur; cur=$(current_tag)
+  if [ "$check" = 1 ]; then
+    local l; l=$(latest_tag) || { err "无法获取上游版本（网络不可达）"; return "$EXIT_ERR"; }
+    info "版本检查"
+    printf '  当前 %s\n  上游 %s\n' "$cur" "$l"
+    [ "$l" = "$cur" ] && ok "已是最新" || warn "有新版本可用"
+    return 0
+  fi
+
+  require_cmd docker git || return $?
+  with_lock nowait _upgrade_body "$cur" "$to"
+}
+
+_upgrade_body() {
+  local cur="$1" to="$2"
+  local target="$to"
+  if [ -z "$target" ]; then
+    target=$(latest_tag) || { err "无法获取上游最新版本（网络不可达）"; return "$EXIT_ERR"; }
+  fi
+
+  step "升级 $cur → $target"
+  if [ "$cur" = "$target" ]; then ok "已是目标版本，无需升级"; return 0; fi
+
+  if [ "$DRY_RUN" = 1 ]; then
+    hint "将执行：备份数据库 → 拉取 $target → 重建补丁 → 构建 → 切换 → 健康检查 → 失败自动回滚"
+    return 0
+  fi
+
+  # 1) 备份
+  step "1/6 备份数据库"
+  do_backup_inner "preupgrade-$target" || warn "备份失败，继续（升级前建议人工确认备份可用）"
+
+  # 2) 拉取源码
+  step "2/6 拉取源码 $target"
+  git_fetch_tag "$target" || { err "拉取失败（所有通道均不可用）"; return "$EXIT_ERR"; }
+  ( cd "$APP_DIR" && git checkout --force "$target" >/dev/null 2>&1 ) \
+    || { err "检出 $target 失败"; return "$EXIT_ERR"; }
+  ok "已检出 $target"
+
+  # 3) 重建补丁
+  step "3/6 重建本地补丁"
+  apply_local_patches || { err "补丁重建失败，已中止（未改动运行中的服务）"; return "$EXIT_ERR"; }
+
+  # 4) 构建
+  step "4/6 构建镜像（副镜像上限 $((BUILD_TIMEOUT_RENDER/60)) 分钟）"
+  if ! run_logged "build-render" compose_timed "$BUILD_TIMEOUT_RENDER" build render-service; then
+    err "副镜像构建失败，服务未切换"
+    ( cd "$APP_DIR" && git checkout --force "$cur" >/dev/null 2>&1 ) && apply_local_patches >/dev/null 2>&1
+    return "$EXIT_ERR"
+  fi
+  if ! run_logged "build-main" compose_timed "$BUILD_TIMEOUT_MAIN" build openmaic; then
+    err "主镜像构建失败，服务未切换"
+    ( cd "$APP_DIR" && git checkout --force "$cur" >/dev/null 2>&1 ) && apply_local_patches >/dev/null 2>&1
+    return "$EXIT_ERR"
+  fi
+
+  # 5) 切换
+  step "5/6 切换容器"
+  echo "$cur" >"$P_TAG"
+  echo "$target" >"$C_TAG"
+  compose up -d --remove-orphans || { err "容器切换失败"; return "$EXIT_MANUAL"; }
+
+  # 6) 健康检查（失败自动回滚）
+  step "6/6 健康检查"
+  if wait_health; then
+    ok "升级完成：$target"
+    record_history "$target" "ok" "from=$cur"
+    return 0
+  fi
+
+  err "健康检查失败，开始回滚到 $cur"
+  record_history "$target" "rolled-back" "from=$cur"
+  _rollback_body "$cur"
+  return "$EXIT_ROLLED_BACK"
+}
+
+cmd_rollback() {
+  local prev; prev=$(previous_tag)
+  [ -n "$prev" ] || { err "没有可回滚的版本记录"; return "$EXIT_ERR"; }
+  with_lock nowait _rollback_body "$prev"
+}
+
+_rollback_body() {
+  local target="$1"
+  step "回滚到 $target"
+  if [ "$DRY_RUN" = 1 ]; then hint "将检出 ${target}、重建补丁、构建、切换"; return 0; fi
+
+  ( cd "$APP_DIR" && git checkout --force "$target" >/dev/null 2>&1 ) \
+    || { err "检出 $target 失败"; return "$EXIT_MANUAL"; }
+  apply_local_patches || return "$EXIT_MANUAL"
+  run_logged "rollback-build-main" compose_timed "$BUILD_TIMEOUT_MAIN" build openmaic \
+    || return "$EXIT_MANUAL"
+  run_logged "rollback-build-render" compose_timed "$BUILD_TIMEOUT_RENDER" build render-service \
+    || warn "副镜像构建失败，仅切换主应用"
+
+  local cur; cur=$(current_tag)
+  echo "$cur" >"$P_TAG"
+  echo "$target" >"$C_TAG"
+  compose up -d --remove-orphans || return "$EXIT_MANUAL"
+  if wait_health; then
+    ok "已回滚到 $target"; record_history "$target" "rollback-ok" ""; return 0
+  fi
+  err "回滚后健康检查仍失败，需人工介入"
+  return "$EXIT_MANUAL"
+}
+
+cmd_upgrade_log() {
+  [ "${1:-}" = "log" ] && shift
+  local n=20
+  [ "${1:-}" = "-n" ] && n="${2:-20}"
+  if [ ! -f "$HISTORY" ]; then dim "暂无升级历史"; return 0; fi
+  info "升级历史（最近 $n 条）"
+  printf '  %-20s %-14s %-12s %s\n' "时间" "版本" "结果" "备注"
+  tail -n "$n" "$HISTORY" | while IFS=$'\t' read -r t v r note; do
+    printf '  %-20s %-14s %-12s %s\n' "$t" "$v" "$r" "$note"
+  done
+  return 0
+}
+
+# =============================================================================
+#  命令：数据与备份
+# =============================================================================
+cmd_backup() {
+  local sub="${1:-run}"
+  case "$sub" in
+    run|"")
+      require_cmd docker || return $?
+      step "备份数据库"
+      # 抢不到锁就跳过（避免与升级撞车）
+      if [ "$DRY_RUN" = 1 ]; then do_backup_inner manual; return $?; fi
+      with_lock try do_backup_inner manual
+      return $?
+      ;;
+    list)
+      local files; files=$(ls -1t "$BACKUP_DIR"/pg-*.sql.gz 2>/dev/null || true)
+      if [ -z "$files" ]; then dim "暂无备份"; return 0; fi
+      if [ "$JSON_MODE" = 1 ]; then
+        printf '['
+        local first=1 f
+        while read -r f; do
+          [ -z "$f" ] && continue
+          [ "$first" = 0 ] && printf ','
+          printf '{"file":"%s","source":"%s","bytes":%s,"mtime":"%s"}' \
+            "$(json_escape "$(basename "$f")")" "$(json_escape "$(backup_source "$f")")" \
+            "$(stat -c '%s' "$f")" "$(date -r "$f" '+%F %T')"
+          first=0
+        done <<<"$files"
+        printf ']\n'
+        return 0
+      fi
+      info "备份列表（保留最近 ${BACKUP_KEEP} 份；本机无定时备份）"
+      printf '  %-46s %-10s %-8s %s\n' "文件" "大小" "来源" "时间"
+      while read -r f; do
+        [ -z "$f" ] && continue
+        printf '  %-46s %-10s %-8s %s\n' "$(basename "$f")" \
+          "$(human_size "$(du -k "$f" | cut -f1)")" "$(backup_source "$f")" \
+          "$(date -r "$f" '+%F %T')"
+      done <<<"$files"
+      return 0
+      ;;
+    verify)
+      local f="${2:-}"
+      [ -n "$f" ] || { err "用法：openmaic backup verify <文件>"; return "$EXIT_USAGE"; }
+      [ -f "$f" ] || f="$BACKUP_DIR/$f"
+      [ -f "$f" ] || { err "找不到备份文件"; return "$EXIT_ERR"; }
+      gzip -t "$f" 2>/dev/null || { err "gzip 校验失败，文件已损坏"; return "$EXIT_ERR"; }
+      local tables; tables=$(gunzip -c "$f" 2>/dev/null | grep -c '^CREATE TABLE' || echo 0)
+      ok "校验通过：gzip 完整，含 ${tables} 张表定义"
+      return 0
+      ;;
+    *)
+      err "用法：openmaic backup [run|list|verify <文件>]"; return "$EXIT_USAGE" ;;
+  esac
+}
+
+cmd_restore() {
+  local f="${1:-}"
+  [ -n "$f" ] || { err "用法：openmaic restore <备份文件>"; return "$EXIT_USAGE"; }
+  [ -f "$f" ] || f="$BACKUP_DIR/$f"
+  [ -f "$f" ] || { err "找不到备份文件：$f"; return "$EXIT_ERR"; }
+  gzip -t "$f" 2>/dev/null || { err "备份文件损坏"; return "$EXIT_ERR"; }
+
+  warn "此操作将覆盖当前数据库（${DB_NAME}），且不可撤销"
+  confirm "确认从 $(basename "$f") 恢复数据库？" || return $?
+
+  step "恢复数据库"
+  if [ "$DRY_RUN" = 1 ]; then hint "将执行 gunzip -c $f | psql -U $DB_USER -d $DB_NAME"; return 0; fi
+
+  with_lock nowait _restore_body "$f"
+}
+
+_restore_body() {
+  local f="$1"
+  step "1/2 备份当前库（保险）"
+  do_backup_inner prerestore || warn "当前库备份失败，继续"
+  step "2/2 导入"
+  if gunzip -c "$f" | compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" >/dev/null 2>&1; then
+    ok "恢复完成"
+    return 0
+  fi
+  err "恢复失败，请人工检查"
+  return "$EXIT_MANUAL"
+}
+
+cmd_db() {
+  case "${1:-}" in
+    shell)
+      compose exec postgres psql -U "$DB_USER" -d "$DB_NAME" ;;
+    dump)
+      local table=""
+      [ "${2:-}" = "--table" ] && table="${3:-}"
+      if [ -n "$table" ]; then compose exec -T postgres pg_dump -U "$DB_USER" -d "$DB_NAME" -t "$table"
+      else compose exec -T postgres pg_dump -U "$DB_USER" -d "$DB_NAME"; fi
+      ;;
+    *) err "用法：openmaic db shell|dump [--table 表名]"; return "$EXIT_USAGE" ;;
+  esac
+}
+
+# =============================================================================
+#  命令：配置管理
+# =============================================================================
+config_file_for() {
+  case "${1:-local}" in
+    env|build) echo "$APP_DIR/.env" ;;
+    local|runtime) echo "$APP_DIR/.env.local" ;;
+    *) echo "" ;;
+  esac
+}
+
+cmd_config() {
+  local sub="${1:-show}"; shift || true
+  case "$sub" in
+    show)
+      local raw=0
+      [ "${1:-}" = "--raw" ] && raw=1
+      if [ "$raw" = 1 ]; then
+        confirm "确认显示未脱敏的完整配置（含密钥）？" || return $?
+        echo "=== .env ==="; cat "$APP_DIR/.env" 2>/dev/null
+        echo; echo "=== .env.local ==="; cat "$APP_DIR/.env.local" 2>/dev/null
+        return 0
+      fi
+      info "构建参数（.env，已脱敏）"; mask_file "$APP_DIR/.env"
+      echo; info "运行时配置（.env.local，已脱敏）"; mask_file "$APP_DIR/.env.local"
+      echo; hint "完整值：openmaic config show --raw"
+      return 0
+      ;;
+    get)
+      local key="${1:-}"
+      [ -n "$key" ] || { err "用法：openmaic config get <键>"; return "$EXIT_USAGE"; }
+      local v
+      v=$(grep -hE "^${key}=" "$APP_DIR/.env" "$APP_DIR/.env.local" 2>/dev/null | tail -1 | cut -d= -f2-)
+      [ -n "$v" ] && say "$v" || { err "未找到配置项 $key"; return "$EXIT_ERR"; }
+      return 0
+      ;;
+    set)
+      local key="${1:-}" val="${2:-}" file="local" apply=0
+      shift 2 2>/dev/null || true
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --file) file="${2:-local}"; shift 2 ;;
+          --apply) apply=1; shift ;;
+          *) shift ;;
+        esac
+      done
+      [ -n "$key" ] && [ -n "$val" ] || { err "用法：openmaic config set <键> <值> [--file env|local] [--apply]"; return "$EXIT_USAGE"; }
+      local f; f=$(config_file_for "$file")
+      [ -n "$f" ] || { err "--file 只能是 env 或 local"; return "$EXIT_USAGE"; }
+      [ -f "$f" ] || { err "找不到 $f"; return "$EXIT_ERR"; }
+
+      confirm "确认将 $key 写入 $(basename "$f")？" || return $?
+      if [ "$DRY_RUN" = 1 ]; then hint "将设置 $key=$val 于 $f"; return 0; fi
+
+      cp -a "$f" "$f.bak-$(date +%Y%m%d-%H%M%S)"
+      awk -v k="$key" -v v="$val" '
+        $0 ~ "^"k"=" { print k"="v; found=1; next }
+        { print }
+        END { if (!found) print k"="v }
+      ' "$f" >"$f.tmp" && mv "$f.tmp" "$f"
+      ok "已写入 $key"
+      sync_config_to_persist
+
+      if [ "$apply" = 1 ]; then
+        warn "注意：NEXT_PUBLIC_* 属编译期参数，改动必须重新构建才生效"
+        step "重建并重启以生效"
+        cmd_upgrade_apply_restart
+        return $?
+      fi
+      hint "生效方式：openmaic restart（运行时参数）或 openmaic upgrade --to $(current_tag)（编译期参数）"
+      return 0
+      ;;
+    diff)
+      local ex="$APP_DIR/.env.example"
+      [ -f "$ex" ] || { err "找不到 .env.example"; return "$EXIT_ERR"; }
+      info "与 .env.example 比对（仅列出未设置的键）"
+      local key missing=0
+      while IFS= read -r key; do
+        grep -qE "^${key}=" "$APP_DIR/.env" "$APP_DIR/.env.local" 2>/dev/null || { say "  $key"; missing=$((missing+1)); }
+      done < <(grep -oE '^[A-Z_][A-Z0-9_]*=' "$ex" | tr -d '=' | sort -u)
+      [ "$missing" = 0 ] && ok "未发现缺失项" || hint "共 $missing 个键未设置（多数为可选）"
+      return 0
+      ;;
+    save)
+      sync_config_to_persist
+      ok "配置已持久化到 $CONF_DIR"
+      return 0
+      ;;
+    *)
+      err "用法：openmaic config show|get|set|diff|save"; return "$EXIT_USAGE" ;;
+  esac
+}
+
+cmd_upgrade_apply_restart() {
+  compose up -d --remove-orphans >/dev/null 2>&1 || { err "重启失败"; return "$EXIT_ERR"; }
+  wait_health
+}
+
+cmd_models() {
+  local api_key base models model
+  api_key=$(grep -hE '^QWEN_API_KEY=' "$APP_DIR/.env.local" 2>/dev/null | tail -1 | cut -d= -f2-)
+  base=$(grep -hE '^QWEN_BASE_URL=' "$APP_DIR/.env.local" 2>/dev/null | tail -1 | cut -d= -f2-)
+  models=$(grep -hE '^QWEN_MODELS=' "$APP_DIR/.env.local" 2>/dev/null | tail -1 | cut -d= -f2-)
+  [ -n "$api_key" ] || { err "未在 .env.local 中找到 QWEN_API_KEY"; return "$EXIT_ERR"; }
+  [ -n "$base" ] || base="https://dashscope.aliyuncs.com/compatible-mode/v1"
+  [ -n "$models" ] || { err "未在 .env.local 中找到 QWEN_MODELS"; return "$EXIT_ERR"; }
+
+  info "模型连通性探测"
+  printf '  端点 %s\n\n' "$base"
+  printf '  %-28s %-8s %-10s %s\n' "模型" "状态" "延迟" "响应"
+  echo "  ----------------------------------------------------------------------"
+
+  local okc=0 badc=0
+  local -a model_list=()
+  IFS=',' read -r -a model_list <<<"$models"
+  for model in "${model_list[@]+"${model_list[@]}"}"; do
+    model=$(printf '%s' "$model" | xargs)
+    [ -z "$model" ] && continue
+    local t0 t1 ms resp code
+    t0=$(date +%s%N)
+    resp=$(curl -sS --max-time 30 -o /tmp/.om_resp -w '%{http_code}' \
+      -X POST "$base/chat/completions" \
+      -H "Authorization: Bearer $api_key" \
+      -H 'Content-Type: application/json' \
+      -d "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":16}" 2>/dev/null) || resp="000"
+    t1=$(date +%s%N)
+    ms=$(( (t1 - t0) / 1000000 ))
+    code="$resp"
+    if [ "$code" = "200" ]; then
+      printf '  %-28s %s%-8s%s %-10s %s\n' "$model" "$C_GRN" "可用" "$C_RST" "${ms}ms" "OK"
+      okc=$((okc+1))
+    else
+      local msg; msg=$(head -c 120 /tmp/.om_resp 2>/dev/null | tr -d '\n')
+      printf '  %-28s %s%-8s%s %-10s %s\n' "$model" "$C_RED" "失败" "$C_RST" "-" "HTTP $code ${msg:0:60}"
+      badc=$((badc+1))
+    fi
+  done
+  rm -f /tmp/.om_resp
+  echo "  ----------------------------------------------------------------------"
+  printf '\n  可用 %s 个，失败 %s 个\n' "$okc" "$badc"
+  [ "$badc" -eq 0 ] || return "$EXIT_ERR"
+  return 0
+}
+
+# =============================================================================
+#  命令：部署与接入
+# =============================================================================
+cmd_install() {
+  local tag="" clean=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --tag) tag="${2:-}"; shift 2 ;;
+      --clean) clean=1; shift ;;
+      *) shift ;;
+    esac
+  done
+
+  require_cmd docker git curl || return $?
+  step "OpenMAIC 部署"
+  [ -z "$tag" ] && tag=$(latest_tag 2>/dev/null || echo "")
+
+  if [ "$clean" = 1 ]; then
+    warn "将清空 ${BASE_DIR}（配置已持久化于 ${CONF_DIR}，不会丢失）"
+    confirm "确认清空现有部署产物？" || return $?
+    [ "$DRY_RUN" = 1 ] || cmd_clean_inner
+  fi
+
+  ensure_dirs
+
+  # 1) 源码
+  step "1/6 准备源码"
+  if [ -z "$tag" ]; then
+    err "无法确定目标版本（网络不可达，请显式指定 --tag vX.Y.Z）"
+    return "$EXIT_ERR"
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    dim "  [dry-run] 将初始化仓库并检出 $tag"
+  else
+    if [ ! -d "$APP_DIR/.git" ]; then
+      mkdir -p "$APP_DIR"
+      ( cd "$APP_DIR" && git init -q && git remote add origin "https://github.com/$REPO.git" ) \
+        || { err "初始化仓库失败"; return "$EXIT_ERR"; }
+    fi
+    git_fetch_tag "$tag" >/dev/null 2>&1 \
+      || { err "拉取源码失败（所有通道均不可用）"; \
+           [ -n "$PROXY_HOST" ] && hint "已配置代理 ${PROXY_HOST}，确认其可达" \
+             || hint "若部署主机无法直连 GitHub，设置 OPENMAIC_PROXY_HOST=<ip:port> 后重试"; \
+           return "$EXIT_ERR"; }
+    ( cd "$APP_DIR" && git checkout --force "$tag" >/dev/null 2>&1 ) \
+      || { err "检出 $tag 失败"; return "$EXIT_ERR"; }
+    echo "$tag" >"$C_TAG"
+    ok "源码就绪：$tag"
+  fi
+
+  # 2) 配置
+  step "2/6 部署配置"
+  restore_config_from_persist
+  if [ ! -f "$APP_DIR/.env" ] || [ ! -f "$APP_DIR/.env.local" ]; then
+    warn "缺少配置文件，请在 $CONF_DIR 放入 env.build / env.runtime 后重跑"
+    hint "或参考 $APP_DIR/.env.example 手工创建 $APP_DIR/.env 与 .env.local"
+    return "$EXIT_PRECHECK"
+  fi
+  chmod 600 "$APP_DIR/.env" "$APP_DIR/.env.local" 2>/dev/null || true
+  ok "配置就绪"
+
+  # 3) 补丁
+  step "3/6 应用本地补丁"
+  apply_local_patches || return "$EXIT_ERR"
+
+  # 4) 构建
+  step "4/6 构建镜像（副镜像上限 $((BUILD_TIMEOUT_RENDER/60)) 分钟，主镜像上限 $((BUILD_TIMEOUT_MAIN/60)) 分钟）"
+  run_logged "install-build-render" compose_timed "$BUILD_TIMEOUT_RENDER" build render-service || return "$EXIT_ERR"
+  run_logged "install-build-main" compose_timed "$BUILD_TIMEOUT_MAIN" build openmaic || return "$EXIT_ERR"
+
+  # 5) 启动
+  step "5/6 启动容器"
+  if [ "$DRY_RUN" = 1 ]; then hint "将执行 docker compose up -d --remove-orphans"; return 0; fi
+  compose up -d --remove-orphans || { err "启动失败"; return "$EXIT_ERR"; }
+
+  # 6) 验收
+  step "6/6 健康检查"
+  if wait_health; then
+    sync_config_to_persist
+    ok "部署完成 → http://$(hostname -I | awk '{print $1}'):3000"
+    return 0
+  fi
+  err "部署完成但健康检查未通过，请查看 openmaic logs"
+  return "$EXIT_NOT_READY"
+}
+
+cmd_clean_inner() {
+  step "清理部署产物"
+  hint "保留：${CONF_DIR}（配置）、BuildKit 缓存（加速重建）"
+  # shellcheck disable=SC2046
+  ( cd "$APP_DIR" 2>/dev/null && docker compose $(compose_profiles) down --volumes --remove-orphans ) >/dev/null 2>&1 || true
+  docker rm -f app-openmaic-1 app-postgres-1 app-render-service-1 >/dev/null 2>&1 || true
+  docker volume rm app_openmaic-data app_openmaic-postgres >/dev/null 2>&1 || true
+  docker rmi -f app-openmaic:latest app-render-service:latest >/dev/null 2>&1 || true
+  rm -rf "${BASE_DIR:?}/app" "$BACKUP_DIR" "$LOG_DIR" "$STATE_DIR" "$RUN_DIR" 2>/dev/null || true
+  ok "已清理（配置与构建缓存保留）"
+  return 0
+}
+
+cmd_clean() {
+  warn "此操作将删除：容器、数据卷、项目镜像、$BASE_DIR 下全部内容"
+  warn "保留：$CONF_DIR 配置、系统镜像、BuildKit 缓存"
+  confirm "确认执行清理？" || return $?
+  if [ "$DRY_RUN" = 1 ]; then hint "将执行 cmd_clean_inner"; return 0; fi
+  with_lock nowait cmd_clean_inner
+}
+
+cmd_shell() { compose exec "$SERVICE_APP" sh; }
+
+cmd_url() {
+  local ip; ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+  if [ -z "$ip" ]; then
+    # hostname -I 是 Linux 专有；取不到时退回 health 地址的基址，避免打印 http://:3000
+    ip=$(printf '%s' "$HEALTH_URL" | sed -E 's#^https?://([^/:]+).*#\1#')
+    [ -n "$ip" ] || ip="127.0.0.1"
+    hint "未探测到本机对外 IP（hostname -I 不可用），以下按 ${ip} 给出"
+  fi
+  say "http://${ip}:3000"
+  hint "访问密码见：openmaic config get ACCESS_CODE"
+  return 0
+}
+
+cmd_completion() {
+  case "${1:-bash}" in
+    bash)
+      cat <<'EOF'
+_openmaic() {
+  local cur prev cmds
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  cmds="status health doctor powerlog version up down restart logs render upgrade rollback backup restore db config models install clean shell url completion help"
+  case "$prev" in
+    render) COMPREPLY=( $(compgen -W "on off" -- "$cur") ); return ;;
+    backup) COMPREPLY=( $(compgen -W "run list verify" -- "$cur") ); return ;;
+    db)     COMPREPLY=( $(compgen -W "shell dump" -- "$cur") ); return ;;
+    config) COMPREPLY=( $(compgen -W "show get set diff save" -- "$cur") ); return ;;
+    completion) COMPREPLY=( $(compgen -W "bash zsh" -- "$cur") ); return ;;
+  esac
+  COMPREPLY=( $(compgen -W "$cmds" -- "$cur") )
+}
+complete -F _openmaic openmaic
+EOF
+      ;;
+    zsh)
+      cat <<'EOF'
+#compdef openmaic
+_openmaic() {
+  local -a cmds
+  cmds=(status health doctor powerlog version up down restart logs render
+        upgrade rollback backup restore db config models install clean shell url completion help)
+  _describe 'command' cmds
+}
+compdef _openmaic openmaic
+EOF
+      ;;
+    *) err "用法：openmaic completion bash|zsh"; return "$EXIT_USAGE" ;;
+  esac
+}
+
+# =============================================================================
+#  帮助与分发
+# =============================================================================
+usage() {
+  cat <<'EOF'
+openmaic — OpenMAIC 统一运维 CLI
+
+用法: openmaic <命令> [子命令] [选项]
+
+诊断与自检
+  status                     总览：版本 / 健康 / 容器 / 资源
+  health [--wait 秒]         健康检查（退出码可直接用于探针）
+  doctor                     环境自检（DNS / 网络 / 磁盘 / 补丁 / 端口）
+  powerlog [N] [--last]      开机记录与异常断电检测
+  version [--check]          版本信息 / 检查上游新版本
+
+服务生命周期
+  up [--no-render]           启动容器
+  down                       停止容器
+  restart [服务]             重启（默认 openmaic）
+  logs [服务] [-f] [-n N]    查看日志
+  render on|off              渲染容器启停（释放约 8G 内存）
+
+升级与回滚
+  upgrade [--check]          升级（备份→拉取→构建→切换→健康检查）
+          [--dry-run] [--to 标签]
+  rollback [--dry-run]       回滚到上一版本
+  upgrade log [-n N]         升级历史
+
+数据与备份
+  backup                     立即备份数据库（本机无定时备份）
+  backup list                列出备份（含来源：手动/升级前/恢复前）
+  backup verify <文件>       校验备份完整性
+  restore <文件>             从备份恢复数据库
+  db shell                   进入 psql
+  db dump [--table 表名]     导出 SQL
+
+配置管理
+  config show [--raw]        脱敏显示配置
+  config get <键>            读取配置项
+  config set <键> <值>      修改配置项（可 --file env|local --apply）
+  config diff                与 .env.example 比对
+  config save                持久化配置到 /etc/openmaic
+  models                     列出模型并做连通性探测
+
+部署与接入
+  install [--tag 标签]       从零部署 / 重装（--clean 先清空）
+  clean                      清理部署产物（保留配置与构建缓存）
+  shell                      进入应用容器
+  url                        打印访问地址
+  completion bash|zsh        输出补全脚本
+
+全局选项
+  --json          机器可读输出        --quiet, -q     只输出错误
+  --yes, -y       跳过交互确认        --dry-run       只显示不执行
+  --no-color      关闭颜色            --timeout 秒    覆盖健康检查超时
+  -h, --help      帮助                -V, --version   显示 CLI 版本
+
+退出码
+  0 成功   1 运行错误   2 用法错误   3 依赖缺失   4 前置校验失败
+  10 升级失败已回滚   20 需人工介入   30 服务未就绪
+  40 并发冲突   50 用户取消
+EOF
+}
+
+parse_global() {
+  local -a rest=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json)      JSON_MODE=1; shift ;;
+      --quiet|-q)  QUIET=1; shift ;;
+      --yes|-y)    ASSUME_YES=1; shift ;;
+      --dry-run)   DRY_RUN=1; shift ;;
+      --no-color)  NO_COLOR=1; C_BOLD=''; C_RED=''; C_GRN=''; C_YEL=''; C_BLU=''; C_DIM=''; C_RST=''; shift ;;
+      --timeout)   HEALTH_TIMEOUT="${2:-300}"; shift 2 ;;
+      -h|--help)   usage; exit "$EXIT_OK" ;;
+      -V|--version) say "openmaic CLI $OPENMAIC_CLI_VERSION"; exit "$EXIT_OK" ;;
+      *)           rest+=("$1"); shift ;;
+    esac
+  done
+  GLOBAL_REST=("${rest[@]+"${rest[@]}"}")
+}
+
+main() {
+  parse_global "$@"
+  local -a args=("${GLOBAL_REST[@]+"${GLOBAL_REST[@]}"}")
+  local cmd="${args[0]:-help}"
+  local -a sub=()
+  [ "${#args[@]}" -gt 1 ] && sub=("${args[@]:1}")
+
+  # 非 Linux 上拦截需要部署主机的命令，给明确提示而不是抛一堆 docker 错
+  local _c
+  for _c in $NEEDS_HOST_CMDS; do
+    if [ "$cmd" = "$_c" ]; then
+      require_deploy_host "$cmd" || exit $?
+      break
+    fi
+  done
+
+  case "$cmd" in
+    status)     cmd_status ;;
+    health)     cmd_health "${sub[@]+"${sub[@]}"}" ;;
+    doctor)     cmd_doctor "${sub[@]+"${sub[@]}"}" ;;
+    powerlog)   cmd_powerlog "${sub[@]+"${sub[@]}"}" ;;
+    version)    cmd_version "${sub[@]+"${sub[@]}"}" ;;
+
+    up)         cmd_up "${sub[@]+"${sub[@]}"}" ;;
+    down)       cmd_down ;;
+    restart)    cmd_restart "${sub[@]+"${sub[@]}"}" ;;
+    logs)       cmd_logs "${sub[@]+"${sub[@]}"}" ;;
+    render)     cmd_render "${sub[@]+"${sub[@]}"}" ;;
+
+    upgrade)
+      if [ "${sub[0]:-}" = "log" ]; then cmd_upgrade_log "${sub[@]+"${sub[@]}"}"
+      else cmd_upgrade "${sub[@]+"${sub[@]}"}"; fi
+      ;;
+    rollback)   cmd_rollback "${sub[@]+"${sub[@]}"}" ;;
+
+    backup)
+      # list / verify 是只读的，任意平台可用；run 需要部署主机（且必须拦在 with_lock 之前，
+      # 否则会先撞上 $RUN_DIR 无法创建这种更含糊的错误）
+      if [ "${sub[0]:-}" = "list" ] || [ "${sub[0]:-}" = "verify" ]; then
+        cmd_backup "${sub[@]+"${sub[@]}"}"
+      else
+        require_deploy_host backup || exit $?
+        cmd_backup run "${sub[@]+"${sub[@]}"}"
+      fi
+      ;;
+    restore)    cmd_restore "${sub[@]+"${sub[@]}"}" ;;
+    db)         cmd_db "${sub[@]+"${sub[@]}"}" ;;
+
+    config)     cmd_config "${sub[@]+"${sub[@]}"}" ;;
+    models)     cmd_models ;;
+
+    install)    cmd_install "${sub[@]+"${sub[@]}"}" ;;
+    clean)      cmd_clean ;;
+    shell)      cmd_shell ;;
+    url)        cmd_url ;;
+    completion) cmd_completion "${sub[@]+"${sub[@]}"}" ;;
+
+    help|-h|--help|"") usage ;;
+    *) err "未知命令：$cmd"; echo; usage; exit "$EXIT_USAGE" ;;
+  esac
+  exit $?
+}
+
+main "$@"

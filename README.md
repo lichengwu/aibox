@@ -35,6 +35,7 @@ aibox self version | version | help
 | 模块 | 说明 |
 | --- | --- |
 | [`pi-web`](tools/pi-web/README.md) | 把 `@agegr/pi-web` 部署为 macOS launchd 常驻服务（HTTP Basic Auth + 自动重启） |
+| [`openmaic`](tools/openmaic/README.md) | [OpenMAIC](https://github.com/THU-MAIC/OpenMAIC) 统一运维 CLI，分发到 Linux 部署主机（安装 / 升级 / 备份 / 自检） |
 
 ## 开发新模块
 
@@ -47,6 +48,8 @@ aibox self version | version | help
 - **自更新 = 幂等重装**：`aibox self update` 重新 `curl|bash install.sh` 覆盖主 CLI，无 git / Releases 依赖。
 - **平台由模块自报**：`platform=darwin` 的模块在非 macOS 仅警告，实际限制由模块钩子自身报错。
 - **`AIBOX_RAW` 可覆盖**：支持本地源 / 镜像（如 `AIBOX_RAW=file:///path/to/aibox aibox list-available`）。
+- **模块不一定带常驻服务**：`pi-web` 管 launchd 服务，而 `openmaic` 只分发一个 CLI 并把 `aibox openmaic <action>` 透传给它 —— 模块契约里 `svc.sh` 是「动作入口」，不是「必须是守护进程」。
+- **模块运行环境自报**：安装落点跨平台的模块（如 `openmaic`）不设 `platform`，由 CLI 在执行时拒绝不支持的平台并给出提示，比安装期硬拦截更清楚（安装本身在任何系统都无副作用）。
 
 ## License
 

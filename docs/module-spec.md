@@ -10,7 +10,7 @@ tools/<name>/
 ├── install.sh      # 必需：安装
 ├── uninstall.sh    # 推荐：卸载
 ├── update.sh       # 可选：更新
-├── svc.sh          # 可选：服务运维，$1=动作
+├── svc.sh          # 可选：动作入口，$1=动作（常驻服务；也可仅透传给下发的命令）
 └── README.md       # 模块说明
 ```
 
@@ -39,6 +39,10 @@ AIBOX_MODULE_<name>_actions="start stop ..."     # svc 支持的动作
 - aibox 注入环境变量：`AIBOX_HOME`、`AIBOX_MODULE`（模块名）、`AIBOX_RAW`（仓库 raw 基址）。
 - `install.sh` 负责把模块自身装好（落点自治，例如 pi-web 写 launchd plist）。
 - `svc.sh`：`$1` = 动作，其余参数透传。
+  - 常驻服务型模块（如 pi-web）实现 `start/stop/restart/status/logs/diagnose`。
+  - 分发型模块（如 openmaic）可以只做透传：`exec <下发的命令> "$1" "$@"`，动作集就是那个命令的子命令。
+- 安装落点请从 `${AIBOX_BIN_DIR:-$HOME/.local/bin}` 起手，并留一个模块专属覆盖变量（部署主机上常要 `/usr/local/bin`）。
+- 平台差异建议只告警不硬拦：安装通常跨平台，真正跑不动的限制由脚本执行时报清楚。
 
 ## 用户命令 → 钩子映射
 
