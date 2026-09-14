@@ -214,7 +214,7 @@ cmd_module_action() {
 cmd_self_update() {
   local before after
   before="$AIBOX_VERSION"
-  log "aibox 自身更新：当前 $before，重新 bootstrap ..."
+  log "aibox 自身更新：当前 ${before}，重新 bootstrap ..."
   if curl -fsSL "$AIBOX_RAW/install.sh" | bash; then
     after="$("$AIBOX_BIN_DIR/aibox" version 2>/dev/null | awk '{print $2}')"
     [ -z "$after" ] && after="unknown"
