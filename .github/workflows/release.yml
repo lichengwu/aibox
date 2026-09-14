@@ -1,0 +1,52 @@
+name: release
+
+# push 到 main 时自动发布 release：读取 bin/aibox 的 AIBOX_VERSION，
+# 若远程无对应 v<version> tag，则自动建 tag + 发 release（notes 从上一 tag 自动生成）。
+# 版本号未变则跳过（幂等，可重复 push）。详见 AGENTS.md「版本号与发布流程」。
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: extract AIBOX_VERSION
+        id: v
+        run: |
+          ver=$(grep -oE '^AIBOX_VERSION="[^"]+"' bin/aibox | head -1 | sed -E 's/^AIBOX_VERSION="([^"]+)"/\1/')
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "tag=v$ver" >> "$GITHUB_OUTPUT"
+
+      - name: check if tag exists
+        id: t
+        env:
+          RELEASE_TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::tag ${RELEASE_TAG} already exists, skipping release"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::creating release for ${RELEASE_TAG}"
+          fi
+
+      - name: create release
+        if: steps.t.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          gh release create "${RELEASE_TAG}" \
+            --target main \
+            --title "aibox ${RELEASE_TAG}" \
+            --generate-notes

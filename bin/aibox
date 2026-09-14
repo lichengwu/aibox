@@ -20,7 +20,7 @@ AIBOX_HOME="${AIBOX_HOME:-$HOME/.aibox}"
 AIBOX_MOD_DIR="$AIBOX_HOME/modules"
 AIBOX_INSTALLED="$AIBOX_HOME/installed.sh"
 AIBOX_BIN_DIR="${AIBOX_BIN_DIR:-$HOME/.local/bin}"
-AIBOX_VERSION="0.1.0"
+AIBOX_VERSION="0.1.1"
 AIBOX_LAST_DEST=""
 
 log()  { printf '\033[36m[aibox]\033[0m %s\n' "$*"; }
