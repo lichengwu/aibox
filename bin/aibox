@@ -246,8 +246,9 @@ cmd_proxy() {
     on)    cmd_proxy_toggle 1 ;;
     off)   cmd_proxy_toggle 0 ;;
     test)  shift; cmd_proxy_test "$@" ;;
+    check) shift; cmd_proxy_check "$@" ;;
     env)   shift; cmd_proxy_env "$@" ;;
-    *)     die "用法: aibox proxy {show|set <url>|unset|on|off|test [url]|env [--remote]}" ;;
+    *)     die "用法: aibox proxy {show|set <url>|unset|on|off|test [url]|check [url]|env [--remote]}" ;;
   esac
 }
 
@@ -273,8 +274,21 @@ cmd_proxy_show() {
 }
 
 cmd_proxy_set() {
-  local raw="${1:-}" no_test=0 url scheme
-  [ "${2:-}" = "--no-test" ] && no_test=1
+  local raw="${1:-}" no_test=0 no_check=0 url scheme a
+  # 留一份旧值：检查不理想时能原样退回去，含"本来就没配"这种情况
+  local old_url="$AIBOX_PROXY_URL" old_enabled="$AIBOX_PROXY_ENABLED"
+
+  if [ $# -gt 0 ]; then shift; fi
+  for a in "$@"; do
+    case "$a" in
+      --no-test)  no_test=1 ;;
+      --no-check) no_check=1 ;;
+      *) die "未知选项：${a}（可用：--no-test / --no-check）" ;;
+    esac
+  done
+  # --no-test 的语义是"快点存下，别验了"，那全量检查也一并跳过
+  if [ "$no_test" = "1" ]; then no_check=1; fi
+
   url=$(normalize_proxy_url "$raw")
   [ -n "$url" ] || die "用法: aibox proxy set <url>   例: aibox proxy set http://10.0.0.2:7897"
 
@@ -302,6 +316,34 @@ cmd_proxy_set() {
   save_config
   ok "已保存 $(mask_url "$url")"
   info "配置：${AIBOX_CONFIG}（权限 600）"
+
+  if [ "$no_check" = "1" ]; then
+    return 0
+  fi
+
+  # 存下来之后立刻验一遍。单点探针只证明"这个 url 能出去"，
+  # 证明不了"你要用的那些站点都能出去" —— 代理常常是部分可用。
+  echo
+  if cmd_proxy_check "$url"; then
+    return 0
+  fi
+
+  echo
+  if ask_confirm "撤销刚才的代理配置？"; then
+    AIBOX_PROXY_URL="$old_url"
+    if [ -n "$old_url" ]; then
+      AIBOX_PROXY_ENABLED="${old_enabled:-1}"
+    fi
+    save_config
+    if [ -n "$old_url" ]; then
+      warn "已撤销，恢复为 $(mask_url "$old_url")"
+    else
+      warn "已撤销，代理配置已清除（回到直连）"
+    fi
+    return 1
+  fi
+
+  warn "已保留。有不通过的站点，可随时 aibox proxy check 复查"
   return 0
 }
 
@@ -386,6 +428,283 @@ cmd_proxy_env() {
     printf "export https_proxy='%s'\n" "$u"
     printf "export all_proxy='%s'\n" "$u"
     printf "export no_proxy='%s'\n" "$AIBOX_NO_PROXY"
+  fi
+  return 0
+}
+
+# ---------- 连通性检查 ----------
+# 「代理配好了」不等于「代理能用」。set 完立刻验一遍，比等到装模块时才炸好。
+#
+# 站点清单：每行 "标签|URL|分组"，分组相同即自动归到一个小标题下。
+# 整体覆盖：AIBOX_PROBE_SITES='标签|URL|分组
+# 标签|URL|分组'
+AIBOX_PROBE_SITES_DEFAULT='github.com|https://github.com|开发依赖
+api.github.com|https://api.github.com|开发依赖
+raw.githubusercontent.com|https://raw.githubusercontent.com/lichengwu/aibox/main/registry.sh|开发依赖
+docker hub|https://registry-1.docker.io/v2/|开发依赖
+ghcr.io|https://ghcr.io/v2/|开发依赖
+npm registry|https://registry.npmjs.org|开发依赖
+pypi|https://pypi.org/simple/|开发依赖
+go proxy|https://proxy.golang.org|开发依赖
+google|https://www.google.com/generate_204|开发依赖
+huggingface|https://huggingface.co|开发依赖
+maven central|https://repo1.maven.org/maven2/|开发依赖
+npmmirror|https://registry.npmmirror.com|国内镜像
+tuna|https://mirrors.tuna.tsinghua.edu.cn|国内镜像
+dashscope|https://dashscope.aliyuncs.com|国内镜像'
+AIBOX_PROBE_SITES="${AIBOX_PROBE_SITES:-$AIBOX_PROBE_SITES_DEFAULT}"
+PROBE_TIMEOUT="${AIBOX_PROBE_TIMEOUT:-8}"
+
+# 颜色只在 TTY 下开。非 TTY（管道 / 重定向到文件）输出不含控制字符，
+# 否则日志里会混进一堆 \033[K。
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_RST=$'\033[0m'; C_DIM=$'\033[2m'; C_BOLD=$'\033[1m'
+  C_GRN=$'\033[32m'; C_YEL=$'\033[33m'; C_RED=$'\033[31m'; C_CYA=$'\033[36m'
+  C_CLR=$'\r\033[K'
+  TUI_TTY=1
+else
+  C_RST=''; C_DIM=''; C_BOLD=''; C_GRN=''; C_YEL=''; C_RED=''; C_CYA=''
+  C_CLR=''
+  TUI_TTY=0
+fi
+
+# 探测结果，下标与清单一一对应。P_DONE=1 表示已拿到结果。
+P_LABEL=(); P_URL=(); P_GROUP=(); P_DONE=()
+P_CODE=(); P_TIME=(); P_USED=(); P_GRADE=()
+P_N=0
+PROBE_PROXY=""
+PROBE_DIR=""
+
+probe_load_sites() {
+  local line lab rest url grp
+  P_LABEL=(); P_URL=(); P_GROUP=(); P_DONE=()
+  P_CODE=(); P_TIME=(); P_USED=(); P_GRADE=()
+  P_N=0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in '#'*) continue ;; esac
+    case "$line" in
+      *'|'*'|'*) ;;
+      *) warn "站点清单格式有误，已跳过：$line"; continue ;;
+    esac
+    lab="${line%%|*}"
+    rest="${line#*|}"
+    url="${rest%%|*}"
+    grp="${rest#*|}"
+    [ -n "$url" ] || continue
+    P_LABEL[$P_N]="$lab"
+    P_URL[$P_N]="$url"
+    P_GROUP[$P_N]="$grp"
+    P_DONE[$P_N]=0
+    P_CODE[$P_N]=""
+    P_TIME[$P_N]=""
+    P_USED[$P_N]=""
+    P_GRADE[$P_N]=""
+    P_N=$((P_N + 1))
+  done <<PROBE_SITES_EOF
+$AIBOX_PROBE_SITES
+PROBE_SITES_EOF
+}
+
+# 单站点探测。跑在后台子进程里，所以结果落文件 —— 子进程改不了父进程的数组。
+# env -u no_proxy：显式 -x 指定的代理仍会被 no_proxy 排除，那会让"走代理的检查"
+# 悄悄变成直连检查，结论就假了。
+probe_fetch() {
+  local idx="$1" url="$2" dir="$3" out
+  out=$(env -u no_proxy -u NO_PROXY curl -s -I --max-time "$PROBE_TIMEOUT" \
+    -x "$PROBE_PROXY" -o /dev/null \
+    -w '%{http_code} %{time_total} %{proxy_used}' "$url" 2>/dev/null) || out=""
+  # curl 连接失败时 -w 一个字符都不输出，必须兜底，否则状态码会变成空串
+  [ -n "$out" ] || out="000 0.00 0"
+  printf '%s\n' "$out" >"$dir/$idx"
+}
+
+# 判定：能拿到 HTTP 响应就算通。
+# 401（私有 registry 要认证）、404（根路径无内容）、405（不支持 HEAD）都只说明
+# 对端在正常应答，链路是通的；只有连接层失败（000）才是真的不通。
+# 5xx 记可疑 —— 可能是代理侧故障，也可能是对端自己挂了。
+probe_grade_of() {
+  case "${1:-}" in
+    ""|000) printf 'fail' ;;
+    5??)    printf 'warn' ;;
+    *)      printf 'ok' ;;
+  esac
+}
+
+probe_fmt_time() {
+  case "${1:-}" in
+    ""|*[!0-9.]*) printf '0.00' ;;
+    *)            printf '%.2f' "$1" 2>/dev/null || printf '0.00' ;;
+  esac
+}
+
+# 把已完成的结果从文件读回数组
+probe_collect() {
+  local i=0 line rest
+  while [ "$i" -lt "$P_N" ]; do
+    if [ "${P_DONE[$i]:-0}" != "1" ] && [ -f "$PROBE_DIR/$i" ]; then
+      line="$(cat "$PROBE_DIR/$i" 2>/dev/null)"
+      P_CODE[$i]="${line%% *}"
+      rest="${line#* }"
+      P_TIME[$i]="${rest%% *}"
+      P_USED[$i]="${rest##* }"
+      P_GRADE[$i]="$(probe_grade_of "${P_CODE[$i]}")"
+      P_DONE[$i]=1
+    fi
+    i=$((i + 1))
+  done
+}
+
+# 输出一行（含自身行首清屏），完成态与等待态格式不同
+probe_line() {
+  local i="$1" frame="$2" grade code t mark note tcol
+  if [ "${P_DONE[$i]:-0}" != "1" ]; then
+    printf '%s  %s%s%s %-28s %s等待%s\n' \
+      "$C_CLR" "$C_DIM" "$frame" "$C_RST" "${P_LABEL[$i]:-}" "$C_DIM" "$C_RST"
+    return 0
+  fi
+  grade="${P_GRADE[$i]:-ok}"
+  code="${P_CODE[$i]:-000}"
+  t="$(probe_fmt_time "${P_TIME[$i]:-}")"
+  mark="${C_GRN}✔${C_RST}"
+  note=""
+  case "$grade" in
+    warn) mark="${C_YEL}!${C_RST}"; note="服务端错误" ;;
+    fail) mark="${C_RED}✘${C_RST}"; note="连接失败或超时" ;;
+  esac
+  tcol="$C_DIM"
+  if [ "$grade" = "fail" ]; then
+    tcol="$C_RED"
+  elif [ "$grade" = "ok" ]; then
+    # 大于 3 秒算慢：能通但会拖累每一次拉取
+    case "${t%%.*}" in
+      ""|*[!0-9]*) ;;
+      *) if [ "${t%%.*}" -ge 3 ]; then tcol="$C_YEL"; [ -n "$note" ] || note="较慢"; fi ;;
+    esac
+  fi
+  # 备注拼成后缀而不是固定宽度的尾列，避免行尾残留空格
+  local note_suf=""
+  if [ -n "$note" ]; then note_suf="  $note"; fi
+  printf '%s  %s %-28s %s%-5s%s %s%s%s%s\n' \
+    "$C_CLR" "$mark" "${P_LABEL[$i]:-}" "$C_DIM" "$code" "$C_RST" \
+    "$tcol" "${t}s" "$C_RST" "$note_suf"
+  return 0
+}
+
+probe_render() {
+  local frame="$1" i=0 prev="" g
+  while [ "$i" -lt "$P_N" ]; do
+    g="${P_GROUP[$i]:-}"
+    if [ "$g" != "$prev" ]; then
+      printf '%s  %s\n' "$C_CLR" "${C_BOLD}${C_CYA}${g}${C_RST}"
+      prev="$g"
+    fi
+    probe_line "$i" "$frame"
+    i=$((i + 1))
+  done
+}
+
+# 重绘时要上移的行数 = 站点数 + 分组标题数（行数在整个过程中恒定）
+probe_line_count() {
+  local i=0 prev="" g n=0
+  while [ "$i" -lt "$P_N" ]; do
+    g="${P_GROUP[$i]:-}"
+    if [ "$g" != "$prev" ]; then n=$((n + 1)); prev="$g"; fi
+    n=$((n + 1))
+    i=$((i + 1))
+  done
+  printf '%s' "$n"
+}
+
+cmd_proxy_check() {
+  local url="" a
+  for a in "$@"; do
+    case "$a" in
+      --no-tui) TUI_TTY=0 ;;
+      *) if [ -z "$url" ]; then url="$a"; fi ;;
+    esac
+  done
+  url="$(normalize_proxy_url "$url")"
+  if [ -z "$url" ]; then url="$AIBOX_PROXY_URL"; fi
+  # --no-proxy 会清掉内存里的配置，这时回配置文件再取一次
+  if [ -z "$url" ] && [ -f "$AIBOX_CONFIG" ]; then
+    url="$(grep '^AIBOX_PROXY_URL=' "$AIBOX_CONFIG" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')"
+    url="$(normalize_proxy_url "$url")"
+  fi
+  [ -n "$url" ] || die "未配置代理。用法: aibox proxy check [url]"
+
+  probe_load_sites
+  [ "$P_N" -gt 0 ] || die "站点清单为空（检查 AIBOX_PROBE_SITES）"
+
+  PROBE_PROXY="$url"
+  PROBE_DIR="$(mktemp -d)" || die "无法创建临时目录"
+  trap 'rm -rf "$PROBE_DIR"' EXIT
+
+  local total
+  total="$(probe_line_count)"
+  printf '  连通性检查（经代理 %s）\n' "$(mask_url "$url")"
+  printf '  %s能拿到应答即算通 —— 401/404/405 都只说明链路到了对端%s\n' "$C_DIM" "$C_RST"
+
+  # 全并发。串行最坏要 13×8=104 秒，并发只等最慢那一个。
+  local i=0
+  while [ "$i" -lt "$P_N" ]; do
+    probe_fetch "$i" "${P_URL[$i]:-}" "$PROBE_DIR" &
+    i=$((i + 1))
+  done
+
+  local frame_i=0 first=1 running=1
+  local -a SPIN
+  # 逐帧取整个字符串，不做 ${s:i:1} 切片 —— 多字节字符在 C locale 下会被切成半个字节
+  SPIN=( '⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏' )
+  while [ "$running" = "1" ]; do
+    probe_collect
+    running=0
+    i=0
+    while [ "$i" -lt "$P_N" ]; do
+      if [ "${P_DONE[$i]:-0}" != "1" ]; then running=1; break; fi
+      i=$((i + 1))
+    done
+    if [ "$TUI_TTY" = "1" ]; then
+      if [ "$first" != "1" ]; then printf '\033[%sA' "$total"; fi
+      probe_render "${SPIN[$frame_i]}"
+      frame_i=$(((frame_i + 1) % 10))
+      first=0
+    fi
+    if [ "$running" = "1" ]; then sleep 0.12; fi
+  done
+  wait 2>/dev/null || true
+  # 非 TTY 不重绘，全部跑完后一次性静态输出
+  if [ "$TUI_TTY" != "1" ]; then probe_render ""; fi
+
+  local okc=0 warnc=0 failc=0 failed_lines="" all_confirmed=1
+  i=0
+  while [ "$i" -lt "$P_N" ]; do
+    case "${P_GRADE[$i]:-ok}" in
+      ok)   okc=$((okc + 1)) ;;
+      warn) warnc=$((warnc + 1)) ;;
+      fail) failc=$((failc + 1)); failed_lines="${failed_lines}    ${P_LABEL[$i]:-}\n" ;;
+    esac
+    # 只有每个站点都明确回报 proxy_used=1 才敢说"确实走了代理"。
+    # 兜底的 000 结果里 used=0，若只看"是否为空"就会在代理全挂时误报。
+    if [ "${P_USED[$i]:-}" != "1" ]; then all_confirmed=0; fi
+    i=$((i + 1))
+  done
+
+  printf '\n'
+  printf '  %d 项：%s%d 通过%s' "$P_N" "$C_GRN" "$okc" "$C_RST"
+  if [ "$warnc" -gt 0 ]; then printf ' · %s%d 可疑%s' "$C_YEL" "$warnc" "$C_RST"; fi
+  if [ "$failc" -gt 0 ]; then printf ' · %s%d 失败%s' "$C_RED" "$failc" "$C_RST"; fi
+  printf '\n'
+
+  if [ "$all_confirmed" = "1" ] && [ "$P_N" -gt 0 ]; then
+    printf '  %s流量已确认全部经代理（curl %%{proxy_used}）%s\n' "$C_DIM" "$C_RST"
+  fi
+
+  if [ "$failc" -gt 0 ]; then
+    printf '  %s不通：%s\n' "$C_RED" "$C_RST"
+    printf '%b' "$failed_lines"
+    info "排查：aibox proxy test 看直连对照；或换一个代理再试"
+    return 1
   fi
   return 0
 }
@@ -554,12 +873,17 @@ aibox $AIBOX_VERSION — AI coding 工具集模块管理器
 
 代理（配置一次，aibox 自身与模块钩子都走它）:
   aibox proxy                     查看当前配置与状态
-  aibox proxy set <url>           设置并测试（加 --no-test 跳过测试）
-  aibox proxy test [url]          测试可达性（含"直连对照"，避免假阳性）
+  aibox proxy set <url>           设置：测试 → 保存 → 校验常用站点连通性
+                                  （--no-test 全跳过，--no-check 只跳站点校验）
+  aibox proxy check [url]         校验开发站点连通性（github / docker / npm ...）
+                                  （有不通的会问你是否撤销这次配置）
+  aibox proxy test [url]          单点可达性（含"直连对照"，避免假阳性）
   aibox proxy on | off            启用 / 停用（配置保留）
   aibox proxy unset               清除配置
   aibox proxy env [--remote]      输出 export 语句 / 远端下发格式
   aibox --no-proxy <命令>         本次调用绕过代理
+
+  校验清单可用 AIBOX_PROBE_SITES 覆盖，格式每行 "标签|URL|分组"。
 
 首个模块: aibox install pi-web
 EOF

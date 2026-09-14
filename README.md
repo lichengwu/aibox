@@ -30,8 +30,10 @@ aibox self uninstall             卸载 aibox
 aibox self version | version | help
 
 aibox proxy                       查看代理配置与状态
-aibox proxy set <url> [--no-test] 设置代理（默认先测试可达性）
-aibox proxy test [url]            测试代理（含"直连对照"）
+aibox proxy set <url> [--no-test|--no-check]
+                                  设置代理：测试 → 保存 → 校验站点连通性
+aibox proxy check [url]           校验常用开发站点连通性
+aibox proxy test [url]            单点测试（含"直连对照"）
 aibox proxy on | off              启用 / 停用（配置保留）
 aibox proxy unset                 清除配置
 aibox proxy env [--remote]        输出 export 语句 / 远端下发格式
@@ -43,12 +45,54 @@ aibox --no-proxy <命令>           本次调用绕过代理
 有些环境下（比如国内直连 GitHub）`aibox` 拉不到模块，或模块钩子里的 git / npm 出不去。配置一次代理，`aibox` 自身与它派生的模块钩子都走它：
 
 ```bash
-aibox proxy set http://10.0.0.2:7897           # 设置并测试
-aibox proxy test                               # 随时复测
+aibox proxy set http://10.0.0.2:7897           # 设置 → 测试 → 保存 → 校验站点
+aibox proxy check                              # 随时复检站点连通性
 aibox --no-proxy list-available                # 单次绕过
 ```
 
 配置存在 `~/.aibox/config`（权限 600），**不写入你的 shell 配置** —— 想让终端里的 git / brew 也走代理，用 `eval "$(aibox proxy env)"` 自己决定。
+
+### 设置完会立刻校验站点连通性
+
+单点探针只证明"这个 url 能出去"，证明不了"你要用的站点都能出去" —— 代理常常是**部分可用**的（能到 GitHub 但到不了 Docker Hub）。所以 `set` 保存后会自动过一次站点清单：
+
+```
+  连通性检查（经代理 http://10.0.0.2:7897）
+  能拿到应答即算通 —— 401/404/405 都只说明链路到了对端
+  开发依赖
+  ✔ github.com                   200   0.65s
+  ✔ docker hub                   401   1.45s
+  ✔ ghcr.io                      405   0.86s
+  ✘ google                       000   8.00s  连接失败或超时
+  国内镜像
+  ✔ npmmirror                    200   0.09s
+  ✔ tuna                         200   0.18s
+
+  14 项：13 通过 · 1 失败
+  流量已确认全部经代理（curl %{proxy_used}）
+  不通：
+    google
+       排查：aibox proxy test 看直连对照；或换一个代理再试
+```
+
+**有不通的会问你是否撤销**，撤销会原样退回设置前的状态（原本没配就回到未配置，原本有别的代理就退回那个）。不想被问：
+
+```bash
+aibox proxy set <url> --no-check    # 只做单点测试，不跑站点校验
+aibox proxy set <url> --no-test     # 什么都不测，直接存
+```
+
+判定规则是**能拿到 HTTP 响应就算通**：`401`（私有 registry 要认证）、`404`（根路径无内容）、`405`（不支持 HEAD）都只说明对端在正常应答。只有连接层失败（`000`）才算不通，`5xx` 记为可疑。
+
+默认清单 14 项：GitHub（主页 / API / raw）、Docker Hub、GHCR、npm、PyPI、Go proxy、Google、Hugging Face、Maven Central，外加 npmmirror / 清华源 / dashscope 三个国内对照。换成你自己的：
+
+```bash
+export AIBOX_PROBE_SITES='我的源|https://example.com|自定分组
+另一个|https://example.org|自定分组'
+aibox proxy check
+```
+
+标签建议用 ASCII —— 对齐按字节数算，中文标签会错位。超时默认 8 秒，`AIBOX_PROBE_TIMEOUT` 可调。
 
 生效分三层，其中前两层自动：
 
@@ -62,13 +106,16 @@ aibox --no-proxy list-available                # 单次绕过
 
 ### 代理失效时会怎样
 
-**配了就强制**：代理不通即报错，不会静默回退直连（否则表现为每次都先等超时再回退，慢且查不出原因）。三个出口：
+**配了就强制**：代理不通即报错，不会静默回退直连（否则表现为每次都先等超时再回退，慢且查不出原因）。四个出口：
 
 ```bash
-aibox proxy test      # 一条命令给结论：代理可达性 + 直连对照
+aibox proxy check     # 站点级连通性（默认 14 项）
+aibox proxy test      # 单点可达性 + 直连对照
 aibox proxy off       # 全局停用（配置保留）
 aibox --no-proxy ...  # 单次绕过
 ```
+
+`set` 时若检查有失败项，会直接问你要不要撤销这次配置 —— 不必自己记住原来填的是什么。
 
 `proxy test` 会额外跑一次"直连对照"并明确告诉你当前网络下代理是否必需 —— 因为**只看"能不能访问"会骗人**，详见 [`AGENTS.md`](AGENTS.md) 踩坑记录 #3。
 
