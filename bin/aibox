@@ -22,6 +22,23 @@ AIBOX_INSTALLED="$AIBOX_HOME/installed.sh"
 AIBOX_BIN_DIR="${AIBOX_BIN_DIR:-$HOME/.local/bin}"
 AIBOX_VERSION="0.1.1"
 AIBOX_LAST_DEST=""
+AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
+
+# ---------- 代理 ----------
+# 配置存于 $AIBOX_HOME/config（KEY=VALUE，权限 600，可手动编辑）。
+# 生效范围：aibox 自身 + 它派生的模块钩子（靠环境变量继承）。
+# 不覆盖：Docker daemon 的 pull、以及已在运行的其他进程 —— 环境变量改不了它们。
+AIBOX_PROXY_URL=""
+AIBOX_PROXY_ENABLED="1"
+AIBOX_NO_PROXY_DEFAULT="localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,.local"
+AIBOX_NO_PROXY="$AIBOX_NO_PROXY_DEFAULT"
+AIBOX_PROXY_SOURCE=""
+PROBE_CONFIRMED=0
+# 代理自检目标：就用 aibox 真正要访问的那个文件，测别的没意义
+case "$AIBOX_RAW" in
+  file://*) PROBE_TARGET="https://raw.githubusercontent.com/${AIBOX_REPO}/${AIBOX_BRANCH}/registry.sh" ;;
+  *)        PROBE_TARGET="$AIBOX_RAW/registry.sh" ;;
+esac
 
 # 注入给模块钩子（钩子契约见 docs/module-spec.md）。
 # 此前只在文档里写了会注入，实际只注入了 AIBOX_MODULE；这里补齐。
@@ -31,6 +48,9 @@ export AIBOX_HOME AIBOX_RAW AIBOX_BIN_DIR
 log()  { printf '\033[36m[aibox]\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m[!]\033[0m %s\n' "$*"; }
 die()  { printf '\033[31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
+ok()   { printf '\033[32m[ok]\033[0m %s\n' "$*"; }
+bad()  { printf '\033[31m[!!]\033[0m %s\n' "$*"; }
+info() { printf '       %s\n' "$*"; }
 
 # ---------- registry ----------
 load_registry() {
@@ -95,6 +115,279 @@ download_module() {
     curl -fsSL "$AIBOX_RAW/$dir/$f" -o "$AIBOX_LAST_DEST/$f" || die "下载 $dir/$f 失败（确认分支/路径）"
     chmod +x "$AIBOX_LAST_DEST/$f" 2>/dev/null || true
   done
+}
+
+# ---------- 配置读写 ----------
+load_config() {
+  [ -f "$AIBOX_CONFIG" ] || return 0
+  # 配置文件由 aibox proxy 维护，纯 KEY=VALUE；解析失败不致命
+  # shellcheck disable=SC1090
+  . "$AIBOX_CONFIG" 2>/dev/null || warn "配置文件无法解析，已忽略：$AIBOX_CONFIG"
+  [ -n "${AIBOX_NO_PROXY:-}" ] || AIBOX_NO_PROXY="$AIBOX_NO_PROXY_DEFAULT"
+  return 0
+}
+
+save_config() {
+  mkdir -p "$AIBOX_HOME"
+  local old_umask
+  old_umask=$(umask)
+  umask 077
+  cat >"$AIBOX_CONFIG" <<EOF
+# aibox 配置文件 —— 由 aibox proxy 命令维护，也可手动编辑。
+# 可能含代理凭据，故权限保持 600。
+
+# 代理 URL（支持 http:// https:// socks5:// socks5h://）
+AIBOX_PROXY_URL="$AIBOX_PROXY_URL"
+
+# 1=启用 / 0=停用（停用时配置保留）
+AIBOX_PROXY_ENABLED="$AIBOX_PROXY_ENABLED"
+
+# 不走代理的地址，逗号分隔
+AIBOX_NO_PROXY="$AIBOX_NO_PROXY"
+EOF
+  umask "$old_umask"
+  chmod 600 "$AIBOX_CONFIG"
+}
+
+# 脱敏：http://user:pass@host:port -> http://user:***@host:port
+mask_url() {
+  printf '%s' "$1" | sed -E 's#(://[^:/@]+):[^@]*@#\1:***@#'
+}
+
+# 补全 scheme：允许只写 host:port
+normalize_proxy_url() {
+  case "${1:-}" in
+    "")    printf '' ;;
+    *://*) printf '%s' "$1" ;;
+    *)     printf 'http://%s' "$1" ;;
+  esac
+}
+
+# 探测代理是否真的生效。判定用 %{proxy_used}，不能只看 HTTP 状态码 ——
+# 在能直连的网络里，200 是直连给的，只看状态码必然假阳性。
+# 结果同时写入 PROBE_CONFIRMED（1=已确认流量确实过代理）。
+proxy_probe() {
+  local url="$1" target="${2:-$PROBE_TARGET}" out code used
+  out=$(curl -s --max-time 15 -x "$url" -o /dev/null \
+    -w '%{http_code} %{proxy_used}' "$target" 2>/dev/null) || out=""
+  code="${out%% *}"
+  used="${out##* }"
+  PROBE_CONFIRMED=0
+  [ "$code" = "200" ] || return 1
+  [ "$used" = "1" ] && PROBE_CONFIRMED=1
+  return 0
+}
+
+# 交互确认；非交互环境一律视为拒绝，避免脚本里静默执行
+ask_confirm() {
+  [ -t 0 ] || {
+    warn "非交互环境，按放弃处理"
+    return 1
+  }
+  local ans
+  printf '\033[33m[?]\033[0m %s [y/N] ' "$1"
+  read -r ans || return 1
+  case "$ans" in y | Y | yes | YES) return 0 ;; *) return 1 ;; esac
+}
+
+# 把生效中的代理导出为环境变量，供本进程与模块钩子使用。
+# 小写大写都要给：curl 只认小写的 http_proxy（大写 HTTP_PROXY 会被它忽略），
+# 而 apt 之类只认大写 —— 实测两者认的集合不同。
+# 无论代理来自配置还是环境，都汇总到 AIBOX_PROXY_URL 一个出口，
+# 模块就不必去猜该读哪个标准变量名。
+apply_proxy() {
+  local eff="" no_p="$AIBOX_NO_PROXY"
+
+  if [ "$AIBOX_PROXY_ENABLED" = "1" ]; then
+    if [ -n "${http_proxy:-}" ] || [ -n "${https_proxy:-}" ] || [ -n "${all_proxy:-}" ]; then
+      # 环境里已指定 → 尊重，不夺权，只做归一化导出
+      eff="${http_proxy:-${https_proxy:-${all_proxy:-}}}"
+      no_p="${no_proxy:-$AIBOX_NO_PROXY}"
+      AIBOX_PROXY_SOURCE="env"
+    elif [ -n "$AIBOX_PROXY_URL" ]; then
+      eff="$AIBOX_PROXY_URL"
+      export http_proxy="$eff" https_proxy="$eff" all_proxy="$eff"
+      export HTTP_PROXY="$eff" HTTPS_PROXY="$eff"
+      export no_proxy="$no_p" NO_PROXY="$no_p"
+      AIBOX_PROXY_SOURCE="config"
+    fi
+  fi
+
+  if [ -z "$eff" ]; then
+    if [ -n "$AIBOX_PROXY_URL" ]; then
+      AIBOX_PROXY_SOURCE="disabled"
+    else
+      AIBOX_PROXY_SOURCE="none"
+    fi
+    export AIBOX_PROXY_ENABLED=0
+    return 0
+  fi
+
+  export AIBOX_PROXY_URL="$eff" AIBOX_NO_PROXY="$no_p" AIBOX_PROXY_ENABLED=1
+  return 0
+}
+
+# --no-proxy：本次调用完全绕过代理（连环境里已有的也清掉）
+bypass_proxy() {
+  unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY || true
+  unset AIBOX_PROXY_URL AIBOX_NO_PROXY || true
+  export AIBOX_PROXY_ENABLED=0
+  AIBOX_PROXY_SOURCE="bypass"
+  return 0
+}
+
+# ---------- proxy 命令域 ----------
+cmd_proxy() {
+  local sub="${1:-show}"
+  case "$sub" in
+    show)  cmd_proxy_show ;;
+    set)   shift; cmd_proxy_set "$@" ;;
+    unset) cmd_proxy_unset ;;
+    on)    cmd_proxy_toggle 1 ;;
+    off)   cmd_proxy_toggle 0 ;;
+    test)  shift; cmd_proxy_test "$@" ;;
+    env)   shift; cmd_proxy_env "$@" ;;
+    *)     die "用法: aibox proxy {show|set <url>|unset|on|off|test [url]|env [--remote]}" ;;
+  esac
+}
+
+cmd_proxy_show() {
+  if [ -z "$AIBOX_PROXY_URL" ]; then
+    log "未配置代理（直连）"
+    info "设置: aibox proxy set http://host:port"
+    return 0
+  fi
+  local state="已启用"
+  [ "$AIBOX_PROXY_ENABLED" = "1" ] || state="已停用"
+  log "代理配置（${AIBOX_CONFIG}）"
+  info "代理       $(mask_url "$AIBOX_PROXY_URL")"
+  info "状态       $state"
+  info "不走代理   $AIBOX_NO_PROXY"
+  case "$AIBOX_PROXY_SOURCE" in
+    env)      info "实际生效   $(mask_url "$AIBOX_PROXY_URL")（来自环境变量，优先于本配置）" ;;
+    config)   info "实际生效   $(mask_url "$AIBOX_PROXY_URL")" ;;
+    disabled) info "实际生效   无（代理已停用）" ;;
+    *)        info "实际生效   无（直连）" ;;
+  esac
+  return 0
+}
+
+cmd_proxy_set() {
+  local raw="${1:-}" no_test=0 url scheme
+  [ "${2:-}" = "--no-test" ] && no_test=1
+  url=$(normalize_proxy_url "$raw")
+  [ -n "$url" ] || die "用法: aibox proxy set <url>   例: aibox proxy set http://10.0.0.2:7897"
+
+  scheme="${url%%://*}"
+  case "$scheme" in
+    http | https | socks5 | socks5h) ;;
+    *) die "不支持的代理协议：${scheme}（支持 http / https / socks5 / socks5h）" ;;
+  esac
+
+  if [ "$no_test" = "0" ]; then
+    log "测试代理 $(mask_url "$url") ..."
+    if proxy_probe "$url"; then
+      ok "代理可用"
+    else
+      bad "代理测试未通过（目标 ${PROBE_TARGET}）"
+      ask_confirm "仍然保存这个代理？" || {
+        log "已取消，配置未改动"
+        return 1
+      }
+    fi
+  fi
+
+  AIBOX_PROXY_URL="$url"
+  AIBOX_PROXY_ENABLED="1"
+  save_config
+  ok "已保存 $(mask_url "$url")"
+  info "配置：${AIBOX_CONFIG}（权限 600）"
+  return 0
+}
+
+cmd_proxy_unset() {
+  [ -n "$AIBOX_PROXY_URL" ] || {
+    log "本就没有配置代理"
+    return 0
+  }
+  AIBOX_PROXY_URL=""
+  AIBOX_PROXY_ENABLED="1"
+  save_config
+  log "已清除代理配置"
+  return 0
+}
+
+cmd_proxy_toggle() {
+  local want="$1"
+  [ -n "$AIBOX_PROXY_URL" ] || die "尚未配置代理（aibox proxy set <url>）"
+  AIBOX_PROXY_ENABLED="$want"
+  save_config
+  if [ "$want" = "1" ]; then
+    log "已启用 $(mask_url "$AIBOX_PROXY_URL")"
+  else
+    log "已停用（配置保留，aibox proxy on 可恢复）"
+  fi
+  return 0
+}
+
+cmd_proxy_test() {
+  local url
+  url=$(normalize_proxy_url "${1:-}")
+  [ -n "$url" ] || url="$AIBOX_PROXY_URL"
+  [ -n "$url" ] || die "未配置代理。用法: aibox proxy test [url]"
+
+  log "代理测试"
+  info "代理   $(mask_url "$url")"
+  info "目标   $PROBE_TARGET"
+  echo
+
+  local proxied=0
+  if proxy_probe "$url"; then
+    if [ "$PROBE_CONFIRMED" = "1" ]; then
+      ok "经代理出网    200（已确认流量走代理）"
+    else
+      ok "经代理出网    200（curl 不支持 %{proxy_used}，无法确认是否真走代理）"
+    fi
+    proxied=1
+  else
+    bad "经代理出网    失败（代理不可达，或代理访问不了该目标）"
+  fi
+
+  local dcode
+  dcode=$(curl -s --max-time 10 --noproxy '*' -o /dev/null -w '%{http_code}' "$PROBE_TARGET" 2>/dev/null) || dcode=""
+  [ -n "$dcode" ] || dcode="000"
+  if [ "$dcode" = "200" ]; then
+    info "直连对照      200 —— 当前网络直连也通，代理并非必需"
+  else
+    info "直连对照      $dcode —— 直连不通，代理是必需的"
+  fi
+
+  [ "$proxied" = "1" ] && return 0 || return 1
+}
+
+cmd_proxy_env() {
+  local remote=0 u
+  [ "${1:-}" = "--remote" ] && remote=1
+  [ -n "$AIBOX_PROXY_URL" ] || die "未配置代理（aibox proxy set <url>）"
+  [ "$AIBOX_PROXY_ENABLED" = "1" ] || {
+    warn "代理已停用（aibox proxy on 启用）"
+    return 1
+  }
+  u="$AIBOX_PROXY_URL"
+
+  if [ "$remote" = "1" ]; then
+    # 供下发到远端：KEY=VALUE，可直接 source，也可当参数传
+    printf 'AIBOX_PROXY_URL=%s\n' "$u"
+    printf 'http_proxy=%s\n' "$u"
+    printf 'https_proxy=%s\n' "$u"
+    printf 'no_proxy=%s\n' "$AIBOX_NO_PROXY"
+  else
+    printf "export http_proxy='%s'\n" "$u"
+    printf "export https_proxy='%s'\n" "$u"
+    printf "export all_proxy='%s'\n" "$u"
+    printf "export no_proxy='%s'\n" "$AIBOX_NO_PROXY"
+  fi
+  return 0
 }
 
 # ---------- 命令 ----------
@@ -259,9 +552,37 @@ aibox $AIBOX_VERSION — AI coding 工具集模块管理器
   aibox version | -v | --version
   aibox help | -h | --help
 
+代理（配置一次，aibox 自身与模块钩子都走它）:
+  aibox proxy                     查看当前配置与状态
+  aibox proxy set <url>           设置并测试（加 --no-test 跳过测试）
+  aibox proxy test [url]          测试可达性（含"直连对照"，避免假阳性）
+  aibox proxy on | off            启用 / 停用（配置保留）
+  aibox proxy unset               清除配置
+  aibox proxy env [--remote]      输出 export 语句 / 远端下发格式
+  aibox --no-proxy <命令>         本次调用绕过代理
+
 首个模块: aibox install pi-web
 EOF
 }
+
+# ---------- 全局选项 ----------
+# --no-proxy：本次调用绕过代理（需放在命令最前）
+BYPASS_PROXY=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-proxy) BYPASS_PROXY=1; shift ;;
+    --)         shift; break ;;
+    *)          break ;;
+  esac
+done
+
+# 加载配置并让代理生效（覆盖第 1 层本进程、第 2 层派生的模块钩子）
+load_config
+if [ "$BYPASS_PROXY" = "1" ]; then
+  bypass_proxy
+else
+  apply_proxy
+fi
 
 # ---------- dispatch ----------
 case "${1:-help}" in
@@ -271,6 +592,7 @@ case "${1:-help}" in
   list)             cmd_list ;;
   list-available|available|search)
                     cmd_list_available ;;
+  proxy)            shift; cmd_proxy "$@" ;;
   self)
     case "${2:-}" in
       update)       cmd_self_update ;;

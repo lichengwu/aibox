@@ -60,9 +60,20 @@ HEALTH_TIMEOUT="${OPENMAIC_HEALTH_TIMEOUT:-300}"
 BACKUP_KEEP="${OPENMAIC_BACKUP_KEEP:-14}"
 BUILD_TIMEOUT_MAIN="${OPENMAIC_BUILD_TIMEOUT_MAIN:-3600}"
 BUILD_TIMEOUT_RENDER="${OPENMAIC_BUILD_TIMEOUT_RENDER:-2400}"
-# 源码拉取代理：部署主机若无法直连 GitHub，可在此指定 HTTP 代理（如 10.0.0.2:7897）。
+# 源码拉取代理：部署主机若无法直连 GitHub，可在此指定代理。
+# 接受完整 URL（http://host:port、socks5://host:port），也兼容裸 host:port（自动补 http://）。
+# 优先读 OPENMAIC_PROXY_URL，回退旧键 OPENMAIC_PROXY_HOST。
 # 留空 = 不尝试代理通道，只用直连与公共镜像站。站点相关，故不给默认值。
-PROXY_HOST="${OPENMAIC_PROXY_HOST:-}"
+PROXY_URL="${OPENMAIC_PROXY_URL:-${OPENMAIC_PROXY_HOST:-}}"
+case "$PROXY_URL" in
+  "" | *://*) ;;
+  *) PROXY_URL="http://$PROXY_URL" ;;
+esac
+# 展示用形式：脱掉 URL 里的凭据，避免代理账号密码进日志
+PROXY_DISPLAY="$PROXY_URL"
+case "$PROXY_DISPLAY" in
+  *://*:*@*) PROXY_DISPLAY=$(printf '%s' "$PROXY_DISPLAY" | sed -E 's#(://[^:/@]+):[^@]*@#\1:***@#') ;;
+esac
 RENDER_ENABLED="${OPENMAIC_RENDER_ENABLED:-1}"
 
 C_TAG="$STATE_DIR/current-tag"
@@ -280,21 +291,21 @@ current_commit() { ( cd "$APP_DIR" 2>/dev/null && git rev-parse --short HEAD 2>/
 latest_tag() {
   local api="https://api.github.com/repos/$REPO/releases/latest" out=""
   out=$(curl -fsS --max-time 20 "$api" 2>/dev/null) || out=""
-  if [ -z "$out" ] && [ -n "$PROXY_HOST" ]; then
-    out=$(curl -fsS --max-time 25 -x "http://$PROXY_HOST" "$api" 2>/dev/null) || out=""
+  if [ -z "$out" ] && [ -n "$PROXY_URL" ]; then
+    out=$(curl -fsS --max-time 25 -x "$PROXY_URL" "$api" 2>/dev/null) || out=""
   fi
   [ -n "$out" ] || return 1
   printf '%s' "$out" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
     | sed -E 's/.*"([^"]*)"$/\1/'
 }
 
-# 多通道 fallback 拉取源码。代理通道仅在 PROXY_HOST 非空时尝试。
+# 多通道 fallback 拉取源码。代理通道仅在 PROXY_URL 非空时尝试。
 git_fetch_tag() {
   local tag="$1" url
-  if [ -n "$PROXY_HOST" ]; then
+  if [ -n "$PROXY_URL" ]; then
     url="https://github.com/$REPO.git"
-    log "通道：直连（经代理 ${PROXY_HOST}）"
-    if ( cd "$APP_DIR" && env "https_proxy=http://$PROXY_HOST" "http_proxy=http://$PROXY_HOST" \
+    log "通道：直连（经代理 ${PROXY_DISPLAY}）"
+    if ( cd "$APP_DIR" && env "https_proxy=$PROXY_URL" "http_proxy=$PROXY_URL" \
            GIT_TERMINAL_PROMPT=0 git fetch --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
   fi
   log "通道：直连（无代理）"
@@ -537,6 +548,14 @@ cmd_doctor() {
     if getent hosts "$n" >/dev/null 2>&1 || nslookup "$n" >/dev/null 2>&1; then :; else dns_ok=0; fi
   done
   [ "$dns_ok" = 1 ] && chk_ok "DNS 解析" "域名可解析" || chk_bad "DNS 解析" "解析失败（检查 /etc/resolv.conf）"
+
+  # 源码拉取代理。「未配置」是正常状态（可走直连与公共镜像），故记为 ok 而非 warning，
+  # 否则每次自检都蹦一条假告警，久了就没人看输出了。
+  if [ -n "$PROXY_URL" ]; then
+    chk_ok "源码拉取代理" "${PROXY_DISPLAY}"
+  else
+    chk_ok "源码拉取代理" "未配置（仅直连与公共镜像）"
+  fi
 
   if [ -f /etc/docker/daemon.json ]; then
     grep -q '"dns"' /etc/docker/daemon.json \
@@ -1197,8 +1216,8 @@ cmd_install() {
     fi
     git_fetch_tag "$tag" >/dev/null 2>&1 \
       || { err "拉取源码失败（所有通道均不可用）"; \
-           [ -n "$PROXY_HOST" ] && hint "已配置代理 ${PROXY_HOST}，确认其可达" \
-             || hint "若部署主机无法直连 GitHub，设置 OPENMAIC_PROXY_HOST=<ip:port> 后重试"; \
+           [ -n "$PROXY_URL" ] && hint "已配置代理 ${PROXY_DISPLAY}，确认其可达" \
+             || hint "若部署主机无法直连 GitHub，设置 OPENMAIC_PROXY_URL=<url> 后重试"; \
            return "$EXIT_ERR"; }
     ( cd "$APP_DIR" && git checkout --force "$tag" >/dev/null 2>&1 ) \
       || { err "检出 $tag 失败"; return "$EXIT_ERR"; }

@@ -27,6 +27,8 @@ aibox update <module> [--all] | --all     # --all 同时更新 aibox 自身
 aibox list / list-available
 aibox <module> <action> [args]            # 透传模块 svc.sh
 aibox self {update|uninstall|version|help}
+aibox proxy {show|set <url>|unset|on|off|test|env}   # 代理配置（全局，见 README「代理」）
+aibox --no-proxy <命令>                              # 单次绕过代理
 ```
 
 ## 贡献约定
@@ -91,6 +93,40 @@ grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[，。、；：！？（）「」]' <文件>
 **为什么值得为"可解析"让步**：保持可解析，才能在不受支持的平台上给出明确提示
 （"此命令需要在 Linux 部署主机上运行"），而不是甩一个语法错误。参见 `tools/openmaic/openmaic`
 里的 `require_deploy_host`。
+
+### #3 代理测试：只看"能不能访问"必然是假阳性
+
+**症状**：给 CLI 加代理支持后，`proxy test` 报"代理可用"（HTTP 200），但把端口填错、代理根本没开，测试**照样报 200**。
+
+**根因**：测试写成"经代理访问 GitHub 成功 = 代理好使"。但在能直连的网络里，这个 200 是**直连**给的 —— 代理可能压根没被用上。同一台机器换个网络环境（Clash 开 TUN / 关 TUN），结论就翻转，而测试代码一行没改。
+
+**修复**：用 curl 的 `%{proxy_used}` 判定（`1` = 确实走了代理，`0` = 直连），而不是 HTTP 状态码：
+
+```bash
+curl -s -x "$url" -o /dev/null -w '%{http_code} %{proxy_used}' "$target"
+```
+
+并且**额外跑一次直连对照**（`curl --noproxy '*'`），把"当前网络下代理到底必不必需"一并告诉用户。判断依据本身会过期，所以让命令每次现测。
+
+**顺带记下的大小写差异**（实测，curl 8.7.1 / macOS 自带）：
+
+| 变量 | curl 是否采用 |
+| --- | --- |
+| `http_proxy`（小写） | 采用 |
+| `HTTP_PROXY`（大写） | **忽略** |
+| `https_proxy` / `HTTPS_PROXY` | 均采用 |
+
+所以导出代理时**大小写都要给**，否则总有一类工具用不上。另外 `file://` 源不受 `http_proxy` 影响（curl 直接读文件），本地 / 内网源无需特判 —— 但内网 HTTP 源会被代理绕出去，靠 `no_proxy` 默认覆盖私网段来解决。
+
+### #4 环境变量传不过"进程边界"，跨机器/跨时间得靠落盘
+
+**症状**：给 `aibox` 配了代理，`aibox install openmaic` 也走了代理；但之后在部署主机上跑 `openmaic upgrade` 拉源码，**又连不上了**。
+
+**根因**：代理是通过环境变量注入的，而 `openmaic upgrade` 是**另一台机器、另一个时刻**的进程 —— 那时 `aibox` 早退出了，环境变量无从继承。
+
+**修复**：这类"模块自己在别处联网"的场景，必须由模块**把值写进自己的配置文件**（`tools/openmaic/lib.sh` 的 `sync_proxy_to_conf` 写 `/etc/openmaic/openmaic.conf`）。
+
+**判断准则**：钩子里**当场**跑的网络请求 → 环境变量够用；钩子**分发的命令以后在别处**跑的 → 必须落盘。别指望 `export` 能跨过进程和主机。
 
 ## 开发新模块
 

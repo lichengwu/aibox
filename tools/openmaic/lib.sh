@@ -53,6 +53,8 @@ do_install() {
   mkdir -p "${OPENMAIC_BIN_DIR}"
   install -m 0755 "${CLI_SRC}" "${CLI_DEST}"
   log "已放置 openmaic $(cli_version) -> ${CLI_DEST}"
+  # 顺带把 aibox 的代理下发进 OpenMAIC 自身的配置（原因见 sync_proxy_to_conf）
+  sync_proxy_to_conf
 }
 
 ensure_path() {
@@ -74,4 +76,54 @@ host_notice() {
   warn "当前系统 $(uname -s) 不是部署主机 —— openmaic 的服务类命令会拒绝执行"
   log "  本机可用: openmaic help / version / doctor"
   log "  部署主机上安装: OPENMAIC_BIN_DIR=/usr/local/bin aibox install openmaic"
+}
+
+# 脱敏：http://user:pass@host:port -> http://user:***@host:port
+mask_url() {
+  printf '%s' "${1:-}" | sed -E 's#(://[^:/@]+):[^@]*@#\1:***@#'
+}
+
+# 把 aibox 的代理下发到 OpenMAIC 自己的配置文件（第 3 层持久化）。
+#
+# 为什么必须落盘：openmaic CLI 会在部署主机上、在 aibox 完全不在场时执行
+# `openmaic upgrade` 去拉 GitHub 源码 —— 环境变量跨不了这个时间与主机边界，
+# 只能写进它自己的配置文件才带得过去。
+#
+# 只在部署主机（Linux）上做；未配置代理时什么都不动。
+sync_proxy_to_conf() {
+  local conf="/etc/openmaic/openmaic.conf" cur
+  [ -n "${AIBOX_PROXY_URL:-}" ] || return 0
+  [ "${AIBOX_PROXY_ENABLED:-0}" = "1" ] || return 0
+  [ "$(uname -s)" = "Linux" ] || return 0
+
+  if [ ! -f "${conf}" ]; then
+    mkdir -p "$(dirname "${conf}")" 2>/dev/null || return 0
+    cat >"${conf}" <<EOF
+# OpenMAIC CLI 配置（由 aibox 安装 openmaic 模块时创建）
+# 其余键留空即用内置默认值，键名见 openmaic help。
+
+# 源码拉取代理（由 aibox proxy set 下发）
+OPENMAIC_PROXY_URL="${AIBOX_PROXY_URL}"
+EOF
+    log "已创建 ${conf} 并写入代理 $(mask_url "${AIBOX_PROXY_URL}")"
+    return 0
+  fi
+
+  cur=$(sed -nE 's/^OPENMAIC_PROXY_URL="?([^"]*)"?$/\1/p' "${conf}" | head -1)
+  if [ "${cur}" = "${AIBOX_PROXY_URL}" ]; then
+    log "代理已在 ${conf} 中（$(mask_url "${cur}")），无需改动"
+    return 0
+  fi
+
+  cp -a "${conf}" "${conf}.bak-$(date +%Y%m%d-%H%M%S)"
+  if grep -q '^OPENMAIC_PROXY_URL=' "${conf}"; then
+    # 用 awk 替换：URL 里可能含 / 与 & 之类，sed 需要额外转义，容易出错
+    awk -v v="${AIBOX_PROXY_URL}" \
+      '/^OPENMAIC_PROXY_URL=/{print "OPENMAIC_PROXY_URL=\"" v "\""; next} {print}' \
+      "${conf}" >"${conf}.tmp" && mv "${conf}.tmp" "${conf}"
+  else
+    printf '\n# 由 aibox 下发（aibox proxy set）\nOPENMAIC_PROXY_URL="%s"\n' "${AIBOX_PROXY_URL}" >>"${conf}"
+  fi
+  log "已下发代理到 ${conf}：$(mask_url "${AIBOX_PROXY_URL}")"
+  log "  之后在部署主机上执行的 openmaic upgrade 会自动用它拉源码"
 }

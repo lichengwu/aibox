@@ -61,7 +61,8 @@ CLI 运行时（也可写进 `/etc/openmaic/openmaic.conf`，环境变量优先�
 | --- | --- | --- |
 | `OPENMAIC_CONF_DIR` | `/etc/openmaic` | 配置与密钥目录 |
 | `OPENMAIC_BASE_DIR` | `/opt/openmaic` | 部署根目录 |
-| `OPENMAIC_PROXY_HOST` | 空 | 拉取源码用的 HTTP 代理（部署主机直连 GitHub 不通时填）。留空则只用直连与公共镜像站 |
+| `OPENMAIC_PROXY_URL` | 空 | 拉取源码用的代理，接受完整 URL（`http://host:port` / `socks5://host:port`）。**优先于下面的旧键** |
+| `OPENMAIC_PROXY_HOST` | 空 | 同上（旧键，兼容保留）。值可写裸 `host:port`，会自动补 `http://` |
 | `OPENMAIC_HEALTH_URL` | `http://127.0.0.1:3000/api/health` | 健康检查地址 |
 | `OPENMAIC_HEALTH_TIMEOUT` | `300` | 健康检查等待上限（秒） |
 | `OPENMAIC_BACKUP_KEEP` | `14` | 备份保留份数 |
@@ -70,6 +71,34 @@ CLI 运行时（也可写进 `/etc/openmaic/openmaic.conf`，环境变量优先�
 | `OPENMAIC_BUILD_TIMEOUT_RENDER` | `2400` | 渲染镜像构建超时（秒） |
 
 仓库里不含任何站点地址；主机相关的值一律由此显式传入。
+
+## 代理
+
+部署主机常直连不了 GitHub，而「拉源码」这一步（`openmaic install` / `upgrade`）必须过网络。这个代理**一般不用手工配**：
+
+```bash
+# 在部署主机上（aibox 已装）
+aibox proxy set http://10.0.0.2:7897           # 配一次，aibox 自身与模块钩子都走它
+OPENMAIC_BIN_DIR=/usr/local/bin aibox install openmaic
+#   └─ 模块钩子会自动把代理写进 /etc/openmaic/openmaic.conf 的 OPENMAIC_PROXY_URL
+```
+
+**为什么必须落盘到 conf**：`openmaic upgrade` 是在部署主机上、**aibox 不在场**时执行的 —— 环境变量跨不过这个边界（跨主机、跨时间）。写进 conf 之后，此后每次升级拉源码都会自动用它。
+
+也可以不经 aibox，直接编辑 `/etc/openmaic/openmaic.conf`：
+
+```ini
+OPENMAIC_PROXY_URL="http://10.0.0.2:7897"
+```
+
+拉源码是**多通道**的，代理只是第一条：
+
+1. 经代理直连 GitHub（仅在配了代理时才尝试）
+2. 无代理直连
+3. `ghproxy.net`
+4. `gh-proxy.com`
+
+所以代理不可达、或代理所在机器关机，都**不会让升级卡死** —— 还有公共镜像兜底。当前生效的代理可在 `openmaic doctor` 里看到（已脱敏）。
 
 ## 常用命令
 
@@ -92,8 +121,8 @@ openmaic completion bash                # 补全脚本
 
 | 文件 | 作用 |
 | --- | --- |
-| `openmaic` | CLI 本体（单文件 bash，1411 行） |
-| `lib.sh` | 共享：落点解析、版本读取、语法检查、`host_notice` |
+| `openmaic` | CLI 本体（单文件 bash，1483 行） |
+| `lib.sh` | 共享：落点解析、版本读取、语法检查、`host_notice`、代理下发（`sync_proxy_to_conf`） |
 | `install.sh` | 安装 |
 | `uninstall.sh` | 卸载（只删本体） |
 | `update.sh` | 更新（内容比对，幂等） |

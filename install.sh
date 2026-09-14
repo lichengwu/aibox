@@ -25,6 +25,26 @@ log "从 ${REPO}@${BRANCH} 安装 aibox ..."
 
 command -v curl >/dev/null 2>&1 || die "需要 curl（macOS 自带）"
 
+# 代理：读已有配置，让 bootstrap 这一公里也能走代理（首次安装时配置还不存在，
+# 此时只能直连，属预期）。若环境里已显式指定代理则不覆盖。
+CONFIG="$HOME_DIR/config"
+if [ -f "$CONFIG" ]; then
+  # shellcheck disable=SC1090
+  . "$CONFIG" 2>/dev/null || true
+fi
+if [ "${AIBOX_PROXY_ENABLED:-1}" = "1" ] && [ -n "${AIBOX_PROXY_URL:-}" ]; then
+  if [ -n "${http_proxy:-}${https_proxy:-}${all_proxy:-}" ]; then
+    :
+  else
+    export http_proxy="$AIBOX_PROXY_URL" https_proxy="$AIBOX_PROXY_URL" all_proxy="$AIBOX_PROXY_URL"
+    export HTTP_PROXY="$AIBOX_PROXY_URL" HTTPS_PROXY="$AIBOX_PROXY_URL"
+    _np="${AIBOX_NO_PROXY:-localhost,127.0.0.1,::1}"
+    export no_proxy="$_np" NO_PROXY="$_np"
+    _pd=$(printf '%s' "$AIBOX_PROXY_URL" | sed -E 's#(://[^:/@]+):[^@]*@#\1:***@#')
+    log "使用代理 ${_pd}"
+  fi
+fi
+
 mkdir -p "$BIN_DIR" "$HOME_DIR"
 
 log "下载 bin/aibox -> $BIN_DIR/aibox"

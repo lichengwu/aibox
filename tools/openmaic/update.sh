@@ -26,6 +26,8 @@ new="$(cli_version)"
 
 if [ "${old}" = "${new}" ] && cmp -s "${CLI_SRC}" "${CLI_DEST}"; then
   log "openmaic 已是最新（${new}），无需更新"
+  # CLI 没变，但 aibox 的代理配置可能刚变过 —— 仍同步一次（幂等）
+  sync_proxy_to_conf
   exit 0
 fi
 

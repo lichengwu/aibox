@@ -36,13 +36,43 @@ AIBOX_MODULE_<name>_actions="start stop ..."     # svc 支持的动作
 
 - aibox 把 `files` 列出的脚本下载到 `~/.aibox/modules/<name>/`，再以 `bash <dest>/<hook>.sh [args]` 调用。
 - 钩子内可 `source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"` 复用共享函数。
-- aibox 注入环境变量：`AIBOX_HOME`、`AIBOX_MODULE`（模块名）、`AIBOX_RAW`（仓库 raw 基址）。
+- aibox 注入以下环境变量：
+
+  | 变量 | 说明 |
+  | --- | --- |
+  | `AIBOX_HOME` | aibox 状态目录 |
+  | `AIBOX_MODULE` | 当前模块名 |
+  | `AIBOX_RAW` | 仓库 raw 基址（可能是 `file://` 本地源） |
+  | `AIBOX_BIN_DIR` | 主 CLI 安装目录，模块落点从这里起手 |
+  | `AIBOX_PROXY_URL` | 当前生效的代理 URL；未启用时为空。可能来自 aibox 配置，也可能来自用户已有的环境变量 |
+  | `AIBOX_NO_PROXY` | 不走代理的地址列表 |
+  | `AIBOX_PROXY_ENABLED` | `1` 启用 / `0` 未启用 |
+
+  同时导出标准变量 `http_proxy` / `https_proxy` / `all_proxy` / `no_proxy`，**小写与大写都给** —— curl 只认小写的 `http_proxy`（大写 `HTTP_PROXY` 会被它忽略），而 apt 之类只认大写，实测两者认的集合不同。详见下方《代理》。
 - `install.sh` 负责把模块自身装好（落点自治，例如 pi-web 写 launchd plist）。
 - `svc.sh`：`$1` = 动作，其余参数透传。
   - 常驻服务型模块（如 pi-web）实现 `start/stop/restart/status/logs/diagnose`。
   - 分发型模块（如 openmaic）可以只做透传：`exec <下发的命令> "$1" "$@"`，动作集就是那个命令的子命令。
 - 安装落点请从 `${AIBOX_BIN_DIR:-$HOME/.local/bin}` 起手，并留一个模块专属覆盖变量（部署主机上常要 `/usr/local/bin`）。
 - 平台差异建议只告警不硬拦：安装通常跨平台，真正跑不动的限制由脚本执行时报清楚。
+
+## 代理
+
+用户可用 `aibox proxy set <url>` 配一个全局代理（见仓库 README）。模块有两种消费方式：
+
+**1. 靠环境变量（多数情况，什么都不用写）**
+
+钩子是 aibox 的子进程，代理已由父进程导出，直接调 `curl` / `git` / `npm` 即生效。
+
+**2. 持久化到自己的配置（跨机器、跨时间时必须做）**
+
+如果模块下的命令会在**别的机器**、或 **aibox 不在场的时候**联网 —— 例如 `openmaic` 分发的 CLI 会在部署主机上跑 `openmaic upgrade` 拉源码 —— 环境变量传不过去，**必须由模块在安装/更新钩子里把代理写进自己的配置文件**。参考 `tools/openmaic/lib.sh` 的 `sync_proxy_to_conf`。
+
+两条注意：
+
+- 未配置代理时 `AIBOX_PROXY_URL` 为空且 `AIBOX_PROXY_ENABLED=0`，模块应**优雅跳过**而不是报错或写入空值。
+- 不要假定代理是 HTTP 代理。值可能是 `socks5://host:port`，**整体透传**，别自己拼 `http://` 前缀。
+- 写入配置文件时记得脱敏 —— 代理 URL 可能含 `user:pass@`，日志里别打明文（可参考 `mask_url`）。
 
 ## 用户命令 → 钩子映射
 
