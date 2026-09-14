@@ -212,9 +212,20 @@ cmd_module_action() {
 }
 
 cmd_self_update() {
-  log "更新 aibox 主程序（重新 bootstrap）..."
-  curl -fsSL "$AIBOX_RAW/install.sh" | bash
-  log "aibox 已更新"
+  local before after
+  before="$AIBOX_VERSION"
+  log "aibox 自身更新：当前 $before，重新 bootstrap ..."
+  if curl -fsSL "$AIBOX_RAW/install.sh" | bash; then
+    after="$("$AIBOX_BIN_DIR/aibox" version 2>/dev/null | awk '{print $2}')"
+    [ -z "$after" ] && after="unknown"
+    if [ "$before" = "$after" ]; then
+      log "aibox 自身更新完成：已是最新 ($after)"
+    else
+      log "aibox 自身更新完成：$before -> $after"
+    fi
+    return 0
+  fi
+  return 1
 }
 
 cmd_self_uninstall() {
