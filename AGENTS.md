@@ -205,6 +205,12 @@ bash 5 没这个问题，所以「本机跑得好好的下发脚本」到 macOS 
 8. 本机是 macOS（bash 3.2），钩子必须兼容；钩子**下发给别的平台**的脚本则要注意别用 bash 4 语法 —— 见踩坑记录 #2。
 9. **部署型模块的落点别自己发明**（详见 [`docs/module-spec.md`](docs/module-spec.md) 的《部署目录与配置落点约定》）：部署根统一 `$AIBOX_HOME/apps/<name>`（两平台同一表达式，无需分支），配置统一 `/etc/<name>/<name>.conf`。两条实测硬约束：Docker Desktop 在 macOS 默认**不共享 `/opt`**（放那儿会让 compose 的相对挂载报 `Mounts denied`）；**systemd 系统服务里没有 `HOME`**（靠 `$HOME` 派生的路径在服务上下文里会解析成空，单元必须显式 `Environment=`）。
 
+10. **自启动服务用平台原生 init 系统**：常驻服务（pi-web、windmill 定时任务、clash）的自启动/守护按平台走，别混用：
+
+    - **macOS → launchd**：用户级 `~/Library/LaunchAgents/<label>.plist`，`launchctl bootstrap gui/$(id -u)`，不需 root。`KeepAlive` = 自动重启，`StartCalendarInterval` = 定时。
+    - **Linux → systemd**：用户级 `~/.config/systemd/user/<name>.{service,timer}`，`systemctl --user` + `loginctl enable-linger` 保活，不需 root。`Restart=always` = 自动重启，`OnCalendar` = 定时。
+    - 同一服务两平台各写一份单元，由 `case "$(uname -s)"` 分支生成。系统级服务（需 root / 开机即起）才用 `/etc/systemd/system` + `systemctl`（无 `--user`）—— 参见 windmill 的 `cmd_systemd`/`cmd_launchd` 与 pi-web 的 `write_plist`/`write_service`。
+
 ## License
 
 MIT。

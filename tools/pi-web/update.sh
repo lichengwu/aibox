@@ -30,7 +30,7 @@ log "升级 @agegr/pi-web ${cur:-未安装} -> ${latest:-latest} ..."
 npm install -g @agegr/pi-web@latest --silent
 cleanup_old
 resolve_password
-write_plist
+write_service
 
 # ---------- 决定是否重启 ----------
 do_restart=""
@@ -48,14 +48,24 @@ case "$restart_arg" in
 esac
 
 if [ "$do_restart" = "1" ]; then
-  if launchctl print "gui/${UID_}/${LABEL}" >/dev/null 2>&1; then
-    launchctl kickstart -k "gui/${UID_}/${LABEL}"
+  if [ "$OS_KIND" = "Darwin" ]; then
+    if launchctl print "gui/${UID_}/${LABEL}" >/dev/null 2>&1; then
+      launchctl kickstart -k "gui/${UID_}/${LABEL}"
+    else
+      launchctl bootstrap "gui/${UID_}" "$PLIST"
+    fi
   else
-    launchctl bootstrap "gui/${UID_}" "$PLIST"
+    if systemctl --user is-active --quiet "$LABEL" 2>/dev/null; then
+      systemctl --user restart "$LABEL"
+    else
+      [ -f "$UNIT_FILE" ] || die "${UNIT_FILE} 不存在，请先 aibox install pi-web"
+      loginctl enable-linger "${UID_}" 2>/dev/null || true
+      systemctl --user start "$LABEL"
+    fi
   fi
   sleep 3
   show_status
   log "pi-web 已更新并重启"
 else
-  log "已更新但未重启。稍后重启: aibox pi-web restart（或开机后 KeepAlive 自启）"
+  log "已更新但未重启。稍后重启: aibox pi-web restart（或开机后自启）"
 fi

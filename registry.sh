@@ -7,7 +7,7 @@ AIBOX_MODULES="pi-web"
 
 AIBOX_MODULE_pi_web_version="1.0.0"
 AIBOX_MODULE_pi_web_description="Deploy & manage @agegr/pi-web as a macOS launchd service (HTTP Basic auth, auto-restart)"
-AIBOX_MODULE_pi_web_platform="darwin"
+AIBOX_MODULE_pi_web_platform=""   # 跨平台：macOS launchd / Linux systemd --user
 AIBOX_MODULE_pi_web_dir="tools/pi-web"
 AIBOX_MODULE_pi_web_files="lib.sh install.sh uninstall.sh update.sh svc.sh"
 AIBOX_MODULE_pi_web_install="install.sh"

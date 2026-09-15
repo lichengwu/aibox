@@ -11,13 +11,19 @@ log "npm i -g @agegr/pi-web@latest ..."
 npm install -g @agegr/pi-web@latest --silent
 cleanup_old
 resolve_password
-write_plist
-log "bootstrap $LABEL ..."
-if ! launchctl bootstrap "gui/${UID_}" "$PLIST" 2>/tmp/pi-web-bootstrap.err; then
-  warn "bootstrap 失败，输出如下："
-  cat /tmp/pi-web-bootstrap.err >&2
-  warn "诊断: aibox pi-web diagnose"
-  exit 1
+write_service
+if [ "$OS_KIND" = "Darwin" ]; then
+  log "bootstrap $LABEL ..."
+  if ! launchctl bootstrap "gui/${UID_}" "$PLIST" 2>/tmp/pi-web-bootstrap.err; then
+    warn "bootstrap 失败，输出如下："
+    cat /tmp/pi-web-bootstrap.err >&2
+    warn "诊断: aibox pi-web diagnose"
+    exit 1
+  fi
+else
+  log "enable $LABEL ..."
+  loginctl enable-linger "${UID_}" 2>/dev/null || warn "enable-linger 失败（用户登出后服务会停）"
+  systemctl --user enable --now "$LABEL" || { warn "enable 失败"; warn "诊断: aibox pi-web diagnose"; exit 1; }
 fi
 sleep 3
 show_status

@@ -53,7 +53,7 @@ PI_WEB_PASSWORD=secret PI_WEB_BIND=127.0.0.1 aibox install pi-web
 
 ## 平台
 
-仅 macOS（launchd）。在 Linux/Windows 上安装仅告警，实际执行由钩子报错。
+跨平台：macOS 用 launchd（`~/Library/LaunchAgents` plist + `KeepAlive`），Linux 用 systemd --user（`~/.config/systemd/user/pi-web.service` + `Restart=always` + `loginctl enable-linger` 保活）。两者都不需 root。Windows 未支持。
 
 ## 钩子结构
 

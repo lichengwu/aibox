@@ -3,8 +3,15 @@
 
 LABEL="pi-web"
 OLD_LABELS=("com.agegr.pi-web")
-PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
-LOG_DIR="$HOME/Library/Logs"
+OS_KIND="$(uname -s)"
+if [ "$OS_KIND" = "Darwin" ]; then
+  PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
+  LOG_DIR="$HOME/Library/Logs"
+else
+  UNIT_DIR="$HOME/.config/systemd/user"
+  UNIT_FILE="${UNIT_DIR}/${LABEL}.service"
+  LOG_DIR="$HOME/.local/share/${LABEL}/logs"
+fi
 PORT="${PI_WEB_PORT:-30141}"
 PASSWORD="" # 由 resolve_password 填充（见下）；PI_WEB_PASSWORD 可覆盖
 BIND="${PI_WEB_BIND:-0.0.0.0}"
@@ -116,15 +123,26 @@ resolve_node() {
 # ---------- 清理旧残留 ----------
 cleanup_old() {
   local lbl old pids
-  for lbl in "$LABEL" "${OLD_LABELS[@]}"; do
-    launchctl bootout "gui/${UID_}/${lbl}" 2>/dev/null || true
-    launchctl remove "$lbl" 2>/dev/null || true
-    old="$HOME/Library/LaunchAgents/${lbl}.plist"
-    if [ "$lbl" != "$LABEL" ] && [ -f "$old" ]; then
-      mv -n "$old" "$HOME/.Trash/${lbl}.plist-$(date +%s)" 2>/dev/null || true
-    fi
-  done
-  # 端口占用兜底
+  if [ "$OS_KIND" = "Darwin" ]; then
+    for lbl in "$LABEL" "${OLD_LABELS[@]}"; do
+      launchctl bootout "gui/${UID_}/${lbl}" 2>/dev/null || true
+      launchctl remove "$lbl" 2>/dev/null || true
+      old="$HOME/Library/LaunchAgents/${lbl}.plist"
+      if [ "$lbl" != "$LABEL" ] && [ -f "$old" ]; then
+        mv -n "$old" "$HOME/.Trash/${lbl}.plist-$(date +%s)" 2>/dev/null || true
+      fi
+    done
+  else
+    for lbl in "$LABEL" "${OLD_LABELS[@]}"; do
+      systemctl --user stop "$lbl" 2>/dev/null || true
+      systemctl --user disable "$lbl" 2>/dev/null || true
+    done
+    # 旧 label 的 unit 文件清理
+    [ -f "${UNIT_FILE}" ] && rm -f "${UNIT_FILE}"
+    [ -f "${UNIT_DIR}/com.agegr.pi-web.service" ] && rm -f "${UNIT_DIR}/com.agegr.pi-web.service"
+    systemctl --user daemon-reload 2>/dev/null || true
+  fi
+  # 端口占用兜底（两平台共用）
   if command -v lsof >/dev/null 2>&1; then
     pids="$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)"
     [ -n "$pids" ] && {
@@ -135,10 +153,20 @@ cleanup_old() {
   sleep 1
 }
 
-# ---------- 生成 plist ----------
-write_plist() {
+# ---------- 生成服务单元（mac plist / linux systemd，按平台分支）----------
+write_service() {
   local pi_bin="$NODE_DIR/pi-web"
   [ ! -x "$pi_bin" ] && die "未找到 ${pi_bin}，请确认 npm i -g @agegr/pi-web 已成功"
+  if [ "$OS_KIND" = "Darwin" ]; then
+    write_plist "$pi_bin"
+  else
+    write_systemd_unit "$pi_bin"
+  fi
+}
+
+# macOS launchd plist
+write_plist() {
+  local pi_bin="$1"
   mkdir -p "$LOG_DIR" "$(dirname "$PLIST")"
   cat >"$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -171,16 +199,55 @@ write_plist() {
 </dict>
 </plist>
 EOF
-  plutil -lint "$PLIST" >/dev/null || die "plist 语法错误：$PLIST"
+  plutil -lint "$PLIST" >/dev/null || die "plist 语法错误：${PLIST}"
+}
+
+# Linux systemd --user unit
+write_systemd_unit() {
+  local pi_bin="$1"
+  mkdir -p "$LOG_DIR" "$UNIT_DIR"
+  cat >"$UNIT_FILE" <<EOF
+[Unit]
+Description=pi-web (@agegr/pi-web local browser UI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${NODE_BIN} ${pi_bin} --hostname ${BIND} --port ${PORT}
+Environment="PATH=${NODE_DIR}:/usr/local/bin:/usr/bin:/bin"
+Environment="HOME=${HOME}"
+Environment="PORT=${PORT}"
+Environment="PI_WEB_HOSTNAME=${BIND}"
+Environment="PI_WEB_NO_OPEN=1"
+Environment="PI_WEB_PASSWORD=${PASSWORD}"
+WorkingDirectory=${HOME}
+Restart=always
+RestartSec=10
+StandardOutput=append:${LOG_DIR}/pi-web.log
+StandardError=append:${LOG_DIR}/pi-web.err.log
+
+[Install]
+WantedBy=default.target
+EOF
+  systemctl --user daemon-reload
 }
 
 # ---------- 状态显示（install/status/diagnose 共用）----------
 show_status() {
   resolve_password
-  if launchctl print "gui/${UID_}/${LABEL}" 2>/dev/null | grep -qE "state\s*=\s*running"; then
-    launchctl print "gui/${UID_}/${LABEL}" | grep -E "^\s*(state|last exit code|program)\s*=" | head -4
+  if [ "$OS_KIND" = "Darwin" ]; then
+    if launchctl print "gui/${UID_}/${LABEL}" 2>/dev/null | grep -qE "state\s*=\s*running"; then
+      launchctl print "gui/${UID_}/${LABEL}" | grep -E "^\s*(state|last exit code|program)\s*=" | head -4
+    else
+      warn "$LABEL 未运行"
+    fi
   else
-    warn "$LABEL 未运行"
+    if systemctl --user is-active --quiet "$LABEL" 2>/dev/null; then
+      systemctl --user status --no-pager "$LABEL" 2>/dev/null | head -8
+    else
+      warn "$LABEL 未运行"
+    fi
   fi
   echo "---"
   lsof -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || echo "[端口 $PORT 未监听]"
