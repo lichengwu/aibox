@@ -167,16 +167,21 @@ require_cmd() {
 }
 
 # 需要「部署主机」环境的命令 —— 它们读取 $APP_DIR 的运行时状态或通过 docker compose 操作它。
-# 其余命令（help / version / doctor / health / models / backup list / backup verify / completion）
-# 在任何平台都可用，因此在 Mac 等非 Linux 机器上仍能查阅与自检。
+# 这些命令操作 docker 容器/数据卷/源码，需 docker + compose（不限 OS，macOS 用 Docker Desktop）。
+# 其余命令（help / version / doctor / health / models / backup list / backup verify / completion）只读，任意平台。
 NEEDS_HOST_CMDS="status url powerlog up down restart logs render upgrade rollback restore db install clean shell"
 
-require_deploy_host() {
+require_docker() {
   local cmd="$1"
-  [ "$(uname -s)" = "Linux" ] && return 0
-  err "命令 ${cmd} 需要在部署主机上运行（当前系统：$(uname -s)）"
-  hint "本 CLI 面向 Linux 部署主机：需要 docker compose 与 ${APP_DIR}"
-  hint "在 Mac 上可用的只读命令：help / version / doctor / health / models"
+  command -v docker >/dev/null 2>&1 || {
+    err "命令 ${cmd} 需要 docker（PATH 无 docker）"
+    hint "装 docker: aibox install openmaic 自动检查依赖；或手动 aibox check_deps openmaic"
+    return "$EXIT_DEP"
+  }
+  if docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1; then
+    return 0
+  fi
+  err "命令 ${cmd} 需要 docker compose（v2 插件或 docker-compose 命令）"
   return "$EXIT_DEP"
 }
 
@@ -438,7 +443,7 @@ backup_source() {
 # 注：本机不设定时备份（由 VM 级整体备份覆盖），故不再使用 pg-daily- 前缀；
 #     轮转仍用 pg-*.sql.gz 通配，旧文件不受影响。
 do_backup_inner() {
-  require_deploy_host backup || return $?
+  require_docker backup || return $?
   ensure_dirs
   local label="${1:-manual}" stamp out total
   stamp=$(date +%Y%m%d-%H%M%S)
@@ -533,8 +538,8 @@ cmd_health() {
 cmd_doctor() {
   local issues=0 warns=0
   info "OpenMAIC 环境自检"
-  if [ "$(uname -s)" != "Linux" ]; then
-    hint "当前系统 $(uname -s) 不是部署主机 —— 下方目录/容器类检查普遍不通过属预期，只作参考"
+  if ! command -v docker >/dev/null 2>&1; then
+    hint "无 docker —— 下方容器/镜像类检查不通过属预期，只作参考"
   fi
 
   chk_ok()   { printf '  %s✔%s %-28s %s\n' "$C_GRN" "$C_RST" "$1" "${2:-}"; }
@@ -1450,7 +1455,7 @@ main() {
   local _c
   for _c in $NEEDS_HOST_CMDS; do
     if [ "$cmd" = "$_c" ]; then
-      require_deploy_host "$cmd" || exit $?
+      require_docker "$cmd" || exit $?
       break
     fi
   done
@@ -1480,7 +1485,7 @@ main() {
       if [ "${sub[0]:-}" = "list" ] || [ "${sub[0]:-}" = "verify" ]; then
         cmd_backup "${sub[@]+"${sub[@]}"}"
       else
-        require_deploy_host backup || exit $?
+        require_docker backup || exit $?
         cmd_backup run "${sub[@]+"${sub[@]}"}"
       fi
       ;;

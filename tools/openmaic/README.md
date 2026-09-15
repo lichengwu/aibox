@@ -8,17 +8,14 @@ CLI 本体是仓库里的 `tools/openmaic/openmaic`（单文件 bash），**本�
 
 OpenMAIC 是一套 Docker Compose 部署（应用 + PostgreSQL + 视频渲染服务）。这个 CLI 把它的日常运维收敛成一个入口：安装、升级回滚、备份恢复、配置管理、环境自检。
 
-## 运行位置（重要）
+## 运行位置
 
-CLI 面向 **Linux 部署主机**（需要 `docker compose`、`flock`，默认部署目录 `$AIBOX_HOME/apps/openmaic`）。
+CLI 需 **docker + compose**（不限 OS：Linux 部署主机、macOS Docker Desktop 都行），默认部署目录 `$AIBOX_HOME/apps/openmaic`。
 
-在非 Linux 机器上：
+- 有 docker：`up/install/upgrade/backup` 等服务命令全可用
+- 无 docker：只 `help / version / doctor` 等只读命令可用，服务命令明确拒绝（退出码 `3`）而非抛 docker 报错
 
-- `aibox install openmaic` 照常安装（只是放个文件，无副作用）
-- `openmaic help / version / doctor` 可用
-- 其余命令会**明确拒绝**并返回退出码 `3`，而不是抛一堆 docker 报错
-
-要在部署主机上使用：
+`aibox install openmaic` 会自动检查 docker 依赖（缺则提示装）。
 
 ```bash
 OPENMAIC_BIN_DIR=/usr/local/bin aibox install openmaic
@@ -146,4 +143,4 @@ openmaic completion bash                # 补全脚本
 
 ## 平台
 
-安装本身跨平台（就是拷一个文件）。CLI 的运行需要 Linux 部署主机，模块不在非 Linux 上做硬性拦截，只明确告警 —— 实际限制由 CLI 自己在执行时报清楚。
+跨平台：安装是拷一个文件；CLI 兼容 bash 3.2（用固定 fd 而非 bash 4 的 `exec {fd}>`）。服务命令需 docker（macOS 用 Docker Desktop / Linux 用 docker），不限 OS —— 无 docker 时只读命令仍可用。

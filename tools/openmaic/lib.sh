@@ -67,15 +67,15 @@ ensure_path() {
   esac
 }
 
-# 非 Linux 上说明清楚：CLI 的服务类命令需要部署主机环境
+# 无 docker 时说明清楚：服务类命令需 docker
 host_notice() {
-  if [ "$(uname -s)" = "Linux" ]; then
+  if command -v docker >/dev/null 2>&1; then
     return 0
   fi
   echo
-  warn "当前系统 $(uname -s) 不是部署主机 —— openmaic 的服务类命令会拒绝执行"
+  warn "未检测到 docker —— openmaic 的服务类命令（up/install/upgrade/backup 等）会拒绝执行"
   log "  本机可用: openmaic help / version / doctor"
-  log "  部署主机上安装: OPENMAIC_BIN_DIR=/usr/local/bin aibox install openmaic"
+  log "  装 docker: aibox install openmaic 自动检查依赖"
 }
 
 # 脱敏：http://user:pass@host:port -> http://user:***@host:port
@@ -94,7 +94,6 @@ sync_proxy_to_conf() {
   local conf="/etc/openmaic/openmaic.conf" conf_dir cur
   [ -n "${AIBOX_PROXY_URL:-}" ] || return 0
   [ "${AIBOX_PROXY_ENABLED:-0}" = "1" ] || return 0
-  [ "$(uname -s)" = "Linux" ] || return 0
 
   conf_dir="$(dirname "${conf}")"
   if [ ! -d "${conf_dir}" ]; then

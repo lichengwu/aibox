@@ -29,7 +29,7 @@ AIBOX_MODULE_openmaic_uninstall="uninstall.sh"
 AIBOX_MODULE_openmaic_update="update.sh"
 AIBOX_MODULE_openmaic_svc="svc.sh"
 AIBOX_MODULE_openmaic_actions="status health doctor version up down restart logs render upgrade rollback backup restore db config models install clean powerlog url"
-AIBOX_MODULE_openmaic_deps="docker@linux docker-compose@linux git@linux"   # 部署主机运维才需；@linux=仅 Linux 检查
+AIBOX_MODULE_openmaic_deps="docker docker-compose git"   # docker 跨平台（macOS Docker Desktop / Linux）；不限 OS
 
 AIBOX_MODULES="${AIBOX_MODULES} windmill"
 
