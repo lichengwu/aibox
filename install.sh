@@ -60,10 +60,10 @@ if ! echo ":$PATH:" | grep -q ":$BIN_DIR:"; then
   bash) shell_rc="$HOME/.bashrc" ;;
   *) shell_rc="$HOME/.profile" ;;
   esac
-  if [ -f "$shell_rc" ] && grep -q '\.local/bin' "$shell_rc"; then
-    log "$shell_rc 已含 ~/.local/bin，重开 shell 或 source 后生效"
+  if [ -f "$shell_rc" ] && grep -qF "$BIN_DIR" "$shell_rc"; then
+    log "$shell_rc 已含 ${BIN_DIR}，重开 shell 或 source 后生效"
   else
-    printf '\n# aibox\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"$shell_rc"
+    printf '\n# aibox\nexport PATH="%s:$PATH"\n' "$BIN_DIR" >>"$shell_rc"
     log "已追加 PATH 到 ${shell_rc}，执行: source $shell_rc 或重开终端"
   fi
 fi

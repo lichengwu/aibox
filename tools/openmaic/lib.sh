@@ -91,13 +91,24 @@ mask_url() {
 #
 # 只在部署主机（Linux）上做；未配置代理时什么都不动。
 sync_proxy_to_conf() {
-  local conf="/etc/openmaic/openmaic.conf" cur
+  local conf="/etc/openmaic/openmaic.conf" conf_dir cur
   [ -n "${AIBOX_PROXY_URL:-}" ] || return 0
   [ "${AIBOX_PROXY_ENABLED:-0}" = "1" ] || return 0
   [ "$(uname -s)" = "Linux" ] || return 0
 
+  conf_dir="$(dirname "${conf}")"
+  if [ ! -d "${conf_dir}" ]; then
+    mkdir -p "${conf_dir}" 2>/dev/null || {
+      warn "无法创建 ${conf_dir}（需特权）—— 跳过代理下发，CLI 将走内置默认"
+      return 0
+    }
+  fi
+  [ -w "${conf_dir}" ] || {
+    warn "${conf_dir} 不可写 —— 跳过代理下发，CLI 将走内置默认"
+    return 0
+  }
+
   if [ ! -f "${conf}" ]; then
-    mkdir -p "$(dirname "${conf}")" 2>/dev/null || return 0
     cat >"${conf}" <<EOF
 # OpenMAIC CLI 配置（由 aibox 安装 openmaic 模块时创建）
 # 其余键留空即用内置默认值，键名见 openmaic help。
@@ -126,4 +137,17 @@ EOF
   fi
   log "已下发代理到 ${conf}：$(mask_url "${AIBOX_PROXY_URL}")"
   log "  之后在部署主机上执行的 openmaic upgrade 会自动用它拉源码"
+}
+
+# 部署根提示用（与 CLI 内同一表达式；仅提示，可回退）
+openmaic_deploy_root() {
+  if [ -n "${OPENMAIC_BASE_DIR:-}" ]; then
+    printf '%s' "${OPENMAIC_BASE_DIR}"
+    return 0
+  fi
+  local base="${AIBOX_APPS_ROOT:-}"
+  if [ -z "${base}" ]; then
+    base="${AIBOX_HOME:-${HOME:+${HOME}/.aibox}}/apps"
+  fi
+  printf '%s/openmaic' "${base}"
 }

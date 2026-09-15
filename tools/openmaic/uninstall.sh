@@ -19,9 +19,8 @@ log "已删除 ${CLI_DEST}"
 if [ -d /etc/openmaic ]; then
   warn "保留 /etc/openmaic（含 API Key 与访问密码），如需清理请手动删除"
 fi
-# 部署根按 module-spec 约定派生（与 CLI 内同一表达式；此处仅用于提示，故可回退）
-_apps_root="${AIBOX_APPS_ROOT:-${AIBOX_HOME:-${HOME:-}/.aibox}/apps}"
-_deploy_root="${OPENMAIC_BASE_DIR:-${_apps_root}/openmaic}"
+# 部署根按 module-spec 约定派生（与 CLI 内同一表达式）
+_deploy_root="$(openmaic_deploy_root)"
 if [ -d "${_deploy_root}" ]; then
   warn "保留 ${_deploy_root}（部署目录与数据卷），如需清理请用 openmaic clean"
 fi

@@ -10,6 +10,7 @@ resolve_node
 log "npm i -g @agegr/pi-web@latest ..."
 npm install -g @agegr/pi-web@latest --silent
 cleanup_old
+resolve_password
 write_plist
 log "bootstrap $LABEL ..."
 if ! launchctl bootstrap "gui/${UID_}" "$PLIST" 2>/tmp/pi-web-bootstrap.err; then

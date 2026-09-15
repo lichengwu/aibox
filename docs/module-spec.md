@@ -130,8 +130,11 @@ BASE_DIR="${<MODULE>_BASE_DIR:-$APPS_ROOT/<name>}"
   卸载时不知道该不该删。
 - 配置文件不存在时全部走内置默认 —— 行为与引入前完全一致。
 
-> 存量模块状态：`openmaic` **已按本约定对齐**（部署根 `$AIBOX_HOME/apps/openmaic`、
-> 配置 `/etc/openmaic`）；`pi-web` 属安装型，不需要部署根，落点保持平台约定。
+> 存量模块状态：
+>
+> - `openmaic` **已按本约定对齐**（部署根 `$AIBOX_HOME/apps/openmaic`、配置 `/etc/openmaic`）；
+> - `windmill` **已按本约定对齐**（部署根 `$AIBOX_HOME/apps/windmill`、配置 `/etc/windmill/windmill.conf`；CLI 兼容 bash 3.2，定时任务用 systemd 单元）；
+> - `pi-web` 属安装型，不需要部署根，落点保持平台约定。
 
 ## 代理
 
@@ -159,6 +162,38 @@ BASE_DIR="${<MODULE>_BASE_DIR:-$APPS_ROOT/<name>}"
 | `aibox uninstall <name>` | `uninstall.sh` |
 | `aibox update <name>` | `update.sh` |
 | `aibox <name> <action>` | `svc.sh <action>` |
+
+## 退出码约定
+
+钩子与透传的 CLI 应遵循统一退出码，便于自动化脚本（`aibox <module> <action>; echo $?`）稳定依赖。`aibox` 自身沿用 `die` → 退出 `1`。
+
+| 码 | 含义 | 示例 |
+| --- | --- | --- |
+| 0 | 成功 | — |
+| 1 | 运行错误（通用） | 命令执行失败 |
+| 2 | 用法错误 / 非交互下被拒 | 参数不对；危险操作在非交互环境未获确认 |
+| 3 | 依赖缺失 | 平台/命令不满足（如非 Linux 跑部署命令） |
+| 4 | 前置校验失败 | 配置缺失、镜像拉不到 |
+| 10 | 升级失败已回滚 | — |
+| 20 | 需人工介入 | 健康检查失败、回滚后未就绪 |
+| 30 | 服务未就绪 | 容器启动但未通过健康检查 |
+| 40 | 并发冲突 | 拿不到锁（另一项运维在跑） |
+| 50 | 用户取消 | 交互确认选了「否」 |
+
+约定：
+
+- `aibox <module> <action>` 会把 svc 钩子的退出码原样返回给调用方（`AIBOX_MODULE=... bash "$svc"`）。
+- 危险操作在**非交互环境**下默认拒绝并返回 `2`，不静默执行（见下方《交互确认》）。
+- 分发型模块（openmaic/windmill）的 CLI 主体已实现这套语义码；新模块请对齐。
+
+## 交互确认
+
+涉及不可逆操作（卸载部署、清空数据卷、拆除）时必须交互确认，且遵循统一模式：
+
+- **危险操作用 `confirm "<提示>"`**：要求输入 `yes` 才继续；尊重 `--yes`/`-y`（`ASSUME_YES=1`，跳过确认直接继续）与 `--dry-run`（只显示不执行）。openmaic/windmill 的 `confirm` 已如此。
+- **软选择用 `ask_yn "<提示>" [y|n]`**：默认 `n`（拒绝）或 `y`（同意）；**非交互环境（`[ -t 0 ]` 为假）一律走保守默认**并 warn 提示。
+- 主 CLI 的 `ask_confirm`（`bin/aibox`）即软选择、默认拒绝、非交互返回 `1`。`aibox self uninstall` 在 `apps/` 非空时据此 fail-closed。
+- **绝不静默执行危险操作**：非交互 + 无 `--yes` 时返回 `2` 而非 `0`，让脚本与 CI 能察觉。
 
 ## 设计取舍
 

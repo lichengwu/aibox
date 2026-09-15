@@ -13,7 +13,7 @@ bin/aibox            主 CLI（install.sh 下载到 ~/.local/bin/aibox）
 install.sh           bootstrap（curl|bash 安装 / 自更新，幂等）
 registry.sh          模块清单（shell-sourced 变量；模块名连字符→下划线）
 tools/<name>/        模块目录：lib.sh + install/uninstall/update/svc.sh
-                     现有：pi-web（macOS launchd 服务）、openmaic（Linux 部署主机的运维 CLI）
+                     现有：pi-web（macOS launchd 服务）、openmaic（Linux 部署主机的运维 CLI）、windmill（Windmill 自托管 docker compose 运维 CLI）
 docs/module-spec.md  模块钩子契约
 .github/workflows/   CI（release 自动化）
 ```
@@ -23,7 +23,7 @@ docs/module-spec.md  模块钩子契约
 ```text
 aibox install <module>
 aibox uninstall <module>
-aibox update <module> [--all] | --all     # --all 同时更新 aibox 自身
+aibox update <module> [--restart|--no-restart] [--all] | --all     # --all 同时更新 aibox 自身
 aibox list / list-available
 aibox <module> <action> [args]            # 透传模块 svc.sh
 aibox self {update|uninstall|version|help}
@@ -48,7 +48,7 @@ Conventional Commits：`fix:` / `feat:` / `docs:` / `style:` / `chore:`。
 
 ### 版本号与发布流程
 
-- 主 CLI 版本：`bin/aibox` 顶部 `AIBOX_VERSION`。
+- 主 CLI 版本：`bin/aibox` 顶部 `AIBOX_VERSION`。**主 CLI 与各模块版本号独立**，各自迭代（模块随附的 CLI 自带 `*_CLI_VERSION`）。
 - 模块版本：`registry.sh` 里 `AIBOX_MODULE_<name>_version`。
 - **发 release = 改 `AIBOX_VERSION` → push main**。GitHub Actions（`.github/workflows/release.yml`）自动：读取 `AIBOX_VERSION`，若远程无对应 `v<version>` tag，则自动建 tag + 发 release（notes 从上一 tag 自动生成）。版本号未变则跳过（幂等，可重复 push）。
 - 自更新仍走 `curl install.sh | bash`（幂等重装），**不依赖 release** —— release 仅作发布记录与变更追溯。

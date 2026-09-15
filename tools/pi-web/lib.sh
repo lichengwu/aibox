@@ -6,7 +6,7 @@ OLD_LABELS=("com.agegr.pi-web")
 PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
 LOG_DIR="$HOME/Library/Logs"
 PORT="${PI_WEB_PORT:-30141}"
-PASSWORD="${PI_WEB_PASSWORD:-ai-coding}"
+PASSWORD="" # 由 resolve_password 填充（见下）；PI_WEB_PASSWORD 可覆盖
 BIND="${PI_WEB_BIND:-0.0.0.0}"
 UID_="$(id -u)"
 
@@ -15,6 +15,60 @@ warn() { printf '\033[33m[!]\033[0m %s\n' "$*"; }
 die() {
   printf '\033[31m[x]\033[0m %s\n' "$*" >&2
   exit 1
+}
+
+# ---------- 访问密码 ----------
+# 优先级：PI_WEB_PASSWORD 环境变量 > 已装 plist 里的密码（幂等：重装/更新不换）
+# > 首次安装随机生成。避免固定弱默认密码暴露在公网可达的本机服务上。
+resolve_password() {
+  if [ -n "${PI_WEB_PASSWORD:-}" ]; then
+    PASSWORD="$PI_WEB_PASSWORD"
+    return 0
+  fi
+  # 复用已装 plist 里的密码（update/重装不换密码）
+  if [ -f "$PLIST" ]; then
+    local prev
+    prev="$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:PI_WEB_PASSWORD' "$PLIST" 2>/dev/null || true)"
+    if [ -n "$prev" ]; then
+      PASSWORD="$prev"
+      return 0
+    fi
+  fi
+  # 首次安装：随机生成 16 位 hex
+  if command -v openssl >/dev/null 2>&1; then
+    PASSWORD="$(openssl rand -hex 8 2>/dev/null || true)"
+  fi
+  if [ -z "$PASSWORD" ]; then
+    PASSWORD="$(od -An -tx1 -N8 /dev/urandom 2>/dev/null | tr -d ' \n' || true)"
+  fi
+  [ -n "$PASSWORD" ] || PASSWORD="pi-web-$(date +%s)"
+}
+
+# 软选择确认：ask_yn "<提示>" [y|n]
+# 交互读 y/N；非交互（无 TTY）走默认并 warn。默认 n=拒绝、y=同意。
+# 与 openmaic/windmill 的 confirm（危险操作、输入 yes）区分：本函数用于轻量选择。
+ask_yn() {
+  local prompt="$1" def="${2:-n}" ans hint
+  if [ ! -t 0 ]; then
+    warn "非交互环境，${prompt} → 默认 ${def}"
+    case "$def" in y | Y) return 0 ;; *) return 1 ;; esac
+  fi
+  case "$def" in
+  y | Y)
+    hint="[Y/n]"
+    def=y
+    ;;
+  *)
+    hint="[y/N]"
+    def=n
+    ;;
+  esac
+  printf '\033[33m[?]\033[0m %s %s ' "$prompt" "$hint"
+  read -r ans || return 1
+  case "$def" in
+  y | Y) case "$ans" in [nN]*) return 1 ;; *) return 0 ;; esac ;;
+  *) case "$ans" in [yY]*) return 0 ;; *) return 1 ;; esac ;;
+  esac
 }
 
 # ---------- node 探测 ----------
@@ -122,6 +176,7 @@ EOF
 
 # ---------- 状态显示（install/status/diagnose 共用）----------
 show_status() {
+  resolve_password
   if launchctl print "gui/${UID_}/${LABEL}" 2>/dev/null | grep -qE "state\s*=\s*running"; then
     launchctl print "gui/${UID_}/${LABEL}" | grep -E "^\s*(state|last exit code|program)\s*=" | head -4
   else

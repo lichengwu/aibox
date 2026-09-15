@@ -1,0 +1,82 @@
+name: lint
+
+# 质量门：bash 语法检查 + shellcheck + 项目特有踩坑扫描。
+# - bash -n：在 CI 的 bash 5 上对所有脚本做语法检查（兼容 macOS bash 3.2 的脚本也能过）。
+# - shellcheck：error 级硬阻断（warning 暂不阻断，待代码清理干净后收紧）。
+# - gotchas：扫 AGENTS.md 踩坑 #1（全角标点紧跟裸 $VAR）与 #8（local 同行引用前一个 local 变量），
+#   这两个是 bash 3.2 + UTF-8 的运行期问题，shellcheck 抓不到，只能靠正则挡回归。
+#   #8 用 PCRE 反向引用精确匹配"第二个变量引用第一个变量名"，排除注释行，避免误报。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-check:
+    name: bash -n
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash syntax check
+        run: |
+          set -e
+          fail=0
+          # 只检查 git 跟踪的脚本：主 CLI、bootstrap、registry、各模块钩子与 CLI 主体
+          while IFS= read -r f; do
+            if ! bash -n "$f"; then
+              echo "::error file=${f}::bash -n 语法错误"
+              fail=1
+            fi
+          done < <(git ls-files | grep -E '\.sh$|^(bin/aibox|tools/[^/]+/(openmaic|windmill))$')
+          exit $fail
+
+  shellcheck:
+    name: shellcheck (error)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: shellcheck
+        run: |
+          set -e
+          mapfile -t files < <(git ls-files | grep -E '\.sh$|^(bin/aibox|tools/[^/]+/(openmaic|windmill))$')
+          # CLI 主体面向 Linux bash 5（含 bash 4+ 特性，见 AGENTS.md 踩坑 #2），
+          # shellcheck 静态分析支持 bash 4 语法，error 级即可覆盖真实问题。
+          shellcheck --severity=error --external-sources "${files[@]}"
+
+  bash32-gotchas:
+    name: bash 3.2 gotchas (#1 #8)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: scan AGENTS.md pitfalls #1 #8
+        run: |
+          set -e
+          fail=0
+          mapfile -t files < <(git ls-files | grep -E '\.sh$|^(bin/aibox|tools/[^/]+/(openmaic|windmill))$')
+          for f in "${files[@]}"; do
+            # 踩坑 #1：全角标点紧跟裸 $VAR（macOS bash 3.2 + UTF-8 locale 报 unbound）。
+            # 正则要求非 ASCII 紧贴变量名才算命中；排除注释行（含说明性示例）。
+            m1="$(grep -nP '\$[A-Za-z_][A-Za-z0-9_]*[，。、；：！？（）「」]' "$f" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+            if [ -n "$m1" ]; then
+              echo "::error file=${f}::踩坑 #1: 全角标点紧跟裸 \$VAR，改用 \${VAR} 显式界定"
+              echo "$m1"
+              fail=1
+            fi
+            # 踩坑 #8：local a="x" b="${a}/y" 同行引用前一个 local 变量（bash 3.2 运行期 unbound）。
+            # 用 PCRE 反向引用精确匹配"第二个变量值引用第一个变量名"，排除注释行，避免误报
+            # （local a="x" b="$OTHER" 引用的是外部变量，不命中）。
+            m8="$(grep -nP 'local\s+([A-Za-z_]\w*)\s*=\s*"[^"]*"\s+[A-Za-z_]\w*\s*=\s*"\$\{?\1' "$f" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+            if [ -n "$m8" ]; then
+              echo "::error file=${f}::踩坑 #8: local 同行引用前一个变量，拆成两行"
+              echo "$m8"
+              fail=1
+            fi
+          done
+          exit $fail

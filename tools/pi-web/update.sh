@@ -29,6 +29,7 @@ fi
 log "升级 @agegr/pi-web ${cur:-未安装} -> ${latest:-latest} ..."
 npm install -g @agegr/pi-web@latest --silent
 cleanup_old
+resolve_password
 write_plist
 
 # ---------- 决定是否重启 ----------
@@ -37,11 +38,9 @@ case "$restart_arg" in
 --restart) do_restart=1 ;;
 --no-restart) do_restart=0 ;;
 "")
-  if [ -t 0 ]; then
-    read -r -p "更新完成，是否重启 pi-web 服务？[Y/n] " ans
-    case "${ans:-y}" in [nN]*) do_restart=0 ;; *) do_restart=1 ;; esac
+  if ask_yn "更新完成，是否重启 pi-web 服务？" y; then
+    do_restart=1
   else
-    warn "非交互环境且未指定 --restart/--no-restart，默认不重启"
     do_restart=0
   fi
   ;;

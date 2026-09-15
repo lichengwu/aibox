@@ -129,6 +129,7 @@ aibox --no-proxy ...  # 单次绕过
 | --- | --- |
 | [`pi-web`](tools/pi-web/README.md) | 把 `@agegr/pi-web` 部署为 macOS launchd 常驻服务（HTTP Basic Auth + 自动重启） |
 | [`openmaic`](tools/openmaic/README.md) | [OpenMAIC](https://github.com/THU-MAIC/OpenMAIC) 统一运维 CLI，分发到 Linux 部署主机（安装 / 升级 / 备份 / 自检） |
+| [`windmill`](tools/windmill/README.md) | [Windmill](https://www.windmill.dev) 自托管运维 CLI，docker compose 部署（初始化 / 升级 / 备份 / 演练 / 自检） |
 
 ## 开发新模块
 

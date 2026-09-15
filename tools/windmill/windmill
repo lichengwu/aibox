@@ -758,11 +758,11 @@ acquire_lock() {
       pid=$(cat "$d/pid" 2>/dev/null || true)
       if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
         rm -rf "$d"
-        warn "已回收残留锁 $d（持锁进程 ${pid:-?} 不存在）"
+        warn "已回收残留锁 ${d}（持锁进程 ${pid:-?} 不存在）"
       fi
     fi
     mkdir "$d" 2>/dev/null \
-      || die "另一个部署任务正在运行（锁: $d）。确认无任务后删除该目录重试。"
+      || die "另一个部署任务正在运行（锁: ${d}）。确认无任务后删除该目录重试。"
     printf '%s\n' "$$" > "$d/pid"
   fi
 }
@@ -2099,7 +2099,7 @@ cmd_doctor() {
   mirror_probe "docker.io 镜像源" "${WM_HUB_MIRROR:-}"  "未设置；交给 daemon 的 registry-mirrors（有黑洞源的风险）"
 
   # docker daemon 的 HTTP 代理 —— 本环境实测最有效的提速手段。
-  # 给 daemon 配宿主的 http://192.168.50.135:7897 后，直连 ghcr.io 从 2.4KB/s
+  # 给 daemon 配宿主代理后，直连 ghcr.io 从 2.4KB/s
   # 提到 66MB/s（3.98GB 镜像 50 秒拉完）。镜像源只是备选，代理才是首选。
   local dpx
   dpx=$(docker info 2>/dev/null | awk -F': ' '/HTTP Proxy/{print $2; exit}')
