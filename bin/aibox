@@ -884,6 +884,42 @@ install_dep() {
 }
 
 # ---------- 命令 ----------
+# 列出所有模块的端口分配表（从 module.yaml ports 字段）+ 实际监听探测。
+cmd_ports() {
+  load_registry
+  echo "端口分配表："
+  printf '  %-14s %-18s %-12s %s\n' "模块" "端口/协议" "用途" "状态"
+  local m p port proto_usage proto usage status
+  for m in ${AIBOX_MODULES:-}; do
+    for p in $(module_field "$m" ports); do
+      port="${p%%/*}"
+      proto_usage="${p#*/}"
+      proto="${proto_usage%%:*}"
+      usage="${proto_usage#*:}"
+      if command -v lsof >/dev/null 2>&1 && lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+        status="监听中"
+      else
+        status="—"
+      fi
+      printf '  %-14s %-18s %-12s %s\n' "$m" "${port}/${proto}" "$usage" "$status"
+    done
+  done
+}
+
+# install 时探测声明端口是否被外部占用（lsof），被占则 warn（可用环境变量覆盖）。
+check_ports() {
+  local name="$1" ports p port
+  ports="$(module_field "$name" ports)"
+  [ -n "$ports" ] || return 0
+  command -v lsof >/dev/null 2>&1 || return 0
+  for p in $ports; do
+    port="${p%%/*}"
+    if lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      warn "端口 ${port} 已被占用（PID $(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | head -1)）；可用环境变量覆盖"
+    fi
+  done
+}
+
 cmd_install() {
   local name="${1:-}"
   [ -n "$name" ] || die "用法: aibox install <module>"
@@ -894,6 +930,7 @@ cmd_install() {
     warn "模块 $name 目标平台 ${plat}，当前 $(uname -s)（继续可能有错）"
   fi
   check_deps "$name"
+  check_ports "$name"
   local inst; inst="$(module_field "$name" install)"
   log "安装 $name ..."
   if [ -n "$inst" ] && [ -f "$dest/$inst" ]; then
@@ -987,6 +1024,19 @@ cmd_list_available() {
   done
 }
 
+# 输出模块开发指南（upstream 链接 + DEVELOPMENT.md 路径），从 module.yaml upstream 读。
+cmd_dev_guide() {
+  local name="$1"
+  load_registry
+  module_exists "$name" || die "未知模块: $name"
+  echo "模块: $name v$(module_field "$name" version)"
+  echo "主页: $(module_field "$name" upstream_homepage)"
+  echo "文档: $(module_field "$name" upstream_docs)"
+  echo "安装: $(module_field "$name" upstream_install)"
+  echo "测试: $(module_field "$name" upstream_test)"
+  echo "开发指南: tools/$name/docs/DEVELOPMENT.md"
+}
+
 cmd_module_action() {
   local name="${1:-}"
   [ -n "$name" ] || die "用法: aibox <module> <action>  或  aibox help"
@@ -997,6 +1047,11 @@ cmd_module_action() {
     return
   fi
   shift
+  # dev-guide 特例：主 CLI 读 module.yaml upstream，不透传 svc.sh（未装也能查）
+  if [ "$action" = "dev-guide" ]; then
+    cmd_dev_guide "$name"
+    return
+  fi
   is_installed "$name" || die "$name 未安装（先: aibox install ${name}）"
   local svc="$AIBOX_MOD_DIR/$name/svc.sh"
   [ -f "$svc" ] || die "缺少 ${svc}（试 aibox update ${name}）"
@@ -1126,6 +1181,7 @@ case "${1:-help}" in
   list)             cmd_list ;;
   list-available|available|search)
                     cmd_list_available ;;
+  ports)            cmd_ports ;;
   proxy)            shift; cmd_proxy "$@" ;;
   self)
     shift
