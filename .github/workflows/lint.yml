@@ -3,6 +3,8 @@ name: lint
 # 质量门：bash 语法检查 + shellcheck + 项目特有踩坑扫描。
 # - bash -n：在 CI 的 bash 5 上对所有脚本做语法检查（兼容 macOS bash 3.2 的脚本也能过）。
 # - shellcheck：error 级硬阻断（warning 暂不阻断，待代码清理干净后收紧）。
+#   --shell=bash：lib.sh/registry.sh 是被 source 的库（无 shebang），显式指定 shell
+#   避免 SC2148（"add shebang"）误报。
 # - gotchas：扫 AGENTS.md 踩坑 #1（全角标点紧跟裸 $VAR）与 #8（local 同行引用前一个 local 变量），
 #   这两个是 bash 3.2 + UTF-8 的运行期问题，shellcheck 抓不到，只能靠正则挡回归。
 #   #8 用 PCRE 反向引用精确匹配"第二个变量引用第一个变量名"，排除注释行，避免误报。
@@ -48,7 +50,7 @@ jobs:
           mapfile -t files < <(git ls-files | grep -E '\.sh$|^(bin/aibox|tools/[^/]+/(openmaic|windmill))$')
           # CLI 主体面向 Linux bash 5（含 bash 4+ 特性，见 AGENTS.md 踩坑 #2），
           # shellcheck 静态分析支持 bash 4 语法，error 级即可覆盖真实问题。
-          shellcheck --severity=error --external-sources "${files[@]}"
+          shellcheck --severity=error --external-sources --shell=bash "${files[@]}"
 
   bash32-gotchas:
     name: bash 3.2 gotchas (#1 #8)
