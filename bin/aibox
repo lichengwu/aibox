@@ -5,7 +5,7 @@
 # 用法:
 #   aibox install <module>          安装模块
 #   aibox uninstall <module>        卸载模块
-#   aibox update <module> | --all   更新模块
+#   aibox update <module> [--restart|--no-restart] [--all] | --all   更新模块
 #   aibox list                      已安装模块
 #   aibox list-available            可用模块
 #   aibox <module> <action> [args]  调用模块服务动作（如 aibox pi-web start）
@@ -190,15 +190,38 @@ ask_confirm() {
   case "$ans" in y | Y | yes | YES) return 0 ;; *) return 1 ;; esac
 }
 
+# 检测本地 clash 池（mihomo）是否启用。读 apps/clash/state 的 CLASH_ENABLED，
+# 不 probe 端口（避免每次 aibox 命令的延迟）；mihomo 挂了 curl 会失败，
+# clash status 能查。state 由 aibox clash on/off 维护。
+CLASH_PORT="7890"
+clash_active() {
+  local st="${AIBOX_HOME}/apps/clash/state"
+  [ -f "$st" ] || return 1
+  # shellcheck disable=SC1090
+  . "$st" 2>/dev/null || return 1
+  [ "${CLASH_ENABLED:-0}" = "1" ] || return 1
+  CLASH_PORT="${CLASH_PORT:-7890}"
+  return 0
+}
+
 # 把生效中的代理导出为环境变量，供本进程与模块钩子使用。
 # 小写大写都要给：curl 只认小写的 http_proxy（大写 HTTP_PROXY 会被它忽略），
 # 而 apt 之类只认大写 —— 实测两者认的集合不同。
 # 无论代理来自配置还是环境，都汇总到 AIBOX_PROXY_URL 一个出口，
 # 模块就不必去猜该读哪个标准变量名。
+# 优先级：本地 clash 池（mihomo）> 静态代理 > 直连。
 apply_proxy() {
   local eff="" no_p="$AIBOX_NO_PROXY"
 
-  if [ "$AIBOX_PROXY_ENABLED" = "1" ]; then
+  if clash_active; then
+    eff="socks5://127.0.0.1:${CLASH_PORT}"
+    export http_proxy="$eff" https_proxy="$eff" all_proxy="$eff"
+    export HTTP_PROXY="$eff" HTTPS_PROXY="$eff"
+    export no_proxy="$no_p" NO_PROXY="$no_p"
+    AIBOX_PROXY_SOURCE="clash"
+    AIBOX_PROXY_ENABLED=1
+    return 0   # 不覆盖 AIBOX_PROXY_URL：保留静态代理值供 clash off 回退 + proxy show 显示
+  elif [ "$AIBOX_PROXY_ENABLED" = "1" ]; then
     if [ -n "${http_proxy:-}" ] || [ -n "${https_proxy:-}" ] || [ -n "${all_proxy:-}" ]; then
       # 环境里已指定 → 尊重，不夺权，只做归一化导出
       eff="${http_proxy:-${https_proxy:-${all_proxy:-}}}"
@@ -253,9 +276,17 @@ cmd_proxy() {
 }
 
 cmd_proxy_show() {
+  # clash 池优先：开启时显示本地 mihomo（静态代理作回退提示）
+  if clash_active; then
+    log "代理配置（${AIBOX_CONFIG}）+ clash 池"
+    info "实际生效   socks5://127.0.0.1:${CLASH_PORT}（本地 mihomo，优先于静态代理）"
+    [ -n "$AIBOX_PROXY_URL" ] && info "静态代理   $(mask_url "$AIBOX_PROXY_URL")（clash off 后回退）"
+    info "clash      aibox clash status"
+    return 0
+  fi
   if [ -z "$AIBOX_PROXY_URL" ]; then
     log "未配置代理（直连）"
-    info "设置: aibox proxy set http://host:port"
+    info "设置: aibox proxy set http://host:port  或  aibox clash set <订阅URL>"
     return 0
   fi
   local state="已启用"
@@ -422,6 +453,7 @@ cmd_proxy_env() {
     printf 'AIBOX_PROXY_URL=%s\n' "$u"
     printf 'http_proxy=%s\n' "$u"
     printf 'https_proxy=%s\n' "$u"
+    printf 'all_proxy=%s\n' "$u"
     printf 'no_proxy=%s\n' "$AIBOX_NO_PROXY"
   else
     printf "export http_proxy='%s'\n" "$u"
@@ -883,7 +915,7 @@ aibox $AIBOX_VERSION — AI coding 工具集模块管理器
 用法:
   aibox install <module>          安装模块
   aibox uninstall <module>        卸载模块
-  aibox update <module> | --all   更新模块
+  aibox update <module> [--restart|--no-restart] [--all] | --all   更新模块
   aibox list                      已安装模块
   aibox list-available            可用模块
   aibox <module> <action> [args]  调用模块服务动作（如 aibox pi-web start）
@@ -906,6 +938,17 @@ aibox $AIBOX_VERSION — AI coding 工具集模块管理器
   aibox --no-proxy <命令>         本次调用绕过代理
 
   校验清单可用 AIBOX_PROBE_SITES 覆盖，格式每行 "标签|URL|分组"。
+
+clash 订阅代理池（mihomo 内核，自动测速/切换；详见 aibox clash --help）:
+  aibox install clash              安装 mihomo 内核（aibox 自动下载二进制）
+  aibox clash set <订阅URL>          存订阅 + 生成 config
+  aibox clash on | off              启停（on 后 aibox 出口自动切到本地 mihomo）
+  aibox clash status                状态 + 当前节点
+  aibox clash refresh               强制刷新订阅（超 1 周自动刷新）
+  aibox clash select <节点>         手动切节点
+  aibox clash test | logs | doctor  探测 / 日志 / 自检
+
+  clash 开启时优先于静态代理；off 回退。详见 tools/clash/README.md。
 
 首个模块: aibox install pi-web
 EOF

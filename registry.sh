@@ -41,3 +41,16 @@ AIBOX_MODULE_windmill_update="update.sh"
 AIBOX_MODULE_windmill_svc="svc.sh"
 AIBOX_MODULE_windmill_actions="status doctor version up down logs shell credentials systemd destroy backup upgrade rollback check deploy restore drill snapshots init"
 
+AIBOX_MODULES="${AIBOX_MODULES} clash"
+
+AIBOX_MODULE_clash_version="1.0.0"
+AIBOX_MODULE_clash_description="Clash 订阅代理池 — mihomo 内核编排（自动测速/切换/失败回退静态代理）"
+AIBOX_MODULE_clash_platform=""
+AIBOX_MODULE_clash_dir="tools/clash"
+AIBOX_MODULE_clash_files="lib.sh install.sh uninstall.sh update.sh svc.sh"
+AIBOX_MODULE_clash_install="install.sh"
+AIBOX_MODULE_clash_uninstall="uninstall.sh"
+AIBOX_MODULE_clash_update="update.sh"
+AIBOX_MODULE_clash_svc="svc.sh"
+AIBOX_MODULE_clash_actions="start stop restart status refresh set select test logs doctor"
+
