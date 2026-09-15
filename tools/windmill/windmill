@@ -2882,18 +2882,136 @@ cmd_credentials() {
 # =============================================================================
 # 命令: systemd
 # =============================================================================
+# 生成 launchd plist（macOS LaunchAgent）。$1=label
+gen_launchd_plist() {
+  local label="$1"
+  case "$label" in
+    com.windmill.backup)
+      cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.windmill.backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${CLI_BIN}</string><string>--quiet</string><string>--yes</string>
+    <string>backup</string><string>--daily</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>WM_DIR</key><string>${WM_DIR}</string>
+    <key>WM_CONF_FILE</key><string>${WM_CONF_FILE}</string>
+    <key>HOME</key><string>${HOME}</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>3</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key><string>${LOG_DIR}/backup.log</string>
+  <key>StandardErrorPath</key><string>${LOG_DIR}/backup.err.log</string>
+</dict>
+</plist>
+EOF
+      ;;
+    com.windmill.update-check)
+      cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.windmill.update-check</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${CLI_BIN}</string><string>--quiet</string><string>check</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>WM_DIR</key><string>${WM_DIR}</string>
+    <key>WM_CONF_FILE</key><string>${WM_CONF_FILE}</string>
+    <key>HOME</key><string>${HOME}</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>1</integer>
+    <key>Hour</key><integer>9</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key><string>${LOG_DIR}/update-check.log</string>
+  <key>StandardErrorPath</key><string>${LOG_DIR}/update-check.err.log</string>
+</dict>
+</plist>
+EOF
+      ;;
+    *) die "未知 launchd label: $label" ;;
+  esac
+}
+
+# macOS launchd 定时任务（对齐 systemd timer）。用户级 LaunchAgent，不需 root。
+cmd_launchd() {
+  local action="${1:-status}"
+  local agents_dir="$HOME/Library/LaunchAgents"
+  local uid; uid="$(id -u)"
+  local backup_label="com.windmill.backup"
+  local check_label="com.windmill.update-check"
+  case "$action" in
+    install)
+      require_ready
+      mkdir -p "$agents_dir" "$LOG_DIR"
+      gen_launchd_plist "$backup_label" > "$agents_dir/${backup_label}.plist"
+      gen_launchd_plist "$check_label" > "$agents_dir/${check_label}.plist"
+      chmod 0644 "$agents_dir"/com.windmill.*.plist
+      launchctl bootout "gui/${uid}/${backup_label}" 2>/dev/null || true
+      launchctl bootout "gui/${uid}/${check_label}" 2>/dev/null || true
+      launchctl bootstrap "gui/${uid}" "$agents_dir/${backup_label}.plist" 2>/dev/null \
+        || launchctl load "$agents_dir/${backup_label}.plist" 2>/dev/null || warn "backup timer 加载失败"
+      launchctl bootstrap "gui/${uid}" "$agents_dir/${check_label}.plist" 2>/dev/null \
+        || launchctl load "$agents_dir/${check_label}.plist" 2>/dev/null || warn "update-check timer 加载失败"
+      hr; ok "launchd 定时任务已安装"; hr
+      log "  backup       每日 03:30  (${backup_label})"
+      log "  update-check 每周一 09:00 (${check_label})"
+      log "  日志: $LOG_DIR/{backup,update-check}.{log,err.log}"
+      log "  手动触发: launchctl kickstart -k gui/${uid}/${backup_label}"
+      hr
+      ;;
+    uninstall)
+      launchctl bootout "gui/${uid}/${backup_label}" 2>/dev/null || launchctl unload "$agents_dir/${backup_label}.plist" 2>/dev/null || true
+      launchctl bootout "gui/${uid}/${check_label}" 2>/dev/null || launchctl unload "$agents_dir/${check_label}.plist" 2>/dev/null || true
+      rm -f "$agents_dir/${backup_label}.plist" "$agents_dir/${check_label}.plist"
+      ok "launchd 定时任务已卸载"
+      ;;
+    status)
+      if [ ! -f "$agents_dir/${backup_label}.plist" ]; then
+        warn "未安装 launchd 定时任务。执行: $CLI_NAME systemd install"
+        exit 3
+      fi
+      hr; log "${C_BOLD}launchd 定时任务${C_RESET}"; hr
+      local lbl
+      for lbl in "$backup_label" "$check_label"; do
+        local state; state="$(launchctl print "gui/${uid}/${lbl}" 2>/dev/null | grep -E '^\s*state\s*=' | head -1 | sed 's/.*= //')"
+        printf '  %-30s %s\n' "$lbl" "${state:-未加载}"
+      done
+      hr
+      log "${C_DIM}日志: $LOG_DIR/{backup,update-check}.{log,err.log}${C_RESET}"
+      log "${C_DIM}手动触发: launchctl kickstart -k gui/${uid}/${backup_label}${C_RESET}"
+      hr
+      ;;
+    *) usage_die "systemd: 未知动作 ${action}（install|status|uninstall）" ;;
+  esac
+}
+
 cmd_systemd() {
   local action="${1:-status}"
   case "$action" in -h|--help) help_systemd; exit 0 ;; esac
   wm_paths
-  local dst=/etc/systemd/system
-  # macOS 用 launchd；systemd 单元体系本期未适配，明确报错而非静默失败
-  if [ "$OS_KIND" = "Darwin" ] || ! systemd_ok; then
-    if [ "$OS_KIND" = "Darwin" ]; then
-      die "macOS 使用 launchd，systemd 单元不适用（本 CLI 的 launchd 适配尚未实现）"
-    fi
-    die "未找到 systemctl（systemd 不可用）"
+  # macOS 用 launchd（LaunchAgent），与 systemd 单元体系不同，走 cmd_launchd 分支
+  if [ "$OS_KIND" = "Darwin" ]; then
+    cmd_launchd "$action"
+    return $?
   fi
+  if ! systemd_ok; then die "未找到 systemctl（systemd 不可用）"; fi
+  local dst=/etc/systemd/system
 
   case "$action" in
     install)

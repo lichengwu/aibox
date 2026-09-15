@@ -67,8 +67,7 @@ host_notice() {
     return 0
   fi
   echo
-  warn "当前系统 $(uname -s)：CLI 可运行（已做平台适配），但 systemd 单元不适用"
-  log "  macOS 上定时任务（每日备份/版本检查）的 launchd 适配尚未实现"
+  warn "当前系统 $(uname -s)：CLI 可运行；定时任务用 launchd（aibox windmill systemd install）"
   log "  部署主机上安装: WINDMILL_BIN_DIR=/usr/local/bin aibox install windmill"
 }
 
