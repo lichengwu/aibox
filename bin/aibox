@@ -80,6 +80,7 @@ parse_yaml_module_stdin() {
           if (v=="") parent=k; else printvar(NAME"_"k, stripq(v))
         } else {
           if (v=="") subparent=k
+          else if (parent=="hooks") printvar(NAME"_"k, stripq(v))  # hooks.install → _install（兼容 module_field）
           else if (parent!="") printvar(NAME"_"parent"_"k, stripq(v))
         }
       }

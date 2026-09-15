@@ -1,0 +1,41 @@
+name: base
+version: 1.0.0
+description: "共享基础组件（PostgreSQL 18 + Redis 7），各模块独立数据库"
+platform: ""
+dir: tools/base
+
+deps:
+  - docker
+  - docker-compose
+
+ports:
+  - 35432/tcp:pg
+  - 36379/tcp:redis
+
+files:
+  - lib.sh
+  - install.sh
+  - uninstall.sh
+  - update.sh
+  - svc.sh
+  - docker-compose.yml
+
+hooks:
+  install: install.sh
+  uninstall: uninstall.sh
+  update: update.sh
+  svc: svc.sh
+
+actions:
+  - start
+  - stop
+  - restart
+  - status
+  - createdb
+
+upstream:
+  homepage: https://www.postgresql.org/
+  docs: https://www.postgresql.org/docs/
+
+dashboard:
+  hint: "共享 PG(5432→35432)/Redis(6379→36379)；aibox base createdb <module> 建库"

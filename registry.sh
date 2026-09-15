@@ -3,4 +3,4 @@
 # 在各模块的 tools/<name>/module.yaml 声明，主 CLI load_registry 解析注入。
 # shellcheck shell=bash disable=SC2034  # AIBOX_MODULES 由 load_registry eval 后用
 
-AIBOX_MODULES="pi-web openmaic windmill clash"
+AIBOX_MODULES="pi-web openmaic windmill clash base"
