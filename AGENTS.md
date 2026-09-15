@@ -13,9 +13,9 @@ bin/aibox            主 CLI（install.sh 下载到 ~/.local/bin/aibox）
 install.sh           bootstrap（curl|bash 安装 / 自更新，幂等）
 registry.sh          模块清单（shell-sourced 变量；模块名连字符→下划线）
 tools/<name>/        模块目录：lib.sh + install/uninstall/update/svc.sh
-                     现有：pi-web（macOS launchd 服务）、openmaic（Linux 部署主机的运维 CLI）、windmill（Windmill 自托管 docker compose 运维 CLI）
+                     现有：pi-web（macOS launchd 服务）、openmaic（Linux 部署主机的运维 CLI）、windmill（Windmill 自托管 docker compose 运维 CLI）、clash（Clash 订阅代理池，mihomo 内核编排）
 docs/module-spec.md  模块钩子契约
-.github/workflows/   CI（release 自动化）
+.github/workflows/   CI（release 自动化 + lint 质量门：bash -n / shellcheck / 踩坑 #1 #8 扫描）
 ```
 
 ## 核心命令
@@ -27,8 +27,9 @@ aibox update <module> [--restart|--no-restart] [--all] | --all     # --all 同�
 aibox list / list-available
 aibox <module> <action> [args]            # 透传模块 svc.sh
 aibox self {update|uninstall|version|help}
-aibox proxy {show|set <url>|unset|on|off|test|env}   # 代理配置（全局，见 README「代理」）
+aibox proxy {show|set <url>|unset|on|off|test|env}   # 静态代理配置（全局，见 README「代理」）
 aibox --no-proxy <命令>                              # 单次绕过代理
+aibox clash {set <订阅URL>|on|off|status|refresh|select|test|logs|doctor}  # clash 订阅池（mihomo，见 tools/clash/README）
 ```
 
 ## 贡献约定

@@ -38,11 +38,22 @@ aibox proxy on | off              启用 / 停用（配置保留）
 aibox proxy unset                 清除配置
 aibox proxy env [--remote]        输出 export 语句 / 远端下发格式
 aibox --no-proxy <命令>           本次调用绕过代理
+
+aibox clash set <订阅URL>          存订阅 + 生成 config（mihomo 内核，自动测速/切换）
+aibox clash on | off               启停（on 后 aibox 出口自动切到本地 mihomo）
+aibox clash status | refresh       状态/当前节点 | 强制刷新订阅（超 1 周自动）
+aibox clash select <节点>          手动切节点
+aibox clash test | logs | doctor   探测/日志/自检
 ```
 
 ## 代理
 
-有些环境下（比如国内直连 GitHub）`aibox` 拉不到模块，或模块钩子里的 git / npm 出不去。配置一次代理，`aibox` 自身与它派生的模块钩子都走它：
+aibox 有两种代理出口：
+
+- **静态代理**（`aibox proxy set`）：手动指定一个 http/https/socks5 代理，见下。
+- **clash 订阅池**（`aibox install clash` + `aibox clash set <订阅URL>`）：编排本地 mihomo 内核，订阅节点自动测速选最快、失败切换，详见 [clash 模块](tools/clash/README.md)。clash 开启时优先于静态代理。
+
+有些环境下（比如国内直连 GitHub）`aibox` 拉不到模块，或模块钩子里的 git / npm 出不去。配置一次静态代理，`aibox` 自身与它派生的模块钩子都走它：
 
 ```bash
 aibox proxy set http://10.0.0.2:7897           # 设置 → 测试 → 保存 → 校验站点
@@ -130,6 +141,7 @@ aibox --no-proxy ...  # 单次绕过
 | [`pi-web`](tools/pi-web/README.md) | 把 `@agegr/pi-web` 部署为 macOS launchd 常驻服务（HTTP Basic Auth + 自动重启） |
 | [`openmaic`](tools/openmaic/README.md) | [OpenMAIC](https://github.com/THU-MAIC/OpenMAIC) 统一运维 CLI，分发到 Linux 部署主机（安装 / 升级 / 备份 / 自检） |
 | [`windmill`](tools/windmill/README.md) | [Windmill](https://www.windmill.dev) 自托管运维 CLI，docker compose 部署（初始化 / 升级 / 备份 / 演练 / 自检） |
+| [`clash`](tools/clash/README.md) | Clash 订阅代理池，编排本地 mihomo 内核（自动测速选最快 / 失败切换 / 超 1 周自动刷新） |
 
 ## 开发新模块
 
@@ -147,6 +159,7 @@ aibox --no-proxy ...  # 单次绕过
 - **代理配置与运行时分离**：配置写 `~/.aibox/config`（600），启动时导出为环境变量。因此它既覆盖 `aibox` 自身，也覆盖它派生的模块钩子（子进程继承），无需改任何现有模块代码。跨机器 / 跨时间那一层（模块在别处自己联网）必须由模块把值写进自己的配置文件 —— 环境变量本来就跨不过去，这不是取巧，是边界。
 - **代理失效选确定性，不做静默回退**：代理不通就报错。静默回退会让"代理已坏"表现成"每次都慢一点"，比直接失败更难查。配套给了 `test` / `off` / `--no-proxy` 三个出口，不至于走投无路。
 - **不碰用户的 shell 配置**：`aibox proxy set` 只写自己的配置，不往 `~/.zshrc` 注入 —— 全局代理会影响本不该走代理的服务，超出 aibox 的职责。要全局生效用 `eval "$(aibox proxy env)"`。
+- **clash 池不自解析订阅 yaml**：`aibox clash` 把订阅 URL 写进 mihomo 的 `proxy-providers`，拉取/解析/测速/切换全交给内核——纯 bash 不写 yaml 解析（脆弱），订阅格式变化由 mihomo 适配。
 
 ## License
 

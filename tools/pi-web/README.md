@@ -31,7 +31,7 @@ aibox pi-web diagnose
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `PI_WEB_PASSWORD` | `ai-coding` | HTTP Basic Auth 密码（用户名固定 `pi`） |
+| `PI_WEB_PASSWORD` | 随机生成 | HTTP Basic Auth 密码（用户名固定 `pi`）；首次安装随机生成并写入 plist，重装/更新从 plist 读回（幂等不换）；设此变量则用它覆盖 |
 | `PI_WEB_BIND` | `0.0.0.0` | 监听地址；`127.0.0.1` 仅本机 |
 | `PI_WEB_PORT` | `30141` | 监听端口 |
 

@@ -43,6 +43,21 @@ aibox clash set/refresh 时若订阅缓存超 1 周，自动重拉
 
 两者可并存：静态代理做兜底，clash 池做主力。
 
+## 冷启动（订阅站被墙时）
+
+clash 池要订阅才能起来，但**拉订阅本身需要能访问订阅站**——若订阅站国内被干扰（连接 EOF），aibox/mihomo 直连拉不到，节点为空。
+
+这时先用静态代理把订阅拉到手：
+
+```bash
+aibox proxy set http://<能访问订阅站的代理>   # 临时静态代理
+aibox clash refresh                          # aibox 走静态代理拉订阅到 pool.yaml 缓存
+aibox clash on                               # mihomo 用缓存节点起来
+aibox proxy off                              # 可选：停静态代理，出口改走 clash 池
+```
+
+mihomo 是 nohup 子进程，启动时继承 aibox 的 `http_proxy`——若启动时环境有代理，mihomo 自己后续刷新订阅也会走它。日常 mihomo `interval:86400` 自动刷新；aibox 兜底：`clash status`/`on` 时检查 `state.LAST_REFRESH`，超 1 周重拉。
+
 ## 刷新策略
 
 双层互补：

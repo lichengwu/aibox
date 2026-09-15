@@ -1,6 +1,6 @@
 # 把 windmill 运维 CLI 适配为 aibox 模块 —— 方案
 
-> 状态：**待实施**
+> 状态：**已实施**（windmill v1.1.0，见 registry.sh；部署根/配置落点已按 docs/module-spec.md 约定对齐。本文档为历史设计记录）
 > 目标：在 aibox 仓库新增 `tools/windmill/` 模块，把 Windmill 自托管运维 CLI 纳管
 
 ## 修订说明

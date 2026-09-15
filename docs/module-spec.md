@@ -134,6 +134,7 @@ BASE_DIR="${<MODULE>_BASE_DIR:-$APPS_ROOT/<name>}"
 >
 > - `openmaic` **已按本约定对齐**（部署根 `$AIBOX_HOME/apps/openmaic`、配置 `/etc/openmaic`）；
 > - `windmill` **已按本约定对齐**（部署根 `$AIBOX_HOME/apps/windmill`、配置 `/etc/windmill/windmill.conf`；CLI 兼容 bash 3.2，定时任务用 systemd 单元）；
+> - `clash` **已按本约定对齐**（部署根 `$AIBOX_HOME/apps/clash`；无 `/etc` 配置——订阅含 token，state/config/pool.yaml 均 600 落部署根；mihomo 二进制由 install 钩子从 GitHub 下载）；
 > - `pi-web` 属安装型，不需要部署根，落点保持平台约定。
 
 ## 代理
