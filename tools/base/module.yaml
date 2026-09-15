@@ -38,4 +38,4 @@ upstream:
   docs: https://www.postgresql.org/docs/
 
 dashboard:
-  hint: "共享 PG(5432→35432)/Redis(6379→36379)；aibox base createdb <module> 建库"
+  hint: "共享 PG 5432 / Redis 36379；aibox base createdb 模块名 建库"
