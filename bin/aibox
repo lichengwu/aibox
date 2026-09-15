@@ -741,6 +741,100 @@ cmd_proxy_check() {
   return 0
 }
 
+# ---------- 依赖检查与自动安装 ----------
+# 读模块 deps 字段（格式：命令名，可带 @平台 或 :版本），检查是否满足，缺则按平台装。
+# deps 示例："docker@linux docker-compose python3" "node:22 npm" ""
+# @平台：仅在该平台检查（docker@linux=仅 Linux 检查，非 Linux 跳过+提示）
+# :版本：版本约束（node:22=node 主版本 >= 22）
+check_deps() {
+  local name="$1" deps plat dep cmd ptag ver
+  load_registry
+  plat="$(module_field "$name" platform)"
+  # 平台过滤：platform 非空且不匹配当前平台 → 跳过（pi-web 在 Linux 不查 node）
+  if [ -n "$plat" ] && [ "$plat" != "$(uname -s | tr '[:upper:]' '[:lower:]')" ]; then
+    return 0
+  fi
+  deps="$(module_field "$name" deps)"
+  [ -n "$deps" ] || return 0
+  log "检查依赖: ${deps}"
+  for dep in $deps; do
+    cmd="$dep"; ptag=""; ver=""
+    case "$dep" in
+      *@*) cmd="${dep%@*}"; ptag="${dep#*@}" ;;
+    esac
+    case "$cmd" in
+      *:*) ver="${cmd#*:}"; cmd="${cmd%%:*}" ;;
+    esac
+    # @平台过滤
+    if [ -n "$ptag" ] && [ "$ptag" != "$(uname -s | tr '[:upper:]' '[:lower:]')" ]; then
+      info "  ${cmd}@${ptag}（当前 $(uname -s) 不检查；运行在 ${ptag} 时需）"
+      continue
+    fi
+    if dep_satisfied "$cmd" "$ver"; then
+      ok "  ${cmd} ✓"
+    else
+      bad "  ${cmd} ✗（缺失）"
+      install_dep "$cmd" || warn "  ${cmd} 自动安装失败，可手动装后重试"
+    fi
+  done
+}
+
+# 检查依赖命令是否满足（含版本约束）
+dep_satisfied() {
+  local cmd="$1" ver="${2:-}" cur
+  case "$cmd" in
+    docker-compose)
+      docker compose version >/dev/null 2>&1 && return 0
+      command -v docker-compose >/dev/null 2>&1 && return 0
+      return 1 ;;
+    *)
+      command -v "$cmd" >/dev/null 2>&1 || return 1
+      [ -z "$ver" ] && return 0
+      cur="$("$cmd" -v 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+      [ -n "$cur" ] && [ "$cur" -ge "$ver" ] 2>/dev/null && return 0
+      return 1 ;;
+  esac
+}
+
+# 按平台自动安装依赖。轻量/有包管理器则装；需 sudo 或 GUI 交互则提示手动命令。
+install_dep() {
+  local cmd="$1" os pm
+  os="$(uname -s)"
+  log "  自动安装 ${cmd} ..."
+  if [ "$os" = "Darwin" ]; then
+    if command -v brew >/dev/null 2>&1; then pm="brew"
+    else warn "  无 Homebrew（装 brew 后重试: https://brew.sh）"; return 1; fi
+  elif command -v apt-get >/dev/null 2>&1; then pm="apt-get"
+  elif command -v yum >/dev/null 2>&1; then pm="yum"
+  elif command -v dnf >/dev/null 2>&1; then pm="dnf"
+  else warn "  无 apt/yum/dnf，请手动安装 ${cmd}"; return 1; fi
+  case "$cmd" in
+    docker|docker-compose)
+      if [ "$os" = "Darwin" ]; then
+        log "  brew install --cask docker（Docker Desktop，含 compose v2）"
+        brew install --cask docker || { warn "  Docker Desktop 安装失败（https://docker.com 手动下）"; return 1; }
+        warn "  装完需启动 Docker.app 并同意许可（无法全自动）"
+      else
+        warn "  docker 需 sudo，请执行: sudo ${pm} install -y docker.io docker-compose-v2 && sudo systemctl --now enable docker"
+        return 1
+      fi ;;
+    node)
+      if [ -s "$HOME/.nvm/nvm.sh" ]; then
+        # shellcheck disable=SC1091
+        . "$HOME/.nvm/nvm.sh"
+        nvm install 22 && nvm use 22 >/dev/null
+      elif [ "$pm" = "brew" ]; then brew install node@22
+      else warn "  node 请用 nvm 装（curl nvm | bash）或 sudo ${pm} install nodejs"; return 1; fi ;;
+    python3)
+      if [ "$os" = "Darwin" ]; then warn "  macOS 自带 python3（/usr/bin/python3）；若缺装 Xcode CLT: xcode-select --install"
+      else warn "  请执行: sudo ${pm} install -y python3"; return 1; fi ;;
+    git)
+      if [ "$os" = "Darwin" ]; then warn "  macOS 自带 git（Xcode CLT）；若缺: xcode-select --install"
+      else warn "  请执行: sudo ${pm} install -y git"; return 1; fi ;;
+    *) warn "  未知依赖 ${cmd}，请手动安装"; return 1 ;;
+  esac
+}
+
 # ---------- 命令 ----------
 cmd_install() {
   local name="${1:-}"
@@ -751,6 +845,7 @@ cmd_install() {
   if [ -n "$plat" ] && [ "$plat" != "$(uname -s | tr '[:upper:]' '[:lower:]')" ]; then
     warn "模块 $name 目标平台 ${plat}，当前 $(uname -s)（继续可能有错）"
   fi
+  check_deps "$name"
   local inst; inst="$(module_field "$name" install)"
   log "安装 $name ..."
   if [ -n "$inst" ] && [ -f "$dest/$inst" ]; then

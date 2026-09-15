@@ -30,6 +30,8 @@ AIBOX_MODULE_<name>_uninstall="uninstall.sh"
 AIBOX_MODULE_<name>_update="update.sh"
 AIBOX_MODULE_<name>_svc="svc.sh"
 AIBOX_MODULE_<name>_actions="start stop ..."     # svc 支持的动作
+AIBOX_MODULE_<name>_deps="docker python3"          # 可选；运行依赖（命令名，空格分隔）
+                                                     # 可带 @平台（docker@linux 仅该平台检查）或 :版本（node:22 主版本约束）
 ```
 
 ## 钩子契约
@@ -195,6 +197,20 @@ BASE_DIR="${<MODULE>_BASE_DIR:-$APPS_ROOT/<name>}"
 - **软选择用 `ask_yn "<提示>" [y|n]`**：默认 `n`（拒绝）或 `y`（同意）；**非交互环境（`[ -t 0 ]` 为假）一律走保守默认**并 warn 提示。
 - 主 CLI 的 `ask_confirm`（`bin/aibox`）即软选择、默认拒绝、非交互返回 `1`。`aibox self uninstall` 在 `apps/` 非空时据此 fail-closed。
 - **绝不静默执行危险操作**：非交互 + 无 `--yes` 时返回 `2` 而非 `0`，让脚本与 CI 能察觉。
+
+## 依赖声明与自动检查
+
+模块在 registry 声明 `deps` 字段（命令名，空格分隔），aibox `install` 时自动检查、缺则按平台装：
+
+- **格式**：`命令名` / `命令名@平台`（仅该平台检查）/ `命令名:版本`（主版本约束）
+- **示例**：`docker@linux docker-compose git`（仅 Linux 查 docker）、`node:22 npm`（node 22+）、`python3`
+- **检查时机**：`aibox install <module>` 调 `check_deps`，在 install 钩子前
+- **平台过滤**：`platform=darwin` 的模块在非 darwin 跳过；`@平台` 标记的依赖在非目标平台跳过（只提示）
+- **自动安装**（`install_dep`）：
+  - 轻量/有包管理器 → 装（macOS brew / Linux apt/yum/dnf）
+  - 需 sudo（apt/yum）或 GUI 交互（Docker Desktop）→ **提示手动命令**，不静默 sudo
+  - node 优先复用 nvm（pi-web 模式）
+- **未知依赖**：提示手动安装
 
 ## 设计取舍
 
