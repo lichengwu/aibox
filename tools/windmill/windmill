@@ -1,0 +1,3359 @@
+#!/usr/bin/env bash
+# =============================================================================
+# windmill — Windmill 自托管运维 CLI
+#
+# 单文件、自包含：所有配置模板内嵌，不依赖部署目录内的任何文件。
+# 因此 `windmill destroy` 删掉部署目录之后，CLI 本身依然完好，
+# 可以立刻 `windmill init` 重建。
+#
+# 部署根（aibox 约定，见 docs/module-spec.md）: $AIBOX_HOME/apps/windmill
+#   解析链: WM_DIR 环境变量 → AIBOX_APPS_ROOT/<name> → $AIBOX_HOME/apps/<name>
+#   （AIBOX_HOME 缺省 $HOME/.aibox；HOME 也为空时 fail-closed 退出）
+# 配置落点: /etc/windmill/windmill.conf（install.sh 播种，CLI 只读不写）
+#
+# 安装: install -m 0755 windmill /usr/local/bin/windmill
+# 文档: windmill help
+# =============================================================================
+set -Eeuo pipefail
+
+CLI_NAME="windmill"
+WINDMILL_CLI_VERSION="1.1.0"
+CLI_UPDATED="2026-09-15"
+# 本脚本绝对路径（写进 systemd 单元的 ExecStart；$0 相对时补全）
+CLI_BIN="$0"
+case "$CLI_BIN" in /*) ;; *) CLI_BIN="$(pwd)/$CLI_BIN" ;; esac
+
+# --- 部署根解析（先于内置默认，两级环境变量均可覆盖）--------------------------
+WM_DIR="${WM_DIR:-}"
+if [ -z "$WM_DIR" ]; then
+  _wm_apps_root="${AIBOX_APPS_ROOT:-}"
+  if [ -z "$_wm_apps_root" ]; then
+    # 注意是 ${AIBOX_HOME:-$HOME/.aibox}，不是 ${AIBOX_HOME:-$HOME} ——
+    # 后者会丢掉 .aibox 这一层，解析出 $HOME/apps/windmill。
+    _wm_apps_base="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}"
+    if [ -z "$_wm_apps_base" ]; then
+      printf '[windmill] 无法确定部署根：HOME 与 AIBOX_HOME 均为空\n' >&2
+      printf '[windmill] 请显式指定，例如: WM_DIR=/root/.aibox/apps/windmill windmill status\n' >&2
+      exit 3
+    fi
+    _wm_apps_root="$_wm_apps_base/apps"
+  fi
+  WM_DIR="$_wm_apps_root/windmill"
+fi
+unset _wm_apps_root _wm_apps_base 2>/dev/null || true
+
+# --- 主机级配置（/etc/windmill/windmill.conf，install.sh 播种；只补不覆盖）----
+# 优先级: 命令行 > 环境变量 > .env(部署实例) > conf(主机级) > 内置默认
+WM_CONF_FILE="${WM_CONF_FILE:-/etc/windmill/windmill.conf}"
+wm_conf_load() {
+  [ -r "$WM_CONF_FILE" ] || return 0
+  local k v
+  while IFS='=' read -r k v; do
+    case "$k" in
+      ''|'#'*) continue ;;
+      PROXY_URL)      : "${PROXY_URL:=$v}" ;;
+      WM_GHCR_MIRROR) : "${WM_GHCR_MIRROR:=$v}" ;;
+      WM_HUB_MIRROR)  : "${WM_HUB_MIRROR:=$v}" ;;
+      HTTP_PORT)
+        case "$v" in ''|*[!0-9]*) ;; *) : "${HTTP_PORT:=$v}" ;; esac
+        ;;
+      *) ;; # 未知键忽略（conf 只放白名单，凭据属于部署实例，放 .env）
+    esac
+  done < "$WM_CONF_FILE"
+}
+wm_conf_load
+
+# --- 默认配置 ----------------------------------------------------------------
+HTTP_PORT="${HTTP_PORT:-80}"
+MIN_FREE_GB="${MIN_FREE_GB:-12}"
+HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-180}"
+# 出口代理：不再内置任何地址。来源链 = --proxy 参数 > PROXY_URL 环境变量
+# （含 HTTPS_PROXY/HTTP_PROXY 兜底，aibox 全局代理经此传入）> conf > .env 的 WM_PROXY。
+PROXY_URL="${PROXY_URL:-${HTTPS_PROXY:-${HTTP_PROXY:-}}}"
+WM_REPO="ghcr.io/windmill-labs/windmill"
+WM_EXTRA_REPO="ghcr.io/windmill-labs/windmill-extra"
+PG_IMAGE="postgres:18"
+CADDY_IMAGE="ghcr.io/windmill-labs/caddy-l4:2.11.4-1"
+# ghcr 镜像源（国内加速）。空 = 直连 ghcr.io。
+# 直连实测约 0.5 MB/s，而 windmill-extra 压缩后就有 1.99 GiB，
+# 一次全新拉取要 ~1 小时；换成 ghcr.nju.edu.cn 实测约 62 MB/s。
+# 用法: windmill --ghcr-mirror https://ghcr.nju.edu.cn init
+# 或写入 .env 的 WM_GHCR_MIRROR，此后 upgrade/up 自动沿用。
+WM_GHCR_MIRROR="${WM_GHCR_MIRROR:-}"
+# docker.io 镜像源（postgres 走的仓库）。**注意**：这与 daemon 的
+# registry-mirrors 是两套机制 —— 后者里若混入黑洞条目会让 `docker pull`
+# 静默挂死；本 CLI 自己接管拉取，因此不受影响。
+# 例: WM_HUB_MIRROR=https://docker.1ms.run
+WM_HUB_MIRROR="${WM_HUB_MIRROR:-}"
+# 拉取停滞判定（秒）：连续这么久 /var/lib/docker 体积零增长，就判定为挂死并剪断。
+# 用停滞检测代替固定超时，理由见 _run_pull 注释。
+PULL_STALL_S="${PULL_STALL_S:-90}"
+# 单次 docker pull 的总上限（秒）。纯兜底，正常会在停滞检测处提前退出。
+PULL_TIMEOUT="${PULL_TIMEOUT:-3600}"
+# 单个镜像的拉取重试次数。国内镜像源常「下到一半重置连接」，
+# docker 按 digest 缓存已完成分层，重试即续传，通常第 2 次就能补齐。
+WM_PULL_RETRY="${WM_PULL_RETRY:-3}"
+# 分阶段启动的单阶段重试次数。docker 创建「共享同一 named volume」的兄弟容器时
+# 有 volume 初始化竞态，会返回 500 file exists（见 compose_up_stage 注释）。
+WM_UP_RETRY="${WM_UP_RETRY:-3}"
+DRILL_CT="wm-restore-drill"
+DRILL_VOL="wm_restore_drill_data"
+
+# --- 运行时状态 --------------------------------------------------------------
+ASSUME_YES=0
+QUIET=0
+DRY_RUN=0
+C_ALLOW_ROTATE=0
+
+# 让 compose 串行处理容器。
+# 背景: 2026-09-14 一次性重建 8 个容器造成宿主 I/O 尖峰，VM 硬冻结 13 分钟。
+export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-1}"
+
+# --- 路径 --------------------------------------------------------------------
+wm_paths() {
+  ENV_FILE="$WM_DIR/.env"
+  COMPOSE_FILE="$WM_DIR/docker-compose.yml"
+  CADDY_FILE="$WM_DIR/Caddyfile"
+  VERSION_FILE="$WM_DIR/VERSION"
+  BACKUP_DIR="$WM_DIR/backups"
+  LOG_DIR="$WM_DIR/logs"
+  LOCK_FILE="$WM_DIR/.lock"
+}
+ENV_FILE=""; COMPOSE_FILE=""; CADDY_FILE=""; VERSION_FILE=""
+BACKUP_DIR=""; LOG_DIR=""; LOCK_FILE=""
+
+# =============================================================================
+# 输出
+# =============================================================================
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_RESET=$'\033[0m'; C_DIM=$'\033[2m'; C_BOLD=$'\033[1m'
+  C_RED=$'\033[31m'; C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'; C_BLUE=$'\033[34m'
+else
+  C_RESET=""; C_DIM=""; C_BOLD=""; C_RED=""; C_GREEN=""; C_YELLOW=""; C_BLUE=""
+fi
+
+# 生成强随机口令。
+# 注意：`tr -dc ... < /dev/urandom | head -c N` 中 head 读够 N 字节即退出并关闭管道，
+# tr 会收到 SIGPIPE（退出码 141）；在 pipefail 下整条管道返回 141，赋值语句随之失败。
+# 无限生产者 + 有限消费者必然产生 SIGPIPE，只能显式兜底。
+gen_password() {
+  local n="${1:-32}"
+  LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | head -c "$n" || true
+}
+
+ts()   { date '+%Y-%m-%d %H:%M:%S'; }
+log()  { [ "$QUIET" = 1 ] || printf '%s\n' "$*"; }
+info() { [ "$QUIET" = 1 ] || printf '%s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
+ok()   { printf '%s✔%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
+warn() { printf '%s!%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
+err()  { printf '%s✘%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; }
+hr()   { [ "$QUIET" = 1 ] || printf '%s\n' "────────────────────────────────────────────────────────"; }
+step() { printf '%s▸ %s%s\n' "$C_BLUE" "$*" "$C_RESET"; }
+die()  { err "$1"; exit "${2:-1}"; }
+# 用法错误统一退出码 2
+usage_die() { err "$1"; printf '  运行 `%s help` 查看用法。\n' "$CLI_NAME" >&2; exit 2; }
+
+# 破坏性动作的 dry-run 包装
+crun() {
+  if [ "$DRY_RUN" = 1 ]; then printf '%s[dry-run]%s %s\n' "$C_DIM" "$C_RESET" "$*"; return 0; fi
+  "$@"
+}
+
+# 写操作日志（systemd 场景下留痕；目录不存在时静默跳过）
+append_log() {
+  local f="$LOG_DIR/$1"; shift
+  mkdir -p "$LOG_DIR" 2>/dev/null || return 0
+  printf '[%s] %s\n' "$(ts)" "$*" >> "$f" 2>/dev/null || true
+}
+
+# =============================================================================
+# 前置条件
+# =============================================================================
+require_root() {
+  [ "$(id -u)" = "0" ] || die "需要 root 权限（读写 $WM_DIR 与 Docker）。请用 sudo 执行。" 3
+}
+require_docker() {
+  command -v docker >/dev/null 2>&1 || die "找不到 docker 命令。" 3
+  docker info >/dev/null 2>&1 || die "docker daemon 未运行或无权限访问。" 3
+  docker compose version >/dev/null 2>&1 || die "缺少 docker compose 插件（v2）。" 3
+}
+# 除只读命令外，统一入口检查
+require_ready() { require_root; require_docker; }
+
+# =============================================================================
+# compose 封装
+# =============================================================================
+_has_env_file() { [ -f "$ENV_FILE" ]; }
+_compose() {
+  if _has_env_file; then
+    docker compose --project-directory "$WM_DIR" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
+  else
+    docker compose --project-directory "$WM_DIR" -f "$COMPOSE_FILE" "$@"
+  fi
+}
+compose() { _compose "$@"; }
+# 必须重定向 stdin：exec 会继承调用方的 stdin，在管道/heredoc 场景下会吞掉后续脚本
+dexec() { _compose exec -T "$@" < /dev/null; }
+
+# =============================================================================
+# 平台抽象层（Linux 为主实现；macOS 尽力而为）
+# Linux 路径与原实现完全一致；macOS 分支当前覆盖锁/端口/IP/内存/备份抢救。
+# =============================================================================
+OS_KIND="$(uname -s 2>/dev/null || echo unknown)"
+
+# 取本机主 IP（写 base_url / 提示入口用）
+# Linux: hostname -I；macOS: ipconfig getifaddr en0
+primary_ip() {
+  local ip=""
+  case "$OS_KIND" in
+    Darwin)
+      ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true) ;;
+    *)
+      ip=$(hostname -I 2>/dev/null | awk '{print $1}' || true) ;;
+  esac
+  printf '%s' "$ip"
+}
+
+# TCP 端口是否在监听（ss → lsof → netstat 三级回退）
+port_listening() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port}\$"
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | grep -q LISTEN
+  else
+    netstat -an 2>/dev/null | grep -E "[:.]${port}[[:space:]]" | grep -qi listen
+  fi
+}
+
+# 内存概览（status 展示用；读不到时返回占位）
+mem_used_h() {
+  case "$OS_KIND" in
+    Darwin)
+      vm_stat 2>/dev/null | awk '
+        /Pages free/ {free=$3} /Pages active/ {a=$3} /Pages inactive/ {i=$3}
+        END {gsub(/\./,"",free); gsub(/\./,"",a); gsub(/\./,"",i);
+             ps=16384; printf "%.1fG 已用（活跃）", a*ps/1073741824}' ;;
+    *)
+      free -h 2>/dev/null | awk 'NR==2{print $3" 已用 / "$2" 共"}' ;;
+  esac
+}
+
+# 备份抢救目录（destroy 前转移备份；aibox 部署根之外的安全位置）
+backup_evac_dir() {
+  local base="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}"
+  if [ -n "$base" ]; then printf '%s/backups' "$base"
+  else printf '/var/backups'; fi
+}
+
+# systemd 可用性（macOS 用 launchd，本期未适配）
+systemd_ok() { command -v systemctl >/dev/null 2>&1; }
+
+# =============================================================================
+# .env 读写
+# =============================================================================
+get_env() {
+  local k="$1" line=""
+  [ -f "$ENV_FILE" ] || return 0
+  line=$(grep -E "^${k}=" "$ENV_FILE" 2>/dev/null | head -1 || true)
+  if [ -n "$line" ]; then printf '%s' "${line#*=}"; fi
+  return 0
+}
+set_env() {
+  local k="$1" v="$2"
+  [ -f "$ENV_FILE" ] || die ".env 不存在: $ENV_FILE"
+  if grep -qE "^${k}=" "$ENV_FILE"; then
+    # 不用 sed -i（GNU/BSD 参数不兼容），改 awk 重写整行；
+    # 用 ENVIRON 传值，值里的反斜杠不会被 awk -v 二次解释。
+    WM_SET_K="$k" WM_SET_V="$v" awk '
+      BEGIN { kv = ENVIRON["WM_SET_K"] "=" }
+      index($0, kv) == 1 { print ENVIRON["WM_SET_K"] "=" ENVIRON["WM_SET_V"]; next }
+      { print }
+    ' "$ENV_FILE" > "${ENV_FILE}.tmp.$$" && cat "${ENV_FILE}.tmp.$$" > "$ENV_FILE" && rm -f "${ENV_FILE}.tmp.$$"
+  else
+    printf '%s=%s\n' "$k" "$v" >> "$ENV_FILE"
+  fi
+}
+
+# =============================================================================
+# 版本
+# =============================================================================
+current_version() {
+  if [ -f "$VERSION_FILE" ]; then tr -d '[:space:]' < "$VERSION_FILE"; else echo "unknown"; fi
+}
+write_version() { printf '%s\n' "$1" > "$VERSION_FILE"; }
+
+# 从 "CE v1.809.0-2-gb156778da2" 提取 "1.809.0"
+parse_version() { printf '%s' "${1:-}" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | tr -d 'v' || true; }
+
+# 精确版本边界：CE v1.811.1 / CE v1.811.1-2-gbxxxx 都匹配 1.811.1，
+# 但 v1.811.10 不匹配 1.811.1
+version_matches() {
+  local probe="${1:-}" want="$2"
+  if [ -z "$probe" ]; then return 1; fi
+  case "$probe" in *"v${want}-"*) return 0 ;; esac
+  if [ "${probe##* }" = "v${want}" ]; then return 0; fi
+  return 1
+}
+
+proxy_env() { printf '%s' "${PROXY_URL:-}"; }
+
+# 查上游最新 release（api.github.com 在目标机器上直连不通，必须走代理）
+latest_version() {
+  local px v=""
+  px=$(proxy_env)
+  v=$(https_proxy="$px" http_proxy="$px" \
+      curl -fsS --max-time 25 -H 'Accept: application/vnd.github+json' \
+      https://api.github.com/repos/windmill-labs/windmill/releases/latest 2>/dev/null \
+      | python3 -c 'import sys,json;print(json.load(sys.stdin)["tag_name"].lstrip("v"))' 2>/dev/null || true)
+  printf '%s' "$v"
+}
+
+image_version() { printf '%s' "${1:-}" | sed -n 's/.*:\([0-9][0-9.]*\)$/\1/p'; }
+
+# =============================================================================
+# 磁盘 / 镜像
+# =============================================================================
+free_gb() { df -BG --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9' || true; }
+
+require_free_space() {
+  local need="${1:-$MIN_FREE_GB}" have
+  have=$(free_gb); have="${have:-0}"
+  if [ "$have" -lt "$need" ]; then
+    die "磁盘可用空间不足：需要 ≥ ${need}G，当前 ${have}G。先清旧镜像（docker image prune -a）或扩容。"
+  fi
+  info "  磁盘可用 ${have}G（门槛 ${need}G）"
+}
+
+# 镜像是否可拉取（tag 是否存在 + 网络可达）
+require_image() {
+  local img="$1"
+  docker manifest inspect "$img" >/dev/null 2>&1 || die "无法取得镜像（tag 不存在或网络不通）: $img"
+  info "  镜像可用: $img"
+}
+
+# --- ghcr 镜像源 -------------------------------------------------------------
+# 背景: 宿主直连 ghcr.io 实测约 0.5 MB/s，一个全新部署要拉 ~6 GiB（windmill 3.98G +
+#       windmill-extra 1.99G + caddy-l4），纯直连要 1 小时以上；而 ghcr.nju.edu.cn
+#       同一条链路实测约 62 MB/s。差距 100 倍以上，值得做成可配置能力。
+#
+# 做法: 镜像源对同一份内容做透明代理（digest 一致），所以先 `docker pull <镜像源>/<path>`
+#       再 `docker tag` 成官方 ghcr.io/<path> 引用。compose 里 image: 仍写官方名，
+#       pull_policy: missing 会直接命中本地镜像，不再回源 ghcr.io。
+#       这样镜像源只承担「加速下载」，不污染 compose 文件，关掉镜像源也无需改配置。
+# 规范化镜像源主机名：去掉协议头与结尾斜杠。
+# docker 的镜像引用【不允许带 http(s):// 前缀】，带上就是
+# `invalid reference format`。但人类输入时习惯写完整 URL，
+# 所以这里统一剥掉，只留下 host/path 形式。
+mirror_host() {
+  local m="$1"
+  m="${m%/}"
+  m="${m#https://}"
+  m="${m#http://}"
+  printf '%s' "${m%/}"
+}
+
+# 反向：给 curl 探测用的完整 URL（没写协议就补 https）
+mirror_url() {
+  local m="$1"
+  case "${m:-}" in
+    http://*|https://*) printf '%s' "${m%/}" ;;
+    "")                 printf '%s' "" ;;
+    *)                  printf 'https://%s' "${m%/}" ;;
+  esac
+}
+
+ghcr_mirror_ref() {
+  local img="$1" mirror
+  mirror=$(mirror_host "$2")
+  [ -n "$mirror" ] || { printf '%s' ""; return 0; }
+  case "$img" in
+    ghcr.io/*) printf '%s/%s' "$mirror" "${img#ghcr.io/}" ;;
+    *)         printf '%s' "" ;;
+  esac
+}
+
+# docker.io 镜像源。Docker Hub 官方镜像在 registry 里位于 library/ 命名空间，
+# 所以 `postgres:18` 要映射成 `<镜像源>/library/postgres:18`。
+hub_mirror_ref() {
+  local img="$1" mirror
+  mirror=$(mirror_host "$2")
+  [ -n "$mirror" ] || { printf '%s' ""; return 0; }
+  # 分支顺序要紧：`docker.io/*` 必须排在通配的 `*.*/*` 之前，否则永远匹配不到。
+  case "$img" in
+    docker.io/*)     printf '%s/%s' "$mirror" "${img#docker.io/}" ;;
+    ghcr.io/*|*.*/*) printf '%s' "" ;;      # 其它 registry 的不碰
+    */*)             printf '%s/%s' "$mirror" "$img" ;;
+    *)               printf '%s/library/%s' "$mirror" "$img" ;;
+  esac
+}
+
+# 统一的 docker pull 入口 —— 用「停滞检测」而不是固定超时。
+#
+# 为什么不用固定超时：两头都会错。
+#   - 太小：会把握着在下载的大镜像半途剪断。实测 PULL_TIMEOUT=300 时，
+#     ghcr 镜像源拉 3.98GB 的 windmill 连续三次都在中途被剪断，
+#     最后还错误地回退到直连 ghcr.io（0.5MB/s）—— 比不设超时还慢。
+#   - 太大：黑洞镜像源（dockerproxy.net）会让 docker pull 挂 12 分钟以上，
+#     吞吐恒为 0，把整个部署拖死。
+#
+# 所以改为监控 /var/lib/docker 的体积变化：
+#   只要还在增长就继续等；连续 PULL_STALL_S 秒零增长才判定挂死并剪断。
+# 这样「慢但在动」和「彻底卡住」被区分开了，同时保留实时进度输出。
+_docker_usage_mb() {
+  # macOS / Docker Desktop：镜像层在 VM 内，宿主看不见 /var/lib/docker。
+  # 返回 -1 表示「无进度信号」，_run_pull 据此退化为仅总超时判定。
+  if [ ! -d /var/lib/docker ]; then
+    printf '%s' "-1"; return 0
+  fi
+  local v
+  v=$(du -sm /var/lib/docker 2>/dev/null | awk '{print $1}')
+  printf '%s' "${v:-0}"
+}
+
+_run_pull() {
+  local img="$1"
+  local stall="${PULL_STALL_S:-90}" max="${PULL_TIMEOUT:-3600}"
+  local pid rc=0 last idle=0 elapsed=0 now
+
+  # 后台执行但【不重定向输出】，让用户继续看到 docker 的实时进度
+  docker pull "$img" &
+  pid=$!
+
+  last=$(_docker_usage_mb)
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 10
+    elapsed=$((elapsed + 10))
+    now=$(_docker_usage_mb)
+
+    if [ "$now" = "-1" ] || [ "$last" = "-1" ]; then
+      : # 无进度信号（Docker Desktop）：跳过停滞检测，只受总上限保护
+    elif [ "$now" -gt "$last" ]; then
+      last="$now"; idle=0
+    else
+      idle=$((idle + 10))
+    fi
+
+    if [ "$idle" -ge "$stall" ]; then
+      warn "  拉取停滞 ${idle}s（疑似黑洞镜像源），中止本次尝试"
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 2
+      kill -KILL "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 1
+    fi
+    if [ "$elapsed" -ge "$max" ]; then
+      warn "  拉取超过总上限 ${max}s，中止本次尝试"
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 2
+      kill -KILL "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 1
+    fi
+  done
+
+  wait "$pid" || rc=$?
+  return "$rc"
+}
+
+# 直接拉取官方引用（带超时 + 重试）。返回 0 表示已就位。
+#
+# 为什么要重试：国内免费镜像源普遍会「下到一半重置连接」。docker 按 layer digest
+# 缓存已完成的分层，所以重试是**续传**而不是重来 —— 实测 postgres:18 第一次下到
+# ~129MB 被 reset，重试一次就补齐了。不重试就只能看着部署失败。
+direct_pull() {
+  local img="$1" tries="${WM_PULL_RETRY:-3}" i=1
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '%s[dry-run]%s docker pull %s\n' "$C_DIM" "$C_RESET" "$img"
+    return 0
+  fi
+  if docker image inspect "$img" >/dev/null 2>&1; then
+    info "  本地已有: $img"
+    return 0
+  fi
+  while [ "$i" -le "$tries" ]; do
+    if _run_pull "$img"; then
+      ok "  $img"
+      return 0
+    fi
+    if [ "$i" -lt "$tries" ]; then
+      warn "  第 ${i}/${tries} 次未完成（镜像源可能重置连接），重试续传…"
+    fi
+    i=$((i + 1))
+    sleep 3
+  done
+  err "  拉取失败（已重试 ${tries} 次；停滞判定 ${PULL_STALL_S:-90}s，总上限 ${PULL_TIMEOUT:-3600}s）: $img"
+  return 1
+}
+
+# 拉取单个镜像：优先镜像源，失败回退直连。返回 0 表示最终就位。
+# $1 = ghcr|hub   $2 = 镜像源   $3 = 官方引用
+mirror_pull_one() {
+  local kind="$1" mirror="$2" img="$3" mref tries i=1
+  case "$kind" in
+    hub)  mref=$(hub_mirror_ref  "$img" "$mirror") ;;
+    *)    mref=$(ghcr_mirror_ref "$img" "$mirror") ;;
+  esac
+
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '%s[dry-run]%s docker pull %s\n' "$C_DIM" "$C_RESET" "${mref:-$img}"
+    return 0
+  fi
+
+  if docker image inspect "$img" >/dev/null 2>&1; then
+    info "  本地已有: $img"
+    return 0
+  fi
+
+  if [ -n "$mref" ]; then
+    log "  经镜像源拉取: $mref"
+    tries="${WM_PULL_RETRY:-3}"
+    while [ "$i" -le "$tries" ]; do
+      if _run_pull "$mref" && docker tag "$mref" "$img"; then
+        ok "  $img"
+        docker rmi "$mref" >/dev/null 2>&1 || true
+        return 0
+      fi
+      if [ "$i" -lt "$tries" ]; then
+        warn "  第 ${i}/${tries} 次未完成，重试续传…"
+      fi
+      i=$((i + 1))
+      sleep 3
+    done
+    warn "  镜像源多次失败，回退直连: $img"
+  fi
+
+  direct_pull "$img"
+}
+
+# 拉齐部署所需全部镜像。
+#  - 两个镜像源都为空: 直接 `compose pull`（行为与旧版一致）
+#  - 任一镜像源有值:   受管镜像一律「先经镜像源拉取 + 重打官方 tag」，
+#                      最后不再 `compose pull`，以免把刚拉好的再从上游回源一遍。
+#                      compose 里是 pull_policy: missing，启动时直接命中本地镜像。
+pull_images() {
+  local ver="${1:-}" gm="${WM_GHCR_MIRROR:-}" hm="${WM_HUB_MIRROR:-}"
+  local img missing=0
+
+  if [ -z "$gm" ] && [ -z "$hm" ]; then
+    crun compose pull || return 1
+    return 0
+  fi
+
+  if [ -n "$gm" ]; then
+    log "  ghcr 镜像源: $gm"
+    for img in "${WM_REPO}:${ver}" "${WM_EXTRA_REPO}:${ver}" "$CADDY_IMAGE"; do
+      mirror_pull_one ghcr "$gm" "$img" || missing=1
+    done
+  else
+    for img in "${WM_REPO}:${ver}" "${WM_EXTRA_REPO}:${ver}" "$CADDY_IMAGE"; do
+      direct_pull "$img" || missing=1
+    done
+  fi
+
+  if [ -n "$hm" ]; then
+    log "  docker.io 镜像源: $hm"
+    mirror_pull_one hub "$hm" "$PG_IMAGE" || missing=1
+  else
+    direct_pull "$PG_IMAGE" || missing=1
+  fi
+
+  [ "$missing" = 0 ] || warn "有镜像未能就位；compose 启动时会自动再尝试拉取"
+  return 0
+}
+
+# =============================================================================
+# 数据库 / 健康
+# =============================================================================
+db_cid()      { compose ps -q db 2>/dev/null | head -1; }
+server_cid()  { compose ps -q windmill_server 2>/dev/null | head -1; }
+extra_cid()   { compose ps -q windmill_extra 2>/dev/null | head -1; }
+
+db_healthy() {
+  local cid h
+  cid=$(db_cid); [ -n "$cid" ] || return 1
+  h=$(docker inspect "$cid" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || echo none)
+  [ "$h" = "healthy" ]
+}
+
+wait_db() {
+  local deadline=$(( $(date +%s) + 180 ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    db_healthy && return 0
+    sleep 3
+  done
+  return 1
+}
+
+migration_count() {
+  dexec db psql -U postgres -d windmill -tAc 'select count(*) from _sqlx_migrations' 2>/dev/null | tr -d '[:space:]'
+}
+migration_max() {
+  dexec db psql -U postgres -d windmill -tAc 'select max(version) from _sqlx_migrations' 2>/dev/null | tr -d '[:space:]'
+}
+# 通用单值查询
+qval() {
+  dexec db psql -U postgres -d "${2:-windmill}" -tAc "$1" 2>/dev/null | tr -d '[:space:]'
+}
+
+# 优先问「本实例」的 server 容器。
+# 不能用宿主端口优先：同机跑第二套实例（演练环境）时它会回答别人的版本。
+probe_version() {
+  local v="" cid
+  cid=$(server_cid)
+  if [ -n "$cid" ]; then
+    v=$(docker exec "$cid" curl -fsS --max-time 5 http://localhost:8000/api/version 2>/dev/null || true)
+  fi
+  if [ -z "$v" ]; then
+    v=$(curl -fsS --max-time 5 "http://127.0.0.1:${HTTP_PORT}/api/version" 2>/dev/null || true)
+  fi
+  printf '%s' "$v"
+}
+
+wait_version() {
+  local want="$1" deadline=$(( $(date +%s) + HEALTH_TIMEOUT )) v=""
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    v=$(probe_version)
+    version_matches "$v" "$want" && return 0
+    sleep 3
+  done
+  warn "等待版本 v${want} 超时（${HEALTH_TIMEOUT}s），最后一次探针: '${v:-<空>}'"
+  return 1
+}
+
+# 注意: 必须分两条 local。写成 `local secs=... deadline=$(( ... + secs ))` 时，
+#       local 会先把两个名字都声明为未设值，set -u 下计算 deadline 报 unbound variable。
+wait_server_healthy() {
+  local _secs="${1:-$HEALTH_TIMEOUT}"
+  local deadline=$(( $(date +%s) + _secs ))
+  local cid h
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    cid=$(server_cid)
+    if [ -n "$cid" ]; then
+      h=$(docker inspect "$cid" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || echo none)
+      if [ "$h" = "healthy" ]; then return 0; fi
+    fi
+    sleep 4
+  done
+  warn "windmill_server 未在 ${_secs}s 内转为 healthy"
+  return 1
+}
+
+all_running() {
+  local want=(db windmill_server windmill_worker windmill_worker_native windmill_extra caddy)
+  local s n bad
+  for s in "${want[@]}"; do
+    n=$( { compose ps -q "$s" 2>/dev/null || true; } | wc -l )
+    if [ "$n" -lt 1 ]; then warn "服务 $s 没有运行中的容器"; return 1; fi
+  done
+  bad=$(compose ps -a --format '{{.Service}}={{.State}}' 2>/dev/null | grep -v '=running' || true)
+  if [ -n "$bad" ]; then warn "存在非 running 容器: $(echo "$bad" | tr '\n' ' ')"; return 1; fi
+  return 0
+}
+
+wm_port_listening() { port_listening "$HTTP_PORT"; }
+
+# 剥掉 ANSI 颜色控制符。windmill server 的日志是**带色输出**，不剥掉的话
+# 按字段取日志级别永远取不到（$2 是颜色转义 `\e[32m` 而不是 INFO/ERROR），
+# 于是任何基于级别的判断都会静默失效。剥色后才能可靠地读级别。
+_strip_ansi() { sed -E $'s/\x1b\\[[0-9;]*[a-zA-Z]//g'; }
+
+# 致命错误：用于**判定部署失败**。
+# 只收「部署真的坏了」的特征：panic、FATAL、连不上库、迁移被篡改、端口占用等。
+log_fatal() {
+  local cid; cid=$(server_cid)
+  [ -n "$cid" ] || return 0
+  docker logs --tail 400 "$cid" 2>&1 | _strip_ansi \
+    | grep -E 'panicked|(^|[[:space:]])FATAL([[:space:]]|$)|could ?n.t connect to (the )?database|cannot connect to database|was previously applied but has been modified|error returned from database|address already in use|EADDRINUSE' || true
+}
+
+# 非致命 ERROR：仅用于**提示**，不判失败。
+#
+# 这里踩过两个坑，记下来免得重犯：
+# 1) 曾用 'migration .*fail|migration .*error' 当特征 → 全新部署 100% 健康却误报。
+#    因为迁移的**名字**里就带 failure/error（实测两条：
+#    "v2 job completed failure index"、"error handler fallback to instance alerts"），
+#    它们都是 INFO 级的正常进度日志。→ 结论：迁移名不可作错误特征。
+# 2) 本机实测：全新部署健康运行时，server 仍会**周期性**打 ERROR：
+#      ERROR windmill-api-embeddings/src/lib.rs: Failed to create embeddings db:
+#      error decoding response body for url (https://bucket.windmillhub.com/...)
+#    这是外网拉 embeddings 失败（环境/网络噪音），不影响服务。
+#    若据此判失败，正常部署会被永久卡死在健康检查过不去。
+# → 结论：ERROR 级别 ≠ 部署失败；失败判定交给 log_fatal + 客观检查
+#   （版本探针 / 容器 running / 端口监听 / 容器 healthcheck）。
+log_errors() {
+  local cid; cid=$(server_cid)
+  [ -n "$cid" ] || return 0
+  docker logs --tail 400 "$cid" 2>&1 | _strip_ansi \
+    | grep -E '(^|[[:space:]])ERROR([[:space:]]|$)' \
+    | grep -vE 'Started applying migration|Finished applying migration' || true
+}
+
+# 分阶段启动。不用 `compose up -d` 一把梭：同时重建 8 个容器会造成 I/O 尖峰。
+# 启动单个阶段，失败自动重试。
+#
+# 为什么要重试：docker 在创建「挂载同一个 named volume」的兄弟容器时存在 volume
+# 初始化竞态，会直接返回 500：
+#   failed to mkdir /var/lib/docker/volumes/<vol>/_data/<subdir>: file exists
+#   POST /containers/create ... status=500
+# 实测 windmill_worker（replicas=3）与 windmill_worker_native 共享
+# windmill_worker_dependency_cache 卷，全新部署首次启动必撞该竞态 ——
+# 容器停在 Created 状态，整个 init 白跑。它是瞬时的，重试一次即成功。
+# 已用 COMPOSE_PARALLEL_LIMIT=1 串行化，也挡不住这个 daemon 侧的异步初始化竞态。
+compose_up_stage() {
+  local desc="$1"; shift
+  local tries="${WM_UP_RETRY:-3}" i=1
+  while [ "$i" -le "$tries" ]; do
+    if compose up -d --no-deps "$@"; then return 0; fi
+    if [ "$i" -lt "$tries" ]; then
+      warn "  启动 ${desc} 失败（第 ${i}/${tries} 次），3s 后重试…"
+      sleep 3
+    fi
+    i=$((i + 1))
+  done
+  warn "启动 ${desc} 连续 ${tries} 次失败"
+  return 1
+}
+
+stack_up_staged() {
+  local services="${1:-}"
+  if [ -n "$services" ]; then
+    # 子集模式（演练用）：不碰 caddy，避免抢宿主 80 端口
+    step "阶段 1/2: db"
+    compose_up_stage "db" db || return 1
+    wait_db || { warn "db 未转 healthy"; return 1; }
+    step "阶段 2/2: $services"
+    # shellcheck disable=SC2086
+    compose_up_stage "$services" $services || return 1
+    return 0
+  fi
+  step "阶段 1/4: db"
+  compose_up_stage "db" db || return 1
+  wait_db || { warn "db 未转 healthy"; return 1; }
+
+  step "阶段 2/4: windmill_server（执行数据库迁移）"
+  compose_up_stage "windmill_server" windmill_server || return 1
+  wait_server_healthy || true   # 超时不立即失败，由最终健康判定裁决
+
+  step "阶段 3/4: workers"
+  compose_up_stage "workers" windmill_worker windmill_worker_native || return 1
+
+  step "阶段 4/4: windmill_extra + caddy"
+  compose_up_stage "windmill_extra + caddy" windmill_extra caddy || return 1
+  return 0
+}
+
+# =============================================================================
+# 锁
+# =============================================================================
+acquire_lock() {
+  mkdir -p "$WM_DIR" 2>/dev/null || true
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"$LOCK_FILE"
+    flock -n 9 || die "另一个部署任务正在运行（锁: ${LOCK_FILE}）。确认无任务后删除该文件重试。"
+  else
+    # macOS 无 flock：mkdir 原子锁；持锁进程已不存在时自动回收残留锁
+    local d="${LOCK_FILE}.d" pid
+    if [ -d "$d" ]; then
+      pid=$(cat "$d/pid" 2>/dev/null || true)
+      if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+        rm -rf "$d"
+        warn "已回收残留锁 $d（持锁进程 ${pid:-?} 不存在）"
+      fi
+    fi
+    mkdir "$d" 2>/dev/null \
+      || die "另一个部署任务正在运行（锁: $d）。确认无任务后删除该目录重试。"
+    printf '%s\n' "$$" > "$d/pid"
+  fi
+}
+
+# =============================================================================
+# 确认
+# =============================================================================
+confirm() {
+  local prompt="$1"
+  if [ "$ASSUME_YES" = 1 ]; then return 0; fi
+  if [ "$DRY_RUN" = 1 ]; then return 0; fi
+  printf '%s%s%s\n输入 yes 回车继续: ' "$C_YELLOW" "$prompt" "$C_RESET"
+  local ans=""
+  read -r ans || true
+  [ "$ans" = "yes" ] || { log "已取消，未做任何修改。"; return 1; }
+  return 0
+}
+
+# =============================================================================
+# 部署状态探测
+# =============================================================================
+config_missing() {
+  local m=""
+  [ -f "$COMPOSE_FILE" ] || m="$m docker-compose.yml"
+  [ -f "$CADDY_FILE" ]   || m="$m Caddyfile"
+  [ -f "$ENV_FILE" ]     || m="$m .env"
+  printf '%s' "${m# }"
+}
+
+project_name() {
+  local p=""
+  if [ -f "$COMPOSE_FILE" ]; then
+    p=$(docker compose --project-directory "$WM_DIR" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" \
+          config --format json 2>/dev/null \
+        | python3 -c 'import sys,json;print(json.load(sys.stdin).get("name",""))' 2>/dev/null || true)
+  fi
+  [ -n "$p" ] || p=$(basename "$WM_DIR")
+  printf '%s' "$p"
+}
+
+# 本 project 的 db 数据卷。
+# 必须按 project 限定：同机若存在第二个 compose 项目（演练环境），
+# 「全局搜 *_db_data 取第一个」会命中别人的卷，而调用方可能正要删它。
+db_volume() {
+  local proj vol
+  proj=$(project_name)
+  vol=$(docker volume ls --filter "label=com.docker.compose.project=${proj}" \
+          --format '{{.Name}}' 2>/dev/null | grep -E '(^|_)db_data$' | head -1 || true)
+  [ -n "$vol" ] || vol=$(docker volume ls --format '{{.Name}}' 2>/dev/null \
+          | grep -E "^${proj}[_-]db_data$" | head -1 || true)
+  printf '%s' "$vol"
+}
+
+project_volumes() {
+  local proj; proj=$(project_name)
+  docker volume ls --filter "label=com.docker.compose.project=${proj}" --format '{{.Name}}' 2>/dev/null || true
+}
+
+volume_has_cluster() {
+  local vol="${1:-}" mp
+  [ -n "$vol" ] || return 1
+  docker volume inspect "$vol" >/dev/null 2>&1 || return 1
+  mp=$(docker volume inspect "$vol" --format '{{.Mountpoint}}' 2>/dev/null || true)
+  [ -n "$mp" ] || return 1
+  find "$mp" -maxdepth 4 -name PG_VERSION -print -quit 2>/dev/null | grep -q .
+}
+
+# 统计匹配 glob 的文件数。glob 无匹配时 ls 返回非零，在 pipefail 下会拖垮整个管道，
+# 因此这里显式兜底并归一化为 0。
+count_files() {
+  local out; out=$(ls -1 "$@" 2>/dev/null || true)
+  if [ -z "$out" ]; then printf '0'; return 0; fi
+  printf '%s\n' "$out" | wc -l | tr -d ' '
+}
+
+latest_snapshot()     { ls -1dt "$BACKUP_DIR"/[0-9]* 2>/dev/null | head -1 || true; }
+latest_daily_backup() { ls -1t "$BACKUP_DIR"/daily/cluster-*.sql.gz 2>/dev/null | head -1 || true; }
+snapshot_list()       { ls -1dt "$BACKUP_DIR"/[0-9]* 2>/dev/null || true; }
+
+env_version() { image_version "$(get_env WM_IMAGE)"; }
+
+# 实例对外地址，用于展示与设置 Base URL
+instance_url() {
+  local host port
+  host=$(primary_ip)
+  [ -n "$host" ] || host="127.0.0.1"
+  port=$(get_env HTTP_PORT)
+  if [ -z "$port" ]; then port="${HTTP_PORT:-80}"; fi
+  if [ "$port" = "80" ]; then printf 'http://%s' "$host"
+  else printf 'http://%s:%s' "$host" "$port"; fi
+}
+
+# =============================================================================
+# 备份原语
+# =============================================================================
+new_backup_dir() {
+  local d="$BACKUP_DIR/$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$d"
+  printf '%s' "$d"
+}
+
+verify_dump_file() {
+  local f="$1"
+  [ -s "$f" ] || { warn "dump 缺失或为空: $f"; return 1; }
+  grep -q '^CREATE DATABASE windmill' "$f" || { warn "dump 不含 'CREATE DATABASE windmill'，不可用: $f"; return 1; }
+  tail -3 "$f" | grep -q 'dump complete'   || { warn "dump 不完整（缺 'dump complete' 标记）: $f"; return 1; }
+  return 0
+}
+
+# 生成并校验一份完整快照（数据库 + 配置 + meta）
+make_backup() {
+  local d="$1" pol
+  step "全量快照 → $d"
+  dexec db pg_dumpall -U postgres > "$d/cluster.sql" 2>"$d/dump.err" || {
+    warn "pg_dumpall 失败，stderr:"; cat "$d/dump.err" >&2; return 1; }
+  [ -s "$d/cluster.sql" ] || { warn "备份文件为空"; return 1; }
+  grep -q '^CREATE DATABASE windmill' "$d/cluster.sql" \
+    || { warn "备份缺 'CREATE DATABASE windmill'，疑似不完整"; return 1; }
+  tail -3 "$d/cluster.sql" | grep -q 'dump complete' \
+    || { warn "备份缺 'dump complete' 标记，疑似被截断"; return 1; }
+
+  cp -a "$COMPOSE_FILE" "$CADDY_FILE" "$ENV_FILE" "$d/" 2>/dev/null || true
+  sha256sum "$d/cluster.sql" > "$d/cluster.sql.sha256"
+  {
+    echo "BACKUP_TS=$(basename "$d")"
+    echo "WM_VERSION=$(current_version)"
+    echo "WM_IMAGE=$(get_env WM_IMAGE)"
+    echo "WM_EXTRA_IMAGE=$(get_env WM_EXTRA_IMAGE)"
+    echo "MIGRATION_COUNT=$(migration_count || echo 0)"
+    echo "PG_VERSION=$(qval 'show server_version' postgres)"
+  } > "$d/meta.env"
+
+  pol=$(grep -c 'CREATE POLICY' "$d/cluster.sql" || true)
+  ok "快照完成并校验通过：$(du -h "$d/cluster.sql" | cut -f1)，含 ${pol} 条 RLS policy"
+  info "  sha256 $(cut -d' ' -f1 < "$d/cluster.sql.sha256")"
+  return 0
+}
+
+prune_backups() {
+  local keep="${1:-5}" all olds
+  all=$(ls -1dt "$BACKUP_DIR"/[0-9]* 2>/dev/null || true)
+  [ -n "$all" ] || return 0
+  olds=$(printf '%s\n' "$all" | tail -n +$((keep+1)))
+  [ -n "$olds" ] || return 0
+  while read -r f; do
+    [ -n "$f" ] || continue
+    log "  清理过期快照: $f"; rm -rf "$f"
+  done <<< "$olds"
+}
+
+# 把 pg_dumpall 文本 dump 恢复到生产库。前置: db 已 running 且 healthy。
+restore_cluster_from() {
+  local sql="$1" log_dst="${2:-$LOG_DIR/restore.log}" cid errs
+  verify_dump_file "$sql" || return 1
+  cid=$(db_cid); [ -n "$cid" ] || { warn "db 容器未运行，无法恢复"; return 1; }
+
+  # POSTGRES_DB 已建出一个空 windmill，先 DROP，否则 dump 里的 CREATE DATABASE 必然失败
+  dexec db psql -U postgres -d postgres -c 'DROP DATABASE IF EXISTS windmill' >/dev/null 2>&1 || true
+  docker cp "$sql" "$cid":/tmp/restore.sql >/dev/null 2>&1 || { warn "无法把 dump 复制进 db 容器"; return 1; }
+  dexec db psql -U postgres -d postgres -f /tmp/restore.sql > "$log_dst" 2>&1 || true
+  dexec db sh -c 'rm -f /tmp/restore.sql' >/dev/null 2>&1 || true
+
+  errs=$(grep -ci '^ERROR' "$log_dst" 2>/dev/null || true); errs="${errs:-0}"
+  info "  恢复日志 ERROR 行数 = ${errs}（预期 0 或 1；>1 说明恢复不完整）"
+  [ "$errs" -le 1 ]
+}
+
+# dump 里记的是「快照当时」的角色口令，.env 里才是当前生效口令。不同步会连不上库。
+sync_db_password() {
+  local pw; pw=$(get_env POSTGRES_PASSWORD)
+  [ -n "$pw" ] || { warn ".env 未设置 POSTGRES_PASSWORD"; return 1; }
+  dexec db psql -U postgres -d postgres -c "ALTER USER postgres WITH PASSWORD '${pw}'" >/dev/null 2>&1 \
+    || { warn "ALTER USER postgres 失败"; return 1; }
+  info "  已把 .env 的数据库口令同步到 postgres 角色"
+}
+
+refresh_planner_stats() {
+  dexec db vacuumdb -U postgres --all --analyze-in-stages >/dev/null 2>&1 \
+    && info "  已重建 planner 统计" || warn "  vacuumdb 跳过（不影响可用性）"
+}
+
+# 备份目录移到部署目录之外，避免随部署一起被清掉
+# 落点：$AIBOX_HOME/backups/（aibox 统一命名空间，两平台一致）；无 HOME 时回退 /var/backups
+evacuate_backups() {
+  local dst
+  dst="$(backup_evac_dir)/windmill-pre-destroy-$(date +%Y%m%d-%H%M%S)"
+  [ -d "$BACKUP_DIR" ] || return 0
+  [ -n "$(ls -A "$BACKUP_DIR" 2>/dev/null)" ] || return 0
+  mkdir -p "$dst" || { warn "无法创建 $dst"; return 1; }
+  cp -a "$BACKUP_DIR"/. "$dst"/ && ok "备份已转移到 $dst"
+}
+
+# =============================================================================
+# 内嵌模板
+# 用带引号的 heredoc（<<'WMEOF'），确保 ${VAR} / {$VAR} 原样写入。
+# =============================================================================
+
+render_compose() {
+  cat > "$COMPOSE_FILE" <<'WMEOF'
+## ============================================================================
+## Windmill 自托管 compose —— 由 `windmill init` 生成
+##
+## 相对上游 https://github.com/windmill-labs/windmill 的 docker-compose.yml，
+## 本文件有 7 处本地化改动。日后对照上游升级时请保留：
+##
+##  1. 删除过时的 `version: "3.7"` 顶层字段（消除 compose 警告）
+##  2. `pull_policy: always` -> `missing`
+##     版本已在 .env 中钉死。always 会让每次 up -d 都联网拉取，网络中断时启动
+##     直接失败；改用 missing 后由 `windmill upgrade` 显式控制拉取时机。
+##  3. `windmill_extra.image` 由硬编码 `:latest` 改为 `${WM_EXTRA_IMAGE}`
+##     上游此处不受 .env 控制，无法固定版本、无法回滚。
+##  4. `windmill_server` 新增 healthcheck，探针用 /api/version
+##     官方文档写的 /api/health 在 CE v1.809/v1.811 实测返回 404。
+##  5. caddy 移除 `- 25:25` 端口映射
+##     宿主 exim4 占用 127.0.0.1:25，会导致 caddy 绑定失败、容器起不来、
+##     80 端口不监听、整个 UI 不可访问。邮件触发器家用场景不需要。
+##  6. db 的 POSTGRES_PASSWORD 改为 ${POSTGRES_PASSWORD}
+##  7. worker/native 内存上限由 2048M 收紧（4 个执行容器 ×2G 超过物理内存 7.8G）
+##
+## 另注：postgres:18 的挂载点必须是 /var/lib/postgresql（父目录），不可改回
+##       pre-18 的 /var/lib/postgresql/data，否则会静默生成空集群。
+## ============================================================================
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "${LOG_MAX_SIZE:-20m}"
+    max-file: "${LOG_MAX_FILE:-10}"
+    compress: "true"
+
+services:
+  ## UPGRADING FROM POSTGRES 16: db_data holds a cluster 18 cannot read, so the
+  ## container exits with an explanatory error rather than coming up blank. Migrating
+  ## means dumping the WHOLE cluster (pg_dumpall), never just the windmill database:
+  ## Windmill keeps datatable, DuckLake and wm_fork_* databases beside it and grants
+  ## its RLS policies to cluster-level roles, and a single-database dump loses both
+  ## silently. Full procedure, and why 16 is still a valid choice until Nov 2028:
+  ## https://www.windmill.dev/docs/advanced/self_host#upgrade-postgresql-to-18
+  db:
+    deploy:
+      # To use an external database, set replicas to 0 and set DATABASE_URL to the external database url in the .env file
+      replicas: 1
+    image: postgres:18
+    shm_size: 1g
+    restart: unless-stopped
+    volumes:
+      # From 18 on the official image keeps the cluster in a major-version
+      # subdirectory (/var/lib/postgresql/18/docker), so the mount has to be the
+      # parent directory: that is what lets pg_upgrade see an old and a new
+      # cluster inside a single mount point. Mounting the pre-18 .../data path
+      # instead makes the image exit rather than start, which is what turns a
+      # stale 16 cluster into a loud failure instead of an empty instance.
+      - db_data:/var/lib/postgresql
+    expose:
+      - 5432
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: windmill
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  windmill_server:
+    image: ${WM_IMAGE}
+    pull_policy: missing
+    deploy:
+      replicas: 1
+    restart: unless-stopped
+    expose:
+      - 8000
+      - 2525
+    healthcheck:
+      # 官方文档的 /api/health 在 CE v1.809/v1.811 实测返回 404，故用 /api/version。
+      test: ["CMD-SHELL", "curl -fsS --max-time 5 http://localhost:8000/api/version | grep -q 'v1\\.'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - MODE=server
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - worker_logs:/tmp/windmill/logs
+
+    logging: *default-logging
+
+  windmill_worker:
+    image: ${WM_IMAGE}
+    pull_policy: missing
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 1536M
+          # for GB, use syntax '2Gi'
+    restart: unless-stopped
+    # Uncomment to enable PID namespace isolation (recommended for security)
+    # Requires privileged mode for --mount-proc flag
+    # See: https://www.windmill.dev/docs/advanced/security_isolation
+    privileged: true
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - MODE=worker
+      - WORKER_GROUP=default
+      # If running with non-root/non-windmill UID (e.g., user: "1001:1001"),
+      # add: - HOME=/tmp
+      - FAVOR_UNSHARE_PID=true
+    depends_on:
+      db:
+        condition: service_healthy
+    # to mount the worker folder to debug, KEEP_JOB_DIR=true and mount /tmp/windmill
+    volumes:
+      - worker_dependency_cache:/tmp/windmill/cache
+      - worker_logs:/tmp/windmill/logs
+      ## Sandboxed containers (`# sandbox <image>`) run daemonless via crane + nsjail
+      ## inside the worker itself — no Docker socket or dind sidecar required.
+      ## For the legacy full-compat docker (a bare `# docker`, trusted users only),
+      ## mount the host Docker socket by uncommenting the line below. WARNING: this
+      ## grants user scripts full access to the host Docker daemon (host filesystem
+      ## access and privilege escalation) — only use it if you fully trust all users.
+      # - /var/run/docker.sock:/var/run/docker.sock
+
+    logging: *default-logging
+
+  ## This worker is specialized for "native" jobs. Native jobs run in-process and thus are much more lightweight than other jobs
+  windmill_worker_native:
+    # Use ghcr.io/windmill-labs/windmill-ee:main for the ee
+    image: ${WM_IMAGE}
+    pull_policy: missing
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 1024M
+          # for GB, use syntax '2Gi'
+    restart: unless-stopped
+    # Uncomment to enable PID namespace isolation (recommended for security)
+    # Requires privileged mode for --mount-proc flag
+    # See: https://www.windmill.dev/docs/advanced/security_isolation
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - MODE=worker
+      - WORKER_GROUP=native
+      - NATIVE_MODE=true
+      - SLEEP_QUEUE=200
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - worker_logs:/tmp/windmill/logs
+    logging: *default-logging
+
+  # The indexer powers full-text job and log search, an EE feature.
+  windmill_indexer:
+    image: ${WM_IMAGE}
+    pull_policy: missing
+    deploy:
+      replicas: 0 # set to 1 to enable full-text job and log search
+    restart: unless-stopped
+    expose:
+      - 8002
+    environment:
+      - PORT=8002
+      - DATABASE_URL=${DATABASE_URL}
+      - MODE=indexer
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - windmill_index:/tmp/windmill/search
+      - worker_logs:/tmp/windmill/logs
+    logging: *default-logging
+
+  # Combined extra services: LSP, Multiplayer, and Debugger
+  # Each service can be enabled/disabled via environment variables:
+  #   - ENABLE_LSP=true (default) - Language Server Protocol for code intelligence
+  #   - ENABLE_MULTIPLAYER=false - Real-time collaboration (Enterprise Edition)
+  #   - ENABLE_DEBUGGER=false - Interactive debugging via DAP WebSocket
+  windmill_extra:
+    image: ${WM_EXTRA_IMAGE}
+    pull_policy: missing
+    restart: unless-stopped
+    expose:
+      - 3001 # LSP
+      - 3002 # Multiplayer
+      - 3003 # Debugger
+    environment:
+      - ENABLE_LSP=true
+      - ENABLE_MULTIPLAYER=false # Set to true to enable multiplayer (Enterprise Edition)
+      - ENABLE_DEBUGGER=true # Set to true to enable debugger
+      - DEBUGGER_PORT=3003 # Debugger service port
+      - ENABLE_NSJAIL=false # Set to true for nsjail sandboxing (requires privileged: true)
+      - REQUIRE_SIGNED_DEBUG_REQUESTS=true # Require backend-signed JWT tokens for debug sessions. Do NOT set to false on any internet-reachable deployment: it exposes an unauthenticated code-execution debugger.
+      - WINDMILL_BASE_URL=http://windmill_server:8000
+    volumes:
+      - lsp_cache:/pyls/.cache
+    logging: *default-logging
+
+  caddy:
+    # Pinned: this image and the ./Caddyfile next to it are version-coupled, so
+    # they have to move together. Bump docker/caddy-l4.version in the same
+    # commit as any Caddyfile change.
+    image: ghcr.io/windmill-labs/caddy-l4:2.11.4-1
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+    ports:
+      # 端口由 .env 的 HTTP_PORT 控制（默认 80）
+      - "${HTTP_PORT:-80}:80"
+      # 已移除 `- 25:25`：宿主 exim4 占用 127.0.0.1:25，会导致 caddy 绑定失败。
+      # 若日后需要邮件触发器，改为 `- 2525:25` 并在 Caddyfile 恢复 layer4 :25 块。
+      # - 443:443 # Uncomment to enable HTTPS handling by Caddy
+    environment:
+      - BASE_URL=":80"
+    logging: *default-logging
+
+volumes:
+  db_data: null
+  worker_dependency_cache: null
+  worker_logs: null
+  worker_memory: null
+  windmill_index: null
+  lsp_cache: null
+  caddy_data: null
+WMEOF
+  chmod 0644 "$COMPOSE_FILE"
+}
+
+render_caddy() {
+  cat > "$CADDY_FILE" <<'WMEOF'
+# ============================================================================
+# Caddyfile —— 由 `windmill init` 生成
+#
+# 基于上游 https://github.com/windmill-labs/windmill 的 Caddyfile，本地改动一处：
+#   移除顶层 `layer4 { :25 { route { proxy { upstream windmill_server:2525 } } } }` 块。
+#
+# 原因：该块用于「邮件触发器」（TCP 转发到 windmill_server:2525）。对应的
+#       `- 25:25` 端口映射已从 docker-compose.yml 移除 —— 宿主 exim4 占用了
+#       127.0.0.1:25，导致 caddy 绑定失败、容器无法启动、80 端口不监听。
+#
+# 若日后需要邮件触发能力：恢复该块，并在 docker-compose.yml 的 caddy.ports 中加回
+#       `- 2525:25`（用 2525 避开宿主 exim4）。
+#
+# 注意：本文件与 caddy-l4 镜像版本（当前 2.11.4-1）是版本耦合的。
+# ============================================================================
+
+{$BASE_URL} {
+        # Default to all interfaces (IPv4 + IPv6) when ADDRESS is unset. A bare
+        # `bind {$ADDRESS}` with an empty value makes Caddy >= 2.9 drop this whole
+        # site, silently disabling the HTTP proxy while the :25 layer4 listener stays up.
+        bind {$ADDRESS:0.0.0.0 ::}
+
+        # Extra services: LSP, Multiplayer, Debugger (windmill_extra gateway).
+        # reverse_proxy only reads its first argument as a matcher, so listing
+        # several paths inline turns the rest into upstream addresses. The paths
+        # have to go through a named matcher.
+        @extra path /ws/* /ws_mp/* /ws_debug/*
+        reverse_proxy @extra http://windmill_extra:3000
+
+        # Search indexer, Enterprise Edition (windmill_indexer:8002)
+        # reverse_proxy /api/srch/* http://windmill_indexer:8002
+
+        # Default: Windmill server
+        reverse_proxy /* http://windmill_server:8000
+
+        # TLS with custom certificates
+        # tls /certs/cert.pem /certs/key.pem
+}
+WMEOF
+  chmod 0644 "$CADDY_FILE"
+}
+
+render_env() {
+  local ver="$1" dbpass="$2" port="$3"
+  umask 077
+  cat > "$ENV_FILE" <<WMEOF
+# ============================================================================
+# Windmill 部署配置 —— 由 \`windmill init\` 生成于 $(ts)
+#
+# 版本钉死策略：不使用可漂移的 \`:main\` / \`:latest\` 标签，改为固定版本号。
+# 升级请勿手工改本文件，走 \`windmill upgrade\`（它会自动改下面两行并留快照）。
+# 当前部署版本记录在 ${VERSION_FILE}。
+# ============================================================================
+
+# --- 数据库 ---------------------------------------------------------------
+DATABASE_URL=postgres://postgres:${dbpass}@db/windmill?sslmode=disable
+# POSTGRES_PASSWORD 仅在 db 卷首次初始化时生效；变更既有实例的口令必须执行
+# \`windmill credentials --rotate-db\`（内部走 ALTER USER）。
+POSTGRES_PASSWORD=${dbpass}
+
+# --- 镜像版本（钉死，禁止用 :main / :latest）-------------------------------
+WM_IMAGE=${WM_REPO}:${ver}
+WM_EXTRA_IMAGE=${WM_EXTRA_REPO}:${ver}
+
+# --- 入口端口 --------------------------------------------------------------
+HTTP_PORT=${port}
+
+# --- 日志轮转（避免长跑把磁盘写满）----------------------------------------
+LOG_MAX_SIZE=20m
+LOG_MAX_FILE=10
+
+# --- 出口代理（仅 \`windmill check\` 查询上游 release 时需要）----------------
+# 不改系统全局环境，只在子进程内生效。
+# 取值为 init 时刻 CLI 已解析到的代理（--proxy > 环境变量 > conf）。
+WM_PROXY=${PROXY_URL:-}
+
+# --- ghcr 镜像源（国内加速）------------------------------------------------
+# 空 = 直连 ghcr.io（国内实测 ~0.5MB/s，全新部署要 1 小时以上）。
+# 填写后 init/upgrade 会先经镜像源拉取 ghcr 镜像并重打为官方 tag，再启动。
+# 例: WM_GHCR_MIRROR=https://ghcr.nju.edu.cn
+WM_GHCR_MIRROR=${WM_GHCR_MIRROR:-}
+
+# --- docker.io 镜像源（postgres 用）----------------------------------------
+# 空 = 交给 daemon 的 registry-mirrors。若 daemon 里混有黑洞镜像源会导致拉取挂死，
+# 此时在这里显式指定一个可用的即可绕开（CLI 自带超时保护）。
+# 例: WM_HUB_MIRROR=https://docker.1ms.run
+WM_HUB_MIRROR=${WM_HUB_MIRROR:-}
+WMEOF
+  chmod 0600 "$ENV_FILE"
+}
+
+# --- systemd 单元 -----------------------------------------------------------
+systemd_unit() {
+  local name="$1"
+  case "$name" in
+    windmill-stack.service) cat <<WMEOF
+[Unit]
+Description=Windmill stack 启动对齐（分阶段启动/补齐 created 状态的容器）
+Documentation=man:$CLI_NAME(1)
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+ConditionPathExists=$COMPOSE_FILE
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+# 烘入解析后的路径：systemd 系统服务里没有 HOME（实测），派生路径会解析成空
+Environment="WM_DIR=$WM_DIR"
+Environment="WM_CONF_FILE=$WM_CONF_FILE"
+ExecStart=$CLI_BIN --quiet up
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target
+WMEOF
+    ;;
+    windmill-backup.service) cat <<WMEOF
+[Unit]
+Description=Windmill PostgreSQL 每日备份（pg_dumpall 全 cluster）
+Documentation=man:$CLI_NAME(1)
+After=docker.service
+Requires=docker.service
+ConditionPathExists=$COMPOSE_FILE
+
+[Service]
+Type=oneshot
+User=root
+Environment="WM_DIR=$WM_DIR"
+Environment="WM_CONF_FILE=$WM_CONF_FILE"
+ExecStart=$CLI_BIN --quiet --yes backup --daily
+TimeoutStartSec=1800
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target
+WMEOF
+    ;;
+    windmill-backup.timer) cat <<'WMEOF'
+[Unit]
+Description=每天 03:30 执行 Windmill 数据库备份
+
+[Timer]
+# 每天 03:30，加最多 5 分钟随机抖动避免与其他定时任务撞车
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=300
+# 机器关机错过的执行，开机后补一次
+Persistent=true
+Unit=windmill-backup.service
+
+[Install]
+WantedBy=timers.target
+WMEOF
+    ;;
+    windmill-update-check.service) cat <<WMEOF
+[Unit]
+Description=Windmill 上游新版本检查（只查不升）
+Documentation=man:$CLI_NAME(1)
+After=docker.service
+Requires=docker.service
+ConditionPathExists=$COMPOSE_FILE
+
+[Service]
+Type=oneshot
+User=root
+Environment="WM_DIR=$WM_DIR"
+Environment="WM_CONF_FILE=$WM_CONF_FILE"
+ExecStart=$CLI_BIN --quiet check
+TimeoutStartSec=300
+# 脚本约定: 0=已最新, 10=有新版本, 2=查询失败。
+# 把 10 也视为成功，避免每周产生一个 "failed" 单元状态造成噪音。
+SuccessExitStatus=0 10
+
+[Install]
+WantedBy=multi-user.target
+WMEOF
+    ;;
+    windmill-update-check.timer) cat <<'WMEOF'
+[Unit]
+Description=每周一 09:00 检查 Windmill 上游新版本
+
+[Timer]
+OnCalendar=Mon *-*-* 09:00:00
+RandomizedDelaySec=600
+Persistent=true
+Unit=windmill-update-check.service
+
+[Install]
+WantedBy=timers.target
+WMEOF
+    ;;
+    *) die "未知 systemd 单元: $name" ;;
+  esac
+}
+
+SYSTEMD_UNITS=(
+  windmill-stack.service
+  windmill-backup.service
+  windmill-backup.timer
+  windmill-update-check.service
+  windmill-update-check.timer
+)
+
+# =============================================================================
+# 命令: init —— 全新部署一个空实例
+# =============================================================================
+cmd_init() {
+  local ver="" port="$HTTP_PORT" do_harden=1 do_systemd=1 force=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --version)   ver="${2:-}"; shift 2 ;;
+      --port)      port="${2:-}"; shift 2 ;;
+      --ghcr-mirror) WM_GHCR_MIRROR="${2:-}"; shift 2 ;;
+      --hub-mirror)  WM_HUB_MIRROR="${2:-}"; shift 2 ;;
+      --no-harden) do_harden=0; shift ;;
+      --no-systemd) do_systemd=0; shift ;;
+      --force)     force=1; shift ;;
+      -h|--help)   help_init; exit 0 ;;
+      *)           usage_die "init: 未知参数 $1" ;;
+    esac
+  done
+
+  require_ready
+  HTTP_PORT="$port"
+  wm_paths
+
+  hr
+  log "${C_BOLD}Windmill 全新部署${C_RESET}   目录 $WM_DIR   端口 $HTTP_PORT"
+  hr
+
+  if [ -f "$COMPOSE_FILE" ] && [ "$force" != 1 ]; then
+    die "目标已存在部署（${COMPOSE_FILE}）。改用 \`$CLI_NAME deploy\` 重建，或加 --force 覆盖配置。"
+  fi
+
+  # --- 1. 目录与配置 --------------------------------------------------------
+  step "1/7 生成配置文件"
+  mkdir -p "$WM_DIR" "$BACKUP_DIR" "$LOG_DIR"
+  render_compose; info "  docker-compose.yml"
+  render_caddy;   info "  Caddyfile"
+
+  # --- 2. 目标版本 ----------------------------------------------------------
+  step "2/7 确定目标版本"
+  if [ -z "$ver" ]; then
+    log "  未指定 --version，查询上游最新 release ..."
+    ver=$(latest_version)
+    [ -n "$ver" ] || die "无法查询上游最新版本。请显式指定: $CLI_NAME init --version 1.811.1"
+  fi
+  ver="${ver#v}"
+  log "  目标版本: $ver"
+
+  # --- 3. 生成 .env（含随机数据库口令）--------------------------------------
+  step "3/7 生成 .env（随机数据库口令）"
+  local dbpass
+  dbpass=$(gen_password 32)
+  render_env "$ver" "$dbpass" "$port"
+  ok "  .env 已生成（chmod 600）"
+
+  # 配置必须在动手前校验通过，避免删完卷才发现配置写错
+  if docker compose --project-directory "$WM_DIR" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" \
+       config >/dev/null 2>/tmp/wm-init-cfg.err; then
+    info "  compose 配置解析通过"
+  else
+    cat /tmp/wm-init-cfg.err >&2
+    die "compose 配置解析失败，已中止（未改动任何容器）"
+  fi
+  if docker compose --project-directory "$WM_DIR" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" config 2>/dev/null \
+       | grep -qE '\$\{'; then
+    die "compose 中仍有未解析变量，请检查 $ENV_FILE"
+  fi
+
+  # --- 4. 前置检查 ----------------------------------------------------------
+  step "4/7 前置检查"
+  require_free_space
+  require_image "${WM_REPO}:${ver}"
+  require_image "${WM_EXTRA_REPO}:${ver}"
+
+  # --- 5. 拉取镜像 ----------------------------------------------------------
+  step "5/7 拉取镜像（首次约 6-7G）"
+  pull_images "$ver" || die "镜像拉取失败（首选给 docker daemon 配 HTTP 代理；或加 --ghcr-mirror / --hub-mirror）"
+
+  # --- 6. 启动 --------------------------------------------------------------
+  step "6/7 启动数据库"
+  crun compose up -d --no-deps db || { compose logs --tail 30 db >&2; die "数据库未能启动"; }
+  wait_db || warn "db healthcheck 未按期转 healthy，仍继续"
+
+  step "7/7 分阶段启动整个 stack（server 首次启动会自行建表并跑迁移）"
+  crun stack_up_staged || die "分阶段启动失败"
+
+  # --- 健康检查 -------------------------------------------------------------
+  log ""
+  step "健康检查（最长 ${HEALTH_TIMEOUT}s）"
+  local okall=1
+  wait_version "$ver" || okall=0
+  all_running || okall=0
+  wm_port_listening || { warn "入口端口 $HTTP_PORT 未监听（caddy 可能未起来）"; okall=0; }
+  # 日志只判「致命错误」；普通 ERROR 仅提示（外网 embeddings 拉取失败会在健康
+  # 部署里周期性出现，不能据此判失败 —— 详见 log_errors 注释）。
+  local fatals; fatals=$(log_fatal)
+  if [ -n "$fatals" ]; then warn "server 日志出现致命错误:"; printf '%s\n' "$fatals" >&2; okall=0; fi
+  local errs; errs=$(log_errors)
+  if [ -n "$errs" ]; then
+    warn "server 有 $(printf '%s\n' "$errs" | grep -c .) 条非致命 ERROR（多为外网依赖失败，不影响部署）："
+    printf '%s\n' "$errs" | head -3 >&2
+  fi
+
+  [ "$okall" = 1 ] || die "部署未通过健康检查。排查: $CLI_NAME status / $CLI_NAME logs windmill_server"
+
+  write_version "$ver"
+
+  # --- 加固 -----------------------------------------------------------------
+  local adminpass=""
+  if [ "$do_harden" = 1 ]; then
+    log ""
+    step "加固：设置 Base URL 与 admin 口令"
+    adminpass=$(gen_password 28)
+    harden_instance "$ver" "$adminpass" || warn "加固未完全成功，可稍后执行 $CLI_NAME credentials"
+  fi
+
+  if [ "$do_systemd" = 1 ]; then
+    log ""
+    step "安装 systemd 定时任务"
+    cmd_systemd install || warn "systemd 安装未成功（可稍后重试）"
+  fi
+
+  # --- 报告 -----------------------------------------------------------------
+  hr
+  ok "部署完成"
+  log "  版本      : $ver"
+  log "  入口      : $(instance_url)"
+  log "  迁移条数  : $(migration_count || echo '?')"
+  log "  探测版本  : $(probe_version)"
+  log "  目录      : $WM_DIR"
+  hr
+  log "${C_BOLD}登录凭据${C_RESET}"
+  log "  地址  : $(instance_url)"
+  log "  账号  : admin@windmill.dev"
+  if [ -n "$adminpass" ]; then
+    log "  口令  : ${C_BOLD}${adminpass}${C_RESET}"
+  else
+    log "  口令  : ${C_BOLD}changeme${C_RESET}  ${C_YELLOW}（默认口令，未加固，请尽快修改）${C_RESET}"
+  fi
+  log "  数据库: postgres / $(get_env POSTGRES_PASSWORD)"
+  log "  ${C_DIM}凭据也已写入 $WM_DIR/CREDENTIALS.txt（chmod 600）${C_RESET}"
+  hr
+  log "常用命令: $CLI_NAME status | $CLI_NAME backup --full | $CLI_NAME check"
+  hr
+
+  if [ "$do_harden" = 1 ] && [ -n "$adminpass" ]; then
+    {
+      echo "# Windmill 凭据  $(ts)"
+      echo "URL=$(instance_url)"
+      echo "ADMIN_USER=admin@windmill.dev"
+      echo "ADMIN_PASSWORD=$adminpass"
+      echo "DB_USER=postgres"
+      echo "DB_PASSWORD=$(get_env POSTGRES_PASSWORD)"
+      echo "VERSION=$ver"
+    } > "$WM_DIR/CREDENTIALS.txt"
+    chmod 0600 "$WM_DIR/CREDENTIALS.txt"
+  fi
+}
+
+# 设置 Base URL + 轮换 admin 口令
+# 注意 API 陷阱: /api/auth/login 返回的是【裸 token】(text/plain)，不是 JSON；
+#              改口令端点是 setpassword（set_password 是 404）；
+#              设 base_url 的 body 必须是 {"value":"..."}，传裸字符串会 422。
+harden_instance() {
+  local ver="$1" newpass="$2"
+  local host base token code
+
+  host=$(primary_ip)
+  [ -n "$host" ] || { warn "无法确定本机 IP，跳过 Base URL 设置"; return 1; }
+  base=$(instance_url)
+
+  token=$(wm_login changeme)
+  [ -n "$token" ] || token=$(wm_login "")
+  [ -n "$token" ] || { warn "无法登录（口令可能已非默认），跳过加固"; return 1; }
+
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
+    -X POST "http://127.0.0.1/api/settings/global/base_url" \
+    -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+    -d "{\"value\":\"${base}\"}" 2>/dev/null || echo 000)
+  local got; got=$(qval "select value::text from global_settings where name='base_url'" || true)
+  if [ "$code" = "200" ] && [ -n "$got" ]; then
+    ok "  Base URL = $got"
+  else
+    warn "  Base URL 设置返回 HTTP ${code}，库中值='${got:-<空>}'"
+  fi
+
+  # 口令最后改，改完旧 token 即失效
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
+    -X POST "http://127.0.0.1/api/users/setpassword" \
+    -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+    -d "{\"password\":\"${newpass}\"}" 2>/dev/null || echo 000)
+  if [ "$code" = "200" ]; then
+    if [ -n "$(wm_login "$newpass")" ]; then
+      ok "  admin 口令已轮换（新口令可用）"
+    else
+      warn "  口令接口返回 200 但新口令登录失败，请人工核查"
+      return 1
+    fi
+    local oldcode
+    oldcode=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+      -X POST "http://127.0.0.1/api/auth/login" -H 'Content-Type: application/json' \
+      -d '{"email":"admin@windmill.dev","password":"changeme"}' 2>/dev/null || echo 000)
+    [ "$oldcode" = "200" ] && warn "  默认口令 'changeme' 仍可用（异常）" || ok "  默认口令已失效"
+  else
+    warn "  改口令失败（HTTP ${code}），admin 口令仍是 changeme"
+    return 1
+  fi
+  return 0
+}
+
+# 登录并返回裸 token（响应体本身即 token，不要按 JSON 解析）
+wm_login() {
+  local pw="$1" t=""
+  t=$(curl -s --max-time 12 -X POST "http://127.0.0.1/api/auth/login" \
+        -H 'Content-Type: application/json' \
+        -d "{\"email\":\"admin@windmill.dev\",\"password\":\"${pw}\"}" 2>/dev/null \
+      | tr -d '\r\n' || true)
+  case "$t" in *'{'*|*'error'*|*'Unauthorized'*) t="" ;; esac
+  printf '%s' "$t"
+}
+
+# =============================================================================
+# 命令: deploy —— 重建部署（容器 / 快照恢复）
+# =============================================================================
+cmd_deploy() {
+  local mode="auto" src="" core=0 sql_raw=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from)       mode="restore"; src="${2:-}"; shift 2 ;;
+      --from-daily) mode="daily";   shift; if [ -n "${1:-}" ] && [ "${1#--}" = "$1" ]; then src="$1"; shift; fi ;;   # 可选带具体备份文件路径
+      --recreate)   mode="recreate"; shift ;;
+      --core-only)  core=1; shift ;;
+      -y|--yes)     ASSUME_YES=1; shift ;;   # restore 内部会带 --yes 调用本命令
+      -h|--help)    help_deploy; exit 0 ;;
+      *)            usage_die "deploy: 未知参数 $1" ;;
+    esac
+  done
+
+  require_ready
+  wm_paths
+
+  local miss; miss=$(config_missing)
+  local vol; vol=$(db_volume 2>/dev/null || true)
+  local vol_ok=0; volume_has_cluster "$vol" && vol_ok=1
+  local snap; snap=$(latest_snapshot)
+  local daily; daily=$(latest_daily_backup)
+
+  [ -n "$src" ] || true
+  case "$mode" in
+    restore) [ -n "$src" ] || src="$snap" ;;
+    daily)   [ -n "$src" ] || src="$daily" ;;
+  esac
+
+  if [ "$mode" = "auto" ]; then
+    if [ -n "$miss" ]; then
+      # 配置不全：从快照补齐
+      if [ -n "$snap" ]; then mode="restore"; src="$snap"
+      else die "配置缺失（${miss}）且无可用快照。请用 $CLI_NAME init 全新部署。"; fi
+    elif [ "$vol_ok" = 1 ]; then mode="recreate"
+    elif [ -n "$snap" ]; then mode="restore"; src="$snap"
+    elif [ -n "$daily" ]; then mode="daily"; src="$daily"
+    else die "无数据卷、无快照、无每日备份。请用 $CLI_NAME init 全新部署。"
+    fi
+  fi
+
+  hr
+  log "${C_BOLD}Windmill 重建${C_RESET}"
+  log "  目录     : $WM_DIR"
+  log "  模式     : $mode"
+  log "  数据卷   : ${vol:-<无>}$( [ "$vol_ok" = 1 ] && echo "  (含 postgres 集群)" || echo "" )"
+  log "  配置完整性: $( [ -z "$miss" ] && echo '齐全' || echo "缺:$miss" )"
+  if [ -n "$src" ]; then log "  恢复源   : $src"; fi
+  log "  启动范围 : $( [ "$core" = 1 ] && echo '仅 db + server（演练）' || echo '全部服务' )"
+  hr
+
+  acquire_lock
+  mkdir -p "$BACKUP_DIR" "$LOG_DIR"
+
+  # --- 配置补齐 -------------------------------------------------------------
+  if [ -n "$miss" ]; then
+    [ -n "$snap" ] || die "配置缺失且无快照可补齐"
+    step "从快照补齐配置 ($snap)"
+    for f in docker-compose.yml Caddyfile .env; do
+      case " $miss " in *" $f "*)
+        [ -f "$snap/$f" ] || die "快照里也没有 ${f}，无法补齐"
+        cp -a "$snap/$f" "$WM_DIR/$f"
+        info "  ← $f"
+        ;;
+      esac
+    done
+    chmod 0600 "$ENV_FILE"
+  fi
+  if [ -f "$ENV_FILE" ]; then
+    local p; p=$(get_env HTTP_PORT); HTTP_PORT="${p:-$HTTP_PORT}"
+  fi
+  docker compose --project-directory "$WM_DIR" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" config >/dev/null 2>&1 \
+    || die "compose 配置解析失败"
+
+  local target; target=$(env_version)
+
+  case "$mode" in
+    recreate)
+      step "重建容器（保留数据卷）"
+      crun stack_up_staged "$( [ "$core" = 1 ] && echo 'windmill_server' || echo '' )" || die "启动失败"
+      ;;
+    restore|daily)
+      [ -n "$src" ] && [ -d "$src" ] || [ -f "$src" ] || die "恢复源不存在: $src"
+
+      if [ "$mode" = "daily" ]; then
+        [ -f "$src" ] || die "找不到每日备份: $src"
+        step "解压每日备份"
+        sql_raw="/tmp/wm-deploy-restore-$$.sql"
+        gunzip -c "$src" > "$sql_raw" || die "解压失败: $src"
+      else
+        sql_raw="$src/cluster.sql"
+        if [ -f "$src/cluster.sql.sha256" ]; then
+          ( cd "$src" && sha256sum -c cluster.sql.sha256 >/dev/null ) || die "快照 sha256 校验失败"
+          info "  快照 sha256 校验通过"
+        fi
+      fi
+      verify_dump_file "$sql_raw" || die "dump 不完整，拒绝恢复"
+
+      step "停止现有 stack（保留卷）"
+      crun compose down --remove-orphans >/dev/null 2>&1 || true
+
+      step "删除数据库卷"
+      local v; v=$(db_volume)
+      if [ -n "$v" ]; then
+        crun docker volume rm -f "$v" >/dev/null 2>&1 || true
+        if [ "$DRY_RUN" != 1 ] && docker volume inspect "$v" >/dev/null 2>&1; then
+          die "卷 $v 仍存在（可能被占用）。先 \`$CLI_NAME down\` 后重试。"
+        fi
+        info "  卷 ${v} 已删除"
+      fi
+
+      step "启动数据库"
+      crun compose up -d --no-deps db || die "数据库未能启动"
+      wait_db || warn "db 未按期 healthy，继续"
+
+      step "恢复数据"
+      restore_cluster_from "$sql_raw" "$LOG_DIR/deploy-restore-$(date +%Y%m%d-%H%M%S).log" \
+        || die "恢复失败，详见 $LOG_DIR/"
+      sync_db_password || true
+      refresh_planner_stats
+
+      step "分阶段启动 stack"
+      crun stack_up_staged "$( [ "$core" = 1 ] && echo 'windmill_server' || echo '' )" || die "启动失败"
+
+      if [ "$mode" = "daily" ]; then rm -f "${sql_raw:-}"; fi
+      ;;
+  esac
+
+  # --- 健康检查 -------------------------------------------------------------
+  local okall=1
+  if [ -n "$target" ]; then wait_version "$target" || okall=0; fi
+  if [ "$core" != 1 ]; then
+    all_running || okall=0
+    wm_port_listening || { warn "入口端口 $HTTP_PORT 未监听"; okall=0; }
+  fi
+
+  [ "$okall" = 1 ] || die "重建未通过健康检查。排查: $CLI_NAME status"
+  if [ -n "$target" ]; then
+    write_version "$target"
+    hr; ok "重建完成，版本 $target"; hr
+  else
+    hr; ok "重建完成"; hr
+  fi
+}
+
+# =============================================================================
+# 命令: destroy —— 拆除部署
+# =============================================================================
+cmd_destroy() {
+  local all=0 purge_images=0 keep_backups=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --all)          all=1; purge_images=1; shift ;;
+      --purge-images) purge_images=1; shift ;;
+      --keep-backups) keep_backups=1; shift ;;
+      -h|--help)      help_destroy; exit 0 ;;
+      *)              usage_die "destroy: 未知参数 $1" ;;
+    esac
+  done
+
+  require_ready
+  wm_paths
+
+  local proj; proj=$(project_name)
+  local vols; vols=$(project_volumes)
+  local nsnap ndaily
+  nsnap=$(snapshot_list | wc -l)
+  ndaily=$(count_files "$BACKUP_DIR"/daily/cluster-*.sql.gz)
+
+  hr
+  warn "即将拆除 Windmill 部署"
+  hr
+  log "  部署目录   : $WM_DIR"
+  log "  compose 项目: $proj"
+  log "  容器       : $( { compose ps -a -q 2>/dev/null || true; } | wc -l ) 个"
+  log "  数据卷     :"
+  [ -n "$vols" ] && printf '%s\n' "$vols" | sed 's/^/      /' || log "      <无>"
+  log "  完整快照   : $nsnap 份"
+  log "  每日备份   : $ndaily 份"
+  log "  systemd    : $( [ -f /etc/systemd/system/windmill-stack.service ] && echo '已安装（将停用并删除）' || echo '<未安装>' )"
+  log "  镜像       : $( [ "$purge_images" = 1 ] && echo '将删除 windmill/postgres/caddy 相关' || echo '保留' )"
+  log "  备份       : $( [ "$all" = 1 ] && echo '将彻底删除，不可恢复' || { [ "$keep_backups" = 1 ] && echo '转移到 $AIBOX_HOME/backups/（无 HOME 时 /var/backups）' || echo '转移到 $AIBOX_HOME/backups/（无 HOME 时 /var/backups）'; } )"
+  hr
+  warn "数据库卷删除后，其中的全部工作流、脚本、运行记录将永久丢失。"
+  hr
+
+  confirm "确认拆除？" || exit 0
+
+  # --- systemd --------------------------------------------------------------
+  step "1/5 停用 systemd 单元"
+  for u in "${SYSTEMD_UNITS[@]}"; do
+    if [ -f "/etc/systemd/system/$u" ]; then
+      crun systemctl disable --now "$u" >/dev/null 2>&1 || true
+      crun rm -f "/etc/systemd/system/$u"
+      info "  移除 $u"
+    fi
+  done
+  crun systemctl daemon-reload >/dev/null 2>&1 || true
+  crun systemctl reset-failed 'windmill-*' >/dev/null 2>&1 || true
+
+  # --- 备份 -----------------------------------------------------------------
+  if [ "$all" = 1 ]; then
+    step "2/5 删除全部备份"
+    crun rm -rf "$BACKUP_DIR"
+    info "  $BACKUP_DIR 已删除"
+  else
+    step "2/5 转移备份到部署目录之外"
+    evacuate_backups || warn "备份转移失败，将继续删除部署目录"
+  fi
+
+  # --- 容器与卷 -------------------------------------------------------------
+  step "3/5 停止并移除容器（含数据卷）"
+  if [ -f "$COMPOSE_FILE" ]; then
+    crun compose down --volumes --remove-orphans || warn "compose down 返回非零，继续"
+  fi
+  # compose 文件已丢失时兜底：按 label 清理
+  if [ "$DRY_RUN" != 1 ]; then
+    local leftover
+    leftover=$(docker ps -aq --filter "label=com.docker.compose.project=${proj}" 2>/dev/null || true)
+    [ -n "$leftover" ] && docker rm -f $leftover >/dev/null 2>&1 || true
+    for v in $(docker volume ls --filter "label=com.docker.compose.project=${proj}" --format '{{.Name}}' 2>/dev/null); do
+      docker volume rm -f "$v" >/dev/null 2>&1 || true
+    done
+  fi
+  info "  残留容器: $( { docker ps -a --filter "label=com.docker.compose.project=${proj}" -q 2>/dev/null || true; } | wc -l )"
+
+  # --- 镜像 -----------------------------------------------------------------
+  if [ "$purge_images" = 1 ]; then
+    step "4/5 删除镜像"
+    local imgs
+    imgs=$(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+      | grep -E 'windmill-labs/(windmill|windmill-extra|caddy-l4)|^postgres:' || true)
+    if [ -n "$imgs" ]; then
+      if [ "$DRY_RUN" = 1 ]; then
+        printf '%s\n' "$imgs" | sed 's/^/  将删除 /'
+      else
+        # shellcheck disable=SC2086
+        docker rmi -f $imgs >/dev/null 2>&1 || true
+        printf '%s\n' "$imgs" | sed 's/^/  已删除 /'
+      fi
+    else
+      info "  无匹配镜像"
+    fi
+  else
+    step "4/5 镜像保留（如需删除加 --purge-images）"
+  fi
+
+  # --- 目录 -----------------------------------------------------------------
+  step "5/5 删除部署目录"
+  crun rm -rf "$WM_DIR"
+  info "  $WM_DIR 已删除"
+
+  # --- 报告 -----------------------------------------------------------------
+  hr
+  ok "拆除完成"
+  log "  容器残留: $( { docker ps -a --filter "label=com.docker.compose.project=${proj}" -q 2>/dev/null || true; } | wc -l ) 个"
+  log "  卷残留  : $( { docker volume ls --filter "label=com.docker.compose.project=${proj}" -q 2>/dev/null || true; } | wc -l ) 个"
+  log "  目录    : $( [ -d "$WM_DIR" ] && echo '仍存在' || echo '已移除' )"
+  log ""
+  log "  重新部署: $CLI_NAME init"
+  hr
+}
+
+# =============================================================================
+# 命令: up / down
+# =============================================================================
+cmd_up() {
+  local core=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --core-only) core=1; shift ;;
+      -h|--help)   help_up; exit 0 ;;
+      *)           usage_die "up: 未知参数 $1" ;;
+    esac
+  done
+  require_ready
+  wm_paths
+  [ -f "$COMPOSE_FILE" ] || die "找不到 ${COMPOSE_FILE}。先执行 $CLI_NAME init 或 $CLI_NAME deploy。"
+
+  acquire_lock
+  local p; p=$(get_env HTTP_PORT); HTTP_PORT="${p:-$HTTP_PORT}"
+
+  hr; log "${C_BOLD}启动/对齐 stack${C_RESET}  $(ts)"; hr
+  crun stack_up_staged "$( [ "$core" = 1 ] && echo 'windmill_server' || echo '' )" \
+    || { warn "启动过程出现失败"; compose ps -a --format '{{.Service}}\t{{.State}}\t{{.Status}}' 2>/dev/null | sort; exit 1; }
+
+  compose ps --format '{{.Service}}\t{{.State}}\t{{.Status}}' 2>/dev/null | sort | sed 's/^/  /' || true
+  if [ "$core" = 1 ]; then
+    ok "core 服务已启动（db + server）"; exit 0
+  fi
+  if all_running && wm_port_listening; then
+    ok "stack 已完全就绪   版本 $(probe_version)"
+    append_log stack-boot.log "stack 已完全就绪，版本 $(probe_version)"
+    exit 0
+  fi
+  warn "存在未就绪的服务，见上方列表"
+  exit 1
+}
+
+cmd_down() {
+  local keep_caddy=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -h|--help) help_down; exit 0 ;;
+      *)         usage_die "down: 未知参数 $1" ;;
+    esac
+  done
+  require_ready
+  wm_paths
+  [ -f "$COMPOSE_FILE" ] || die "找不到 $COMPOSE_FILE"
+
+  hr; warn "停止 stack（数据卷保留）"; hr
+  confirm "确认停止？" || exit 0
+  crun compose down --remove-orphans || die "compose down 失败"
+  ok "已停止。数据卷保留，重启: $CLI_NAME up"
+}
+
+# =============================================================================
+# 命令: status —— 服务与资源总览
+# =============================================================================
+cmd_status() {
+  require_docker
+  wm_paths
+
+  if [ ! -f "$COMPOSE_FILE" ]; then
+    warn "未发现部署（$COMPOSE_FILE 不存在）"
+    log "  全新部署: $CLI_NAME init"
+    exit 3
+  fi
+  local p; p=$(get_env HTTP_PORT); HTTP_PORT="${p:-$HTTP_PORT}"
+
+  hr
+  log "${C_BOLD}Windmill 状态${C_RESET}   $WM_DIR   $(ts)"
+  hr
+
+  log "${C_BOLD}容器${C_RESET}"
+  local running total
+  running=$( { compose ps -q 2>/dev/null || true; } | wc -l )
+  total=$( { compose ps -a -q 2>/dev/null || true; } | wc -l )
+  compose ps -a --format '{{.Service}}\t{{.State}}\t{{.Status}}' 2>/dev/null \
+    | sort | awk -F'\t' '{printf "  %-22s %-10s %s\n", $1, $2, $3}' || true
+  log "  ── running ${running} / 共 ${total}"
+
+  log ""
+  log "${C_BOLD}服务${C_RESET}"
+  printf '  %-14s %s\n' "部署版本" "$(current_version)  ${C_DIM}(.env: $(env_version))${C_RESET}"
+  printf '  %-14s %s\n' "自报版本" "$(probe_version)"
+  printf '  %-14s %s\n' "入口(:${HTTP_PORT})" "$(wm_port_listening && echo "${C_GREEN}监听中${C_RESET}" || echo "${C_RED}未监听${C_RESET}")"
+  printf '  %-14s HTTP %s\n' "UI" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "http://127.0.0.1:${HTTP_PORT}/" 2>/dev/null || echo 000)"
+  printf '  %-14s %s\n' "数据库" "$(db_healthy && echo "${C_GREEN}healthy${C_RESET}" || echo "${C_YELLOW}非 healthy${C_RESET}")"
+  printf '  %-14s %s\n' "Base URL" "$(qval "select value::text from global_settings where name='base_url'")"
+
+  if db_healthy; then
+    log ""
+    log "${C_BOLD}数据${C_RESET}"
+    printf '  %-14s %s\n' "迁移条数" "$(migration_count)"
+    printf '  %-14s %s\n' "用户" "$(qval 'select count(*) from password')"
+    printf '  %-14s %s\n' "工作区" "$(qval 'select count(*) from workspace')"
+    printf '  %-14s %s\n' "脚本" "$(qval 'select count(*) from script')"
+    printf '  %-14s %s\n' "RLS 策略" "$(qval 'select count(*) from pg_policies')"
+  fi
+
+  log ""
+  log "${C_BOLD}备份${C_RESET}"
+  local nsnap ndaily sz
+  nsnap=$(snapshot_list | wc -l)
+  ndaily=$(count_files "$BACKUP_DIR"/daily/cluster-*.sql.gz)
+  sz=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1 || true)
+  printf '  %-14s %s 份\n' "完整快照" "$nsnap"
+  printf '  %-14s %s 份\n' "每日备份" "$ndaily"
+  printf '  %-14s %s\n' "占用" "${sz:-0}"
+  local lastsnap; lastsnap=$(latest_snapshot)
+  if [ -n "$lastsnap" ]; then printf '  %-14s %s\n' "最新快照" "$(basename "$lastsnap")  ${C_DIM}(版本 $(sed -n 's/^WM_VERSION=//p' "$lastsnap/meta.env" 2>/dev/null | head -1))${C_RESET}"; fi
+
+  log ""
+  log "${C_BOLD}资源${C_RESET}"
+  printf '  %-14s %s\n' "磁盘" "$(df -h / | tail -1 | awk '{print $3" 已用 / "$2" 共, "$4" 可用 ("$5")"}')"
+  printf '  %-14s %s\n' "内存" "$(mem_used_h)"
+  printf '  %-14s %s\n' "镜像占用" "$(docker system df --format '{{.Type}} {{.Size}}' 2>/dev/null | awk '$1=="Images"{print $2}')"
+
+  log ""
+  log "${C_BOLD}定时任务${C_RESET}"
+  if [ "$OS_KIND" = "Darwin" ]; then
+    log "  ${C_DIM}<macOS 使用 launchd，本 CLI 的 launchd 适配尚未实现>${C_RESET}"
+  elif [ -f /etc/systemd/system/windmill-backup.timer ]; then
+    systemctl --no-pager list-timers 'windmill-*' --no-legend 2>/dev/null \
+      | awk '{printf "  %-18s 下次 %s %s %s\n", $NF, $1, $2, $3}' || true
+    printf '  %-18s %s\n' "stack 开机对齐" "$(systemctl is-enabled windmill-stack.service 2>/dev/null)/$(systemctl is-active windmill-stack.service 2>/dev/null)"
+  else
+    log "  ${C_DIM}<未安装，执行 $CLI_NAME systemd install>${C_RESET}"
+  fi
+  hr
+}
+
+# =============================================================================
+# 命令: doctor —— 环境自检
+# =============================================================================
+cmd_doctor() {
+  wm_paths
+  local fail=0
+  hr
+  log "${C_BOLD}环境自检${C_RESET}  $(ts)"
+  hr
+
+  chk() {  # chk <描述> <0/1 通过> [提示]
+    if [ "$2" = 1 ]; then printf '  %s✔%s %-30s %s\n' "$C_GREEN" "$C_RESET" "$1" "${3:-}"
+    else printf '  %s✘%s %-30s %s\n' "$C_RED" "$C_RESET" "$1" "${3:-}"; fail=$((fail+1)); fi
+  }
+
+  [ "$(id -u)" = 0 ] && chk "root 权限" 1 || chk "root 权限" 0 "需要 sudo"
+  command -v docker >/dev/null 2>&1 && chk "docker 命令" 1 "$(docker --version 2>/dev/null | cut -d, -f1)" || chk "docker 命令" 0 "未安装"
+  docker info >/dev/null 2>&1 && chk "docker daemon" 1 || chk "docker daemon" 0 "未运行或无权限"
+  docker compose version >/dev/null 2>&1 && chk "docker compose v2" 1 "$(docker compose version --short 2>/dev/null)" || chk "docker compose v2" 0 "缺少插件"
+  if command -v flock >/dev/null 2>&1; then
+    chk "并发锁" 1 "flock"
+  elif [ "$OS_KIND" = "Darwin" ]; then
+    chk "并发锁" 1 "mkdir 原子锁（macOS 回退）"
+  else
+    chk "并发锁" 0 "缺少 flock（util-linux）"
+  fi
+  if [ -r "$WM_CONF_FILE" ]; then
+    chk "主机级配置" 1 "$WM_CONF_FILE"
+  else
+    chk "主机级配置" 1 "未配置（$WM_CONF_FILE 不存在，走内置默认）"
+  fi
+  command -v python3 >/dev/null 2>&1 && chk "python3" 1 "$(python3 --version 2>&1 | cut -d' ' -f2)" || chk "python3" 0 "compose 配置解析需要"
+
+  local fg; fg=$(free_gb); fg="${fg:-0}"
+  [ "$fg" -ge "$MIN_FREE_GB" ] && chk "磁盘可用 ≥ ${MIN_FREE_GB}G" 1 "${fg}G" \
+    || chk "磁盘可用 ≥ ${MIN_FREE_GB}G" 0 "仅 ${fg}G，升级需要同时容纳新旧两版镜像"
+
+  # 入口端口：只统计非 docker 进程占用
+  if wm_port_listening; then
+    chk "入口端口 ${HTTP_PORT}" 1 "已在监听（服务运行中）"
+  else
+    chk "入口端口 ${HTTP_PORT}" 1 "空闲"
+  fi
+
+  # 宿主 25 端口：exim4 等占用会让 caddy 的邮件触发器映射失败。
+  # 本 CLI 生成的 compose 已移除 25 映射，此处只做信息提示。
+  local p25=""
+  if port_listening 25; then
+    chk "宿主 25 端口" 1 "已被占用（compose 已移除 25 映射，无需处理）"
+  fi
+
+  local px; px=$(proxy_env)
+  if https_proxy="$px" http_proxy="$px" curl -fsS -o /dev/null --max-time 12 https://api.github.com/ 2>/dev/null; then
+    chk "代理可达 ${px}" 1
+  else
+    chk "代理可达 ${px}" 0 "check/upgrade 拉版本会失败（可用 --proxy 指定）"
+  fi
+
+  # ghcr 镜像源：国内直连 ghcr.io 实测约 0.5MB/s，一个全新部署要拉 ~6GiB。
+  # 注意：不要用 `docker manifest inspect` 探测第三方镜像源 —— 它的认证握手与
+  # registry v2 规范不同，docker 会误报「不存在」，但 `docker pull` 实际可用。
+  # 这里只探 /v2/ 端点：200（公开）与 401（需认证）都算可达。
+  mirror_probe() {
+    local label="$1" m="$2" hint="$3" murl mcode
+    if [ -z "$m" ]; then chk "$label" 1 "$hint"; return 0; fi
+    murl=$(mirror_url "$m")
+    mcode=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${murl}/v2/" 2>/dev/null || echo 000)
+    case "$mcode" in
+      200|401) chk "$label" 1 "$m" ;;
+      *)       chk "$label" 0 "${m} → ${mcode}，将回退直连（慢；黑洞源还会挂死）" ;;
+    esac
+    return 0
+  }
+  mirror_probe "ghcr 镜像源"     "${WM_GHCR_MIRROR:-}" "未设置（非必须）；首选给 docker daemon 配 HTTP 代理，其次 --ghcr-mirror"
+  mirror_probe "docker.io 镜像源" "${WM_HUB_MIRROR:-}"  "未设置；交给 daemon 的 registry-mirrors（有黑洞源的风险）"
+
+  # docker daemon 的 HTTP 代理 —— 本环境实测最有效的提速手段。
+  # 给 daemon 配宿主的 http://192.168.50.135:7897 后，直连 ghcr.io 从 2.4KB/s
+  # 提到 66MB/s（3.98GB 镜像 50 秒拉完）。镜像源只是备选，代理才是首选。
+  local dpx
+  dpx=$(docker info 2>/dev/null | awk -F': ' '/HTTP Proxy/{print $2; exit}')
+  if [ -n "$dpx" ]; then
+    chk "daemon HTTP 代理" 1 "$dpx"
+  else
+    chk "daemon HTTP 代理" 1 "未设置；国内直连 ghcr.io 约 0.5MB/s，建议给 daemon 配代理或镜像源"
+  fi
+
+  if docker manifest inspect "${WM_REPO}:latest" >/dev/null 2>&1; then
+    chk "ghcr.io 可拉镜像" 1
+  else
+    chk "ghcr.io 可拉镜像" 0 "直连不可用；若已配置镜像源可忽略"
+  fi
+
+  if [ -f "$COMPOSE_FILE" ]; then
+    if docker compose --project-directory "$WM_DIR" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" config >/dev/null 2>&1; then
+      chk "compose 配置可解析" 1
+    else
+      chk "compose 配置可解析" 0 "运行 $CLI_NAME deploy 重建，或检查 $ENV_FILE"
+    fi
+    chk "部署目录" 1 "${WM_DIR}（版本 $(current_version)）"
+  else
+    chk "部署目录" 1 "${WM_DIR}（尚未部署）"
+  fi
+
+  if [ -f /etc/systemd/system/windmill-backup.timer ]; then
+    local en; en=$(systemctl is-enabled windmill-backup.timer 2>/dev/null || echo unknown)
+    chk "systemd 定时任务" 1 "$en"
+  else
+    chk "systemd 定时任务" 1 "未安装（$CLI_NAME systemd install）"
+  fi
+
+  hr
+  if [ "$fail" = 0 ]; then ok "自检通过，环境就绪"; else err "有 $fail 项未通过，见上"; fi
+  hr
+  [ "$fail" = 0 ] || exit 3
+}
+
+# =============================================================================
+# 命令: check —— 检查上游新版本
+# =============================================================================
+cmd_check() {
+  wm_paths
+  [ -f "$ENV_FILE" ] || { warn "未发现部署"; exit 2; }
+  local px; px=$(get_env WM_PROXY); PROXY_URL="${px:-$PROXY_URL}"
+
+  local cur latest scope
+  cur=$(current_version)
+  log "当前部署版本: ${cur:-unknown}"
+
+  latest=$(latest_version)
+  if [ -z "$latest" ]; then
+    warn "无法获取上游最新版本（代理: $(proxy_env)）"
+    warn "  手工验证: https_proxy=$(proxy_env) curl -sS https://api.github.com/repos/windmill-labs/windmill/releases/latest"
+    append_log update-check.log "查询失败（代理 $(proxy_env) 不可达）"
+    exit 2
+  fi
+  log "上游最新版本: ${latest}"
+
+  if [ "$latest" = "$cur" ]; then
+    ok "已是最新版本"
+    append_log update-check.log "已是最新 ($cur)"
+    exit 0
+  fi
+
+  if [ "${cur%.*}" = "${latest%.*}" ]; then
+    scope="补丁级（${cur%.*}.x 内）"
+  else
+    scope="功能级（跨 minor/major）— 建议先看 release notes"
+  fi
+
+  hr
+  ok "发现新版本: ${cur} → ${latest}   [${scope}]"
+  log ""
+  log "升级命令（需人工确认）:"
+  log "    $CLI_NAME upgrade ${latest}"
+  log ""
+  log "升级前请确认：无长任务正在执行（worker 硬杀上限 30 秒会打断超时任务）。"
+  hr
+  append_log update-check.log "发现新版本 ${cur} -> ${latest} [${scope}]"
+  exit 10
+}
+
+# =============================================================================
+# 命令: upgrade —— 无损升级（含自动回滚）
+# =============================================================================
+U_OLD_VER=""; U_OLD_IMG=""; U_OLD_EXTRA=""; U_ROLLED_BACK=0; U_BK=""; U_TARGET=""
+
+cmd_upgrade() {
+  local target="" do_check=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --check|-c) do_check=1; shift ;;
+      --ghcr-mirror) WM_GHCR_MIRROR="${2:-}"; shift 2 ;;
+      --hub-mirror)  WM_HUB_MIRROR="${2:-}"; shift 2 ;;
+      -h|--help)  help_upgrade; exit 0 ;;
+      -*)         usage_die "upgrade: 未知参数 $1" ;;
+      *)          target="${1#v}"; shift ;;
+    esac
+  done
+  if [ "$do_check" = 1 ]; then cmd_check; exit $?; fi
+
+  require_ready
+  wm_paths
+  [ -f "$COMPOSE_FILE" ] || die "未发现部署。用 $CLI_NAME init 新建。"
+  local p; p=$(get_env HTTP_PORT); HTTP_PORT="${p:-$HTTP_PORT}"
+  local px; px=$(get_env WM_PROXY); PROXY_URL="${px:-$PROXY_URL}"
+  local mm; mm=$(get_env WM_GHCR_MIRROR); WM_GHCR_MIRROR="${mm:-$WM_GHCR_MIRROR}"
+  local hmm; hmm=$(get_env WM_HUB_MIRROR); WM_HUB_MIRROR="${hmm:-$WM_HUB_MIRROR}"
+
+  mkdir -p "$LOG_DIR" "$BACKUP_DIR"
+  acquire_lock
+
+  # --- 以「正在运行的容器」为准推断当前版本 ---------------------------------
+  # 不能读 .env：它可能已被预设成目标版本，会把【新】镜像误标成 rollback-<旧版本>。
+  local c_cid e_cid
+  c_cid=$(server_cid || true)
+  if [ -n "$c_cid" ]; then
+    U_OLD_IMG=$(docker inspect "$c_cid" --format '{{.Config.Image}}' 2>/dev/null || true)
+    U_OLD_VER=$(parse_version "$(probe_version)")
+    if [ -z "$U_OLD_VER" ]; then
+      U_OLD_VER=$(parse_version "$(docker exec "$c_cid" /usr/local/bin/windmill --version 2>/dev/null | tail -1 || true)")
+    fi
+  fi
+  e_cid=$(extra_cid || true)
+  [ -n "$e_cid" ] && U_OLD_EXTRA=$(docker inspect "$e_cid" --format '{{.Config.Image}}' 2>/dev/null || true)
+
+  U_OLD_VER="${U_OLD_VER:-$(current_version)}"
+  U_OLD_IMG="${U_OLD_IMG:-$(get_env WM_IMAGE)}"
+  U_OLD_EXTRA="${U_OLD_EXTRA:-$(get_env WM_EXTRA_IMAGE)}"
+
+  hr
+  log "${C_BOLD}无损升级${C_RESET}  $(ts)"
+  log "  运行中版本 : ${U_OLD_VER}  $( [ -n "$c_cid" ] && echo "${C_DIM}(从运行容器探测)${C_RESET}" || echo "${C_YELLOW}(容器未运行，取 VERSION 文件)${C_RESET}" )"
+  log "  运行中镜像 : ${U_OLD_IMG}"
+  log "  extra 镜像 : ${U_OLD_EXTRA}"
+  hr
+
+  if [ -z "$target" ]; then
+    log "未指定版本，查询上游最新 release ..."
+    target=$(latest_version)
+    [ -n "$target" ] || die "无法查询上游最新版本。可指定: $CLI_NAME upgrade 1.812.0"
+  fi
+  U_TARGET="${target#v}"
+  local new_img="${WM_REPO}:${U_TARGET}"
+  local new_extra="${WM_EXTRA_REPO}:${U_TARGET}"
+  log "  目标版本   : ${U_TARGET}"
+  if [ "$U_TARGET" = "$U_OLD_VER" ]; then log "  ${C_DIM}(与当前版本相同，将执行一次重建/校准)${C_RESET}"; fi
+
+  # --- 1. 前置检查 ----------------------------------------------------------
+  step "【1/6】前置检查"
+  require_free_space
+  require_image "$new_img"
+  require_image "$new_extra"
+  db_healthy || die "数据库当前不健康，请先修复再升级"
+  info "  数据库 healthy"
+
+  # --- 2. 全量快照 ----------------------------------------------------------
+  step "【2/6】全量快照（不可跳过）"
+  U_BK=$(new_backup_dir)
+  make_backup "$U_BK" || die "备份失败，已中止升级（未做任何改动）"
+
+  # --- 3. 固化旧镜像为可回滚标签 -------------------------------------------
+  step "【3/6】固化旧镜像"
+  if [ "$U_OLD_VER" != "unknown" ] && [ -n "$U_OLD_IMG" ]; then
+    docker tag "$U_OLD_IMG" "${WM_REPO}:rollback-${U_OLD_VER}" 2>/dev/null \
+      && info "  → ${WM_REPO}:rollback-${U_OLD_VER}" || warn "  标记 $U_OLD_IMG 失败"
+    if [ -n "$U_OLD_EXTRA" ]; then
+      docker tag "$U_OLD_EXTRA" "${WM_EXTRA_REPO}:rollback-${U_OLD_VER}" 2>/dev/null \
+        && info "  → ${WM_EXTRA_REPO}:rollback-${U_OLD_VER}" || warn "  标记 $U_OLD_EXTRA 失败"
+    fi
+  fi
+
+  # --- 4. 排空 worker -------------------------------------------------------
+  step "【4/6】排空 worker（在跑任务继续；上游硬杀上限 30s）"
+  crun compose stop windmill_worker windmill_worker_native || warn "停止 worker 返回非零，继续"
+
+  # --- 5. 切版本 + 拉取 + 启动 ---------------------------------------------
+  step "【5/6】切换版本并拉取镜像（此阶段 UI 仍可用）"
+  crun set_env WM_IMAGE "$new_img"
+  crun set_env WM_EXTRA_IMAGE "$new_extra"
+  # 镜像源模式下需要知道确切版本号才能拼出镜像地址；拿不到就退回 compose 原生拉取
+  local tver; tver=$(image_version "$new_img"); tver="${tver:-}"
+  pull_images "$tver" || { upgrade_rollback "拉取镜像失败"; exit 1; }
+  crun stack_up_staged || { upgrade_rollback "分阶段启动失败"; exit 1; }
+
+  # --- 6. 健康检查 ----------------------------------------------------------
+  step "【6/6】健康检查（最长 ${HEALTH_TIMEOUT}s）"
+  local hok=1 errs=""
+  wait_version "$U_TARGET" || hok=0
+  [ "$hok" = 1 ] && { all_running || hok=0; }
+  if [ "$hok" = 1 ] && ! wm_port_listening; then
+    warn "入口端口 ${HTTP_PORT} 未在监听（caddy 可能未起来）"; hok=0
+  fi
+  if [ "$hok" = 1 ]; then
+    errs=$(log_fatal)
+    if [ -n "$errs" ]; then warn "server 日志出现致命错误:"; printf '%s\n' "$errs" >&2; hok=0; fi
+  fi
+  if [ "$hok" != 1 ]; then
+    upgrade_rollback "健康检查未通过"
+    exit 1
+  fi
+
+  # --- 成功收尾 -------------------------------------------------------------
+  local new_mig; new_mig=$(migration_count 2>/dev/null || echo "?")
+  write_version "$U_TARGET"
+  prune_backups 5
+  case "$U_OLD_IMG" in
+    *:main|*:latest)
+      docker rmi "$U_OLD_IMG" >/dev/null 2>&1 \
+        && info "  已移除可漂移旧标签 ${U_OLD_IMG}（镜像由 rollback-${U_OLD_VER} 保留）" || true ;;
+  esac
+
+  hr
+  ok "升级成功"
+  log "  ${U_OLD_VER}  →  ${U_TARGET}"
+  log "  镜像       : $new_img"
+  log "  迁移条数   : $new_mig"
+  log "  探测版本   : $(probe_version)"
+  log "  回滚快照   : $U_BK"
+  log "  回滚命令   : $CLI_NAME rollback"
+  hr
+}
+
+# 升级失败时的自动回滚。
+# Windmill 的数据库迁移单向不可逆 —— 一旦新版本跑过迁移，旧镜像无法在已迁移的库上启动。
+# 所以回滚 = 换回旧镜像 + 恢复数据库快照，两者缺一不可。
+upgrade_rollback() {
+  local reason="$1"
+  if [ "$U_ROLLED_BACK" = 1 ]; then return 0; fi
+  U_ROLLED_BACK=1
+  hr >&2
+  warn "============ 升级失败，开始自动回滚 ============"
+  warn "原因: $reason"
+  warn "快照: ${U_BK:-<无>}"
+  hr >&2
+
+  local rb_img="${WM_REPO}:rollback-${U_OLD_VER}" rb_extra="${WM_EXTRA_REPO}:rollback-${U_OLD_VER}"
+  docker image inspect "$rb_img"   >/dev/null 2>&1 || rb_img="$U_OLD_IMG"
+  docker image inspect "$rb_extra" >/dev/null 2>&1 || rb_extra="$U_OLD_EXTRA"
+  warn "回退镜像: ${rb_img}"
+  set_env WM_IMAGE "$rb_img"
+  set_env WM_EXTRA_IMAGE "$rb_extra"
+
+  local new_mig old_mig
+  new_mig=$(migration_count 2>/dev/null || echo 0); new_mig="${new_mig:-0}"
+  old_mig=$(sed -n 's/^MIGRATION_COUNT=//p' "$U_BK/meta.env" 2>/dev/null | tr -d '[:space:]' || true); old_mig="${old_mig:-0}"
+  warn "迁移条数: 升级前 ${old_mig} → 现在 ${new_mig}"
+
+  if [ "$new_mig" != "$old_mig" ]; then
+    warn "数据库迁移已前进且不可逆，必须恢复快照才能回到旧版本。"
+    if [ -z "$U_BK" ] || [ ! -s "$U_BK/cluster.sql" ]; then
+      warn "❌ 没有可用快照，拒绝自动恢复数据库！需要人工介入。"; return 1
+    fi
+
+    warn "回滚 1/6: 停止整个 stack（保留卷）"
+    compose down --remove-orphans || true
+
+    warn "回滚 2/6: 删除 db 数据卷（原数据已备份于 ${U_BK}/cluster.sql）"
+    local vol; vol=$(db_volume)
+    if [ -n "$vol" ]; then
+      docker volume rm -f "$vol" >/dev/null 2>&1 || true
+      if docker volume inspect "$vol" >/dev/null 2>&1; then
+        warn "❌ 卷 ${vol} 仍存在（可能被占用），为避免把 restore 打进旧库，中止自动恢复。"
+        warn "   人工执行: docker compose down --remove-orphans && docker volume rm ${vol}"
+        return 1
+      fi
+      info "  卷 $vol 已删除"
+    fi
+
+    warn "回滚 3/6: 用旧镜像重建数据库"
+    compose up -d --wait db || { warn "数据库未能启动，需人工介入！快照: ${U_BK}"; return 1; }
+    wait_db || warn "db 未按期 healthy，继续尝试恢复"
+
+    warn "回滚 4/6: 恢复 cluster.sql"
+    restore_cluster_from "$U_BK/cluster.sql" "$U_BK/restore.log" \
+      || warn "⚠️ 恢复过程有异常，请核查 $U_BK/restore.log"
+    sync_db_password || warn "无法重置 postgres 口令，请确认 DATABASE_URL 与库一致"
+
+    warn "回滚 5/6: 重建 planner 统计"
+    refresh_planner_stats
+  else
+    warn "数据库迁移未前进（仅镜像层变化），无需恢复数据库。"
+  fi
+
+  warn "回滚 6/6: 用旧镜像分阶段重新启动"
+  stack_up_staged || warn "分阶段启动未完全成功，继续做最终探针判定"
+
+  if wait_version "$U_OLD_VER"; then
+    warn "✅ 已回滚到 ${U_OLD_VER}，探针通过。请核查后再重试升级。"
+    append_log upgrade.log "升级失败($reason)，已自动回滚到 ${U_OLD_VER}"
+    return 0
+  fi
+  warn "❌ 回滚后探针仍未通过，需要人工介入！快照: ${U_BK}"
+  append_log upgrade.log "升级失败($reason)，回滚后探针未通过，需人工介入"
+  return 1
+}
+
+# =============================================================================
+# 命令: rollback
+# =============================================================================
+cmd_rollback() {
+  local assume=0 images_only=0 list=0 args=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -y|--yes)      assume=1; shift ;;
+      --images-only) images_only=1; shift ;;
+      --list)        list=1; shift ;;
+      -h|--help)     help_rollback; exit 0 ;;
+      -*)            usage_die "rollback: 未知参数 $1" ;;
+      *)             args+=("$1"); shift ;;
+    esac
+  done
+
+  wm_paths
+  if [ "$list" = 1 ]; then
+    hr; log "${C_BOLD}可用快照${C_RESET}  $BACKUP_DIR"; hr
+    local d v m s
+    for d in $(snapshot_list); do
+      v=$(sed -n 's/^WM_VERSION=//p' "$d/meta.env" 2>/dev/null | head -1 || true)
+      m=$(sed -n 's/^MIGRATION_COUNT=//p' "$d/meta.env" 2>/dev/null | head -1 || true)
+      s=$(du -h "$d/cluster.sql" 2>/dev/null | cut -f1 || true)
+      printf '  %-20s 版本=%-10s 迁移=%-6s 大小=%s\n' "$(basename "$d")" "${v:-?}" "${m:-?}" "${s:-?}"
+    done
+    hr; log "当前部署版本: $(current_version)"; hr
+    exit 0
+  fi
+
+  require_ready
+  [ -f "$COMPOSE_FILE" ] || die "未发现部署"
+  local p; p=$(get_env HTTP_PORT); HTTP_PORT="${p:-$HTTP_PORT}"
+  acquire_lock
+
+  local cur latest_bk bk target rb_img rb_extra
+  cur=$(current_version)
+  latest_bk=$(latest_snapshot)
+  bk="${args[1]:-${latest_bk:-}}"
+  target="${args[0]:-}"
+  [ -n "$target" ] || target=$(sed -n 's/^WM_VERSION=//p' "$bk/meta.env" 2>/dev/null | head -1 | tr -d '[:space:]')
+  [ -n "$target" ] || die "无法确定目标版本。用法: $CLI_NAME rollback <版本> [快照]。列出快照: $CLI_NAME rollback --list"
+
+  rb_img="${WM_REPO}:rollback-${target}"
+  rb_extra="${WM_EXTRA_REPO}:rollback-${target}"
+
+  hr
+  log "${C_BOLD}回滚${C_RESET}"
+  log "  当前版本 : $cur"
+  log "  目标版本 : $target"
+  log "  目标镜像 : $rb_img"
+  log "  快照目录 : ${bk:-<无>}"
+  log "  模式     : $( [ "$images_only" = 1 ] && echo '仅回退镜像' || echo '镜像 + 数据库快照恢复' )"
+  hr
+
+  docker image inspect "$rb_img" >/dev/null 2>&1 \
+    || die "本地不存在镜像 ${rb_img}。确认版本号，或查看: docker images | grep windmill"
+
+  if [ "$images_only" != 1 ]; then
+    [ -n "$bk" ] && [ -d "$bk" ] || die "找不到快照目录: ${bk:-<空>}"
+    [ -s "$bk/cluster.sql" ] || die "快照缺少 cluster.sql: $bk"
+    verify_dump_file "$bk/cluster.sql" || die "快照不可用: $bk"
+    if [ -f "$bk/cluster.sql.sha256" ]; then
+      ( cd "$bk" && sha256sum -c cluster.sql.sha256 ) >/dev/null || die "快照 sha256 校验失败: $bk"
+      info "  快照完整性校验通过"
+    else
+      warn "  快照没有 sha256 文件，跳过校验"
+    fi
+    warn "⚠️  此操作会删除数据库卷并用快照重建，当前库中该快照之后的所有变更将丢失。"
+    if [ "$assume" = 1 ]; then ASSUME_YES=1; fi
+    confirm "确认回滚？" || exit 0
+  fi
+
+  local stop_ts; stop_ts=$(date +%Y%m%d-%H%M%S)
+  crun set_env WM_IMAGE "$rb_img"
+  crun set_env WM_EXTRA_IMAGE "$rb_extra"
+  info "  已把 .env 版本指回 $target"
+
+  if [ "$images_only" = 1 ]; then
+    step "仅回退镜像：分阶段重建容器"
+    crun stack_up_staged || die "分阶段启动失败"
+  else
+    step "1/6 停止整个 stack（保留卷）"
+    crun compose down --remove-orphans || true
+
+    step "2/6 删除 db 数据卷"
+    local vol; vol=$(db_volume)
+    [ -n "$vol" ] && crun docker volume rm -f "$vol" >/dev/null 2>&1 || true
+    if [ "$DRY_RUN" != 1 ] && [ -n "$vol" ] && docker volume inspect "$vol" >/dev/null 2>&1; then
+      die "卷 $vol 仍存在（可能被占用）。先 $CLI_NAME down 后重试。"
+    fi
+
+    step "3/6 启动数据库"
+    crun compose up -d --wait db || die "数据库未能启动"
+    wait_db || warn "db 未按期 healthy，继续"
+
+    step "4/6 恢复快照"
+    restore_cluster_from "$bk/cluster.sql" "$bk/restore-${stop_ts}.log" || warn "恢复有异常，见日志"
+    sync_db_password || true
+
+    step "5/6 重建 planner 统计"
+    refresh_planner_stats
+
+    step "6/6 分阶段启动整个 stack"
+    crun stack_up_staged || die "分阶段启动失败"
+  fi
+
+  if wait_version "$target" && all_running; then
+    write_version "$target"
+    hr; ok "回滚完成，当前版本 $target"
+    log "  探测版本: $(probe_version)"
+    log "  迁移条数: $(migration_count || echo '?')"
+    hr
+  else
+    warn "回滚后探针未通过，需要人工介入。"
+    warn "  查看: $CLI_NAME status"
+    warn "  日志: $CLI_NAME logs windmill_server"
+    exit 1
+  fi
+}
+
+# =============================================================================
+# 命令: backup / snapshots / restore / drill
+# =============================================================================
+cmd_backup() {
+  local full=0 daily=0 keep="${KEEP:-7}"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --full)      full=1; shift ;;
+      --daily)     daily=1; shift ;;
+      --keep)      keep="${2:-7}"; shift 2 ;;
+      -h|--help)   help_backup; exit 0 ;;
+      *)           usage_die "backup: 未知参数 $1" ;;
+    esac
+  done
+  require_ready
+  wm_paths
+  [ -f "$COMPOSE_FILE" ] || die "未发现部署"
+  mkdir -p "$BACKUP_DIR" "$LOG_DIR"
+  acquire_lock
+
+  if [ "$full" = 1 ]; then
+    hr; log "${C_BOLD}完整快照${C_RESET}（数据库 + 配置）  $(ts)"; hr
+    db_healthy || warn "db 非 healthy，仍尝试备份"
+    local d; d=$(new_backup_dir)
+    if make_backup "$d"; then
+      prune_backups 5
+      hr; ok "完整快照就绪: $d"
+      log "  重建方式: $CLI_NAME deploy --from $d"
+      hr
+      append_log backup.log "完整快照成功: $d"
+      exit 0
+    fi
+    warn "完整快照失败，已保留现场供排查: $d"
+    append_log backup.log "完整快照失败: $d"
+    exit 1
+  fi
+
+  # 每日备份（仅数据库）
+  hr; log "${C_BOLD}每日备份${C_RESET}（保留 $keep 份）  $(ts)"; hr
+  db_healthy || warn "db 非 healthy，仍尝试备份"
+
+  local daily_dir="$BACKUP_DIR/daily"
+  mkdir -p "$daily_dir"
+  local stamp out err
+  stamp=$(date +%Y%m%d-%H%M%S)
+  out="$daily_dir/cluster-${stamp}.sql"
+  err="$daily_dir/.last-error"
+
+  if ! dexec db pg_dumpall -U postgres > "$out" 2>"$err"; then
+    warn "pg_dumpall 失败:"; cat "$err" >&2; rm -f "$out"
+    append_log backup.log "每日备份失败: pg_dumpall 出错"
+    exit 1
+  fi
+  if [ ! -s "$out" ]; then warn "备份为空，已删除"; rm -f "$out"; append_log backup.log "每日备份失败: 空文件"; exit 1; fi
+  if ! tail -3 "$out" | grep -q 'dump complete'; then
+    warn "备份不完整（缺 dump complete 标记），已删除以避免留下坏备份"
+    rm -f "$out"; append_log backup.log "每日备份失败: 不完整"; exit 1
+  fi
+
+  gzip -f "$out"
+  sha256sum "${out}.gz" > "${out}.gz.sha256"
+  ok "备份完成: ${out}.gz ($(du -h "${out}.gz" | cut -f1))"
+  info "  sha256 $(cut -d' ' -f1 < "${out}.gz.sha256")"
+
+  local removed=0
+  while read -r f; do
+    [ -n "$f" ] || continue
+    log "  清理过期备份: $(basename "$f")"
+    rm -f "$f" "$f.sha256"
+    removed=$((removed+1))
+  done < <(ls -1t "$daily_dir"/cluster-*.sql.gz 2>/dev/null | tail -n +$((keep+1)))
+
+  local count; count=$(count_files "$daily_dir"/cluster-*.sql.gz)
+  ok "每日备份结束：清理 $removed 份，当前保留 $count 份"
+  hr
+  append_log backup.log "每日备份成功: $(basename "${out}.gz") ($(du -h "${out}.gz" | cut -f1))，保留 $count 份"
+}
+
+cmd_snapshots() {
+  wm_paths
+  local d v m s
+  hr; log "${C_BOLD}快照清单${C_RESET}  $BACKUP_DIR"; hr
+  if [ -z "$(snapshot_list)" ]; then log "  ${C_DIM}<无>${C_RESET}"; fi
+  for d in $(snapshot_list); do
+    v=$(sed -n 's/^WM_VERSION=//p' "$d/meta.env" 2>/dev/null | head -1 || true)
+    m=$(sed -n 's/^MIGRATION_COUNT=//p' "$d/meta.env" 2>/dev/null | head -1 || true)
+    s=$(du -h "$d/cluster.sql" 2>/dev/null | cut -f1 || true)
+    printf '  %-20s 版本=%-10s 迁移=%-6s 大小=%-8s\n' "$(basename "$d")" "${v:-?}" "${m:-?}" "${s:-?}"
+  done
+  log ""
+  log "${C_BOLD}每日备份${C_RESET}"
+  local dfiles; dfiles=$(ls -1t "$BACKUP_DIR"/daily/cluster-*.sql.gz 2>/dev/null || true)
+  if [ -n "$dfiles" ]; then
+    printf '%s\n' "$dfiles" | head -10 | while read -r f; do
+      printf '  %-40s %s\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)"
+    done
+  fi
+  if [ -z "$(latest_daily_backup)" ]; then log "  ${C_DIM}<无>${C_RESET}"; fi
+  hr
+}
+
+cmd_restore() {
+  [ $# -ge 1 ] || usage_die "restore: 用法 $CLI_NAME restore <快照目录|每日备份文件>"
+  local src="$1"; shift
+  # 每日备份文件 → deploy --from-daily；快照目录 → deploy --from
+  case "$src" in
+    *.sql.gz) cmd_deploy --from-daily "$src" --yes ;;
+    *)        cmd_deploy --from "$src" ;;
+  esac
+}
+
+cmd_drill() {
+  local snap="" keep=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --keep)    keep=1; shift ;;
+      -h|--help) help_drill; exit 0 ;;
+      *)         snap="$1"; shift ;;
+    esac
+  done
+  require_ready
+  wm_paths
+  mkdir -p "$LOG_DIR"
+  acquire_lock
+
+  [ -n "$snap" ] || snap=$(latest_snapshot)
+  [ -n "$snap" ] || die "找不到任何快照。先执行 $CLI_NAME backup --full"
+  [ -f "$snap/cluster.sql" ] || die "快照缺少 cluster.sql: $snap"
+
+  hr
+  log "${C_BOLD}备份可恢复性演练${C_RESET}  $(ts)"
+  log "  快照 : $snap"
+  log "  dump : $(du -h "$snap/cluster.sql" | cut -f1)"
+  hr
+
+  if [ -f "$snap/cluster.sql.sha256" ]; then
+    ( cd "$snap" && sha256sum -c cluster.sql.sha256 >/dev/null ) || die "快照 sha256 校验失败"
+    info "  sha256 校验通过"
+  fi
+  verify_dump_file "$snap/cluster.sql" || die "dump 结构不可用"
+
+  local exp_mig; exp_mig=$(sed -n 's/^MIGRATION_COUNT=//p' "$snap/meta.env" 2>/dev/null | tr -d '[:space:]')
+
+  cleanup_drill() {
+    if [ "$keep" = "1" ]; then
+      warn "已保留演练容器 $DRILL_CT 与卷 ${DRILL_VOL}（清理: docker rm -f $DRILL_CT && docker volume rm ${DRILL_VOL}）"
+      return 0
+    fi
+    docker rm -f "$DRILL_CT" >/dev/null 2>&1 || true
+    docker volume rm -f "$DRILL_VOL" >/dev/null 2>&1 || true
+  }
+  trap cleanup_drill EXIT
+
+  info "  清理上一次演练残留"
+  docker rm -f "$DRILL_CT" >/dev/null 2>&1 || true
+  docker volume rm -f "$DRILL_VOL" >/dev/null 2>&1 || true
+
+  step "启动临时演练容器（--network none，不接生产网络）"
+  docker run -d --name "$DRILL_CT" --network none \
+    -e POSTGRES_PASSWORD=drill-only -e POSTGRES_DB=windmill \
+    -v "$DRILL_VOL":/var/lib/postgresql \
+    "$PG_IMAGE" >/dev/null || die "无法启动演练容器（镜像 $PG_IMAGE 是否已拉取？）"
+
+  step "等待演练库就绪"
+  local okd=0 i
+  for i in $(seq 1 40); do
+    docker exec "$DRILL_CT" pg_isready -U postgres >/dev/null 2>&1 && { okd=1; break; }
+    sleep 3
+  done
+  [ "$okd" = 1 ] || { docker logs --tail 30 "$DRILL_CT" >&2; die "演练库未就绪"; }
+
+  step "恢复快照"
+  local drill_log="$LOG_DIR/restore-drill.log"
+  docker exec "$DRILL_CT" psql -U postgres -d postgres -c 'DROP DATABASE IF EXISTS windmill' >/dev/null 2>&1 || true
+  docker cp "$snap/cluster.sql" "$DRILL_CT":/tmp/restore.sql >/dev/null || die "无法复制 dump 进演练容器"
+  docker exec "$DRILL_CT" psql -U postgres -d postgres -f /tmp/restore.sql > "$drill_log" 2>&1 || true
+
+  local errs; errs=$(grep -ci '^ERROR' "$drill_log" 2>/dev/null || true); errs="${errs:-0}"
+  info "  恢复日志 ERROR 行数 = ${errs}（预期 0 或 1）"
+
+  step "校验恢复结果"
+  dq() { docker exec "$DRILL_CT" psql -U postgres -d windmill -tAc "$1" 2>/dev/null | tr -d '[:space:]'; }
+  local mig users wss scripts pol roles
+  mig=$(dq 'select count(*) from _sqlx_migrations'); users=$(dq 'select count(*) from password')
+  wss=$(dq 'select count(*) from workspace'); scripts=$(dq 'select count(*) from script')
+  pol=$(dq 'select count(*) from pg_policies'); roles=$(dq "select count(*) from pg_roles where rolname like 'windmill%'")
+
+  printf '  %-16s %s\n' "迁移条数"    "$mig (快照记录: ${exp_mig:-?})"
+  printf '  %-16s %s\n' "用户数"      "$users"
+  printf '  %-16s %s\n' "工作区数"    "$wss"
+  printf '  %-16s %s\n' "脚本数"      "$scripts"
+  printf '  %-16s %s\n' "RLS 策略数"  "$pol"
+  printf '  %-16s %s\n' "windmill 角色" "$roles"
+
+  local fl=0
+  if [ -n "$exp_mig" ] && [ "$mig" != "$exp_mig" ]; then warn "迁移条数与快照记录不一致"; fl=1; fi
+  if [ "${pol:-0}" -lt 300 ]; then warn "RLS 策略数偏少（${pol}），可能静默丢失"; fl=1; fi
+  if [ "${roles:-0}" -lt 2 ]; then warn "windmill_admin / windmill_user 角色缺失"; fl=1; fi
+  if [ "${users:-0}" -lt 1 ]; then warn "恢复后没有任何用户"; fl=1; fi
+  if [ "$errs" -gt 1 ]; then warn "恢复日志出现非预期错误"; fl=1; fi
+
+  hr
+  if [ "$fl" = 0 ]; then
+    ok "演练通过：备份可用，回滚链条成立"
+    append_log restore-drill.log "演练通过: $(basename "$snap") 迁移=$mig 策略=$pol"
+  else
+    err "演练发现问题，详见 $drill_log"
+    warn "在修复之前，不要把这份备份当作可靠的回滚依据。"
+    append_log restore-drill.log "演练失败: $(basename "$snap")"
+  fi
+  hr
+  exit $fl
+}
+
+# =============================================================================
+# 命令: logs / shell / exec / psql
+# =============================================================================
+cmd_logs() {
+  local svc="windmill_server" tail_n="200" follow=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -f|--follow) follow=1; shift ;;
+      -n|--tail)   tail_n="${2:-200}"; shift 2 ;;
+      -h|--help)   help_logs; exit 0 ;;
+      -*)          usage_die "logs: 未知参数 $1" ;;
+      *)           svc="$1"; shift ;;
+    esac
+  done
+  require_docker; wm_paths
+  [ -f "$COMPOSE_FILE" ] || die "未发现部署"
+  # systemd 组件日志走 journal
+  if [ "$svc" = "systemd" ]; then
+    journalctl -u 'windmill-*' -n "$tail_n" --no-pager ${follow:+-f}
+    return
+  fi
+  if [ "$follow" = 1 ]; then compose logs -f --tail "$tail_n" "$svc"
+  else compose logs --tail "$tail_n" "$svc"; fi
+}
+
+cmd_shell() {
+  local svc="${1:-windmill_server}"
+  case "$svc" in -h|--help) help_shell; exit 0 ;; -*) usage_die "shell: 未知参数 $svc" ;; esac
+  require_docker; wm_paths
+  [ -t 0 ] || die "shell 需要交互式终端（TTY）"
+  compose exec "$svc" sh
+}
+
+cmd_exec() {
+  [ $# -ge 2 ] || usage_die "exec: 用法 $CLI_NAME exec <服务> <命令...>"
+  local svc="$1"; shift
+  require_docker; wm_paths
+  [ -f "$COMPOSE_FILE" ] || die "未发现部署"
+  if [ -t 0 ]; then compose exec "$svc" "$@"; else dexec "$svc" "$@"; fi
+}
+
+cmd_psql() {
+  local db="${1:-windmill}"
+  require_docker; wm_paths
+  [ -f "$COMPOSE_FILE" ] || die "未发现部署"
+  log "连接 postgres / $db   ${C_DIM}(\\q 退出)${C_RESET}"
+  if [ -t 0 ]; then compose exec db psql -U postgres -d "$db"
+  else dexec db psql -U postgres -d "$db"; fi
+}
+
+# =============================================================================
+# 命令: credentials
+# =============================================================================
+cmd_credentials() {
+  local action="show" newpass="" oldpass=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --show)         action="show"; shift ;;
+      --rotate-admin) action="rotate-admin"; shift ;;
+      --rotate-db)    action="rotate-db"; shift ;;
+      --new)          newpass="${2:-}"; shift 2 ;;
+      --old)          oldpass="${2:-}"; shift 2 ;;
+      -h|--help)      help_credentials; exit 0 ;;
+      *)              usage_die "credentials: 未知参数 $1" ;;
+    esac
+  done
+  require_ready; wm_paths
+  [ -f "$ENV_FILE" ] || die "未发现部署"
+
+  case "$action" in
+    show)
+      hr; log "${C_BOLD}凭据${C_RESET}  $(ts)"; hr
+      local base
+      base=$(instance_url)
+      printf '  %-16s %s\n' "地址"     "$base"
+      printf '  %-16s %s\n' "admin 账号" "admin@windmill.dev"
+      if [ -f "$WM_DIR/CREDENTIALS.txt" ]; then
+        printf '  %-16s %s\n' "admin 口令" "$(sed -n 's/^ADMIN_PASSWORD=//p' "$WM_DIR/CREDENTIALS.txt" | head -1)"
+        info "  （来自 $WM_DIR/CREDENTIALS.txt）"
+      else
+        printf '  %-16s %s\n' "admin 口令" "${C_YELLOW}<不在记录中，可能仍是 changeme 或已人工修改>${C_RESET}"
+      fi
+      printf '  %-16s %s\n' "DB 用户"   "postgres"
+      printf '  %-16s %s\n' "DB 口令"   "$(get_env POSTGRES_PASSWORD)"
+      hr
+      log "${C_DIM}轮换: $CLI_NAME credentials --rotate-admin | --rotate-db${C_RESET}"
+      hr
+      ;;
+    rotate-admin)
+      [ -n "$oldpass" ] || oldpass=$(sed -n 's/^ADMIN_PASSWORD=//p' "$WM_DIR/CREDENTIALS.txt" 2>/dev/null | head -1)
+      [ -n "$oldpass" ] || oldpass="changeme"
+      [ -n "$newpass" ] || newpass=$(gen_password 28)
+
+      step "轮换 admin 口令"
+      local token; token=$(wm_login "$oldpass")
+      [ -n "$token" ] || die "用当前口令登录失败。若口令非默认，请指定: --old <当前口令>"
+
+      local code; code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
+        -X POST "http://127.0.0.1/api/users/setpassword" \
+        -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+        -d "{\"password\":\"${newpass}\"}" 2>/dev/null || echo 000)
+      [ "$code" = "200" ] || die "改口令失败 HTTP ${code}（正确端点是 setpassword，非 set_password）"
+
+      [ -n "$(wm_login "$newpass")" ] || die "新口令登录验证失败，请人工核查"
+      ok "口令已轮换并验证通过"
+      log "  新口令: ${C_BOLD}${newpass}${C_RESET}"
+
+      # 同步写回凭据文件
+      local tmp; tmp=$(mktemp)
+      if [ -f "$WM_DIR/CREDENTIALS.txt" ]; then
+        grep -v '^ADMIN_PASSWORD=' "$WM_DIR/CREDENTIALS.txt" > "$tmp" || true
+      else
+        { echo "# Windmill 凭据"; echo "ADMIN_USER=admin@windmill.dev"; } > "$tmp"
+      fi
+      echo "ADMIN_PASSWORD=$newpass" >> "$tmp"
+      mv "$tmp" "$WM_DIR/CREDENTIALS.txt"; chmod 0600 "$WM_DIR/CREDENTIALS.txt"
+      info "  已更新 $WM_DIR/CREDENTIALS.txt"
+      ;;
+    rotate-db)
+      [ -n "$newpass" ] || newpass=$(gen_password 32)
+
+      step "轮换数据库口令"
+      warn "注意：正在运行的容器仍持有旧口令，轮换后必须立即重建，否则新连接会失败。"
+      confirm "确认轮换数据库口令？" || exit 0
+
+      dexec db psql -U postgres -d postgres -c "ALTER USER postgres WITH PASSWORD '${newpass}'" >/dev/null 2>&1 \
+        || die "ALTER USER 失败"
+
+      crun set_env POSTGRES_PASSWORD "$newpass"
+      crun set_env DATABASE_URL "postgres://postgres:${newpass}@db/windmill?sslmode=disable"
+
+      # 从另一个容器走真实网络路径验证（本地 127.0.0.1 走 trust，口令不参与校验）
+      local r; r=$(dexec windmill_server sh -c "PGPASSWORD='${newpass}' psql -h db -U postgres -d windmill -tAc 'select 1'" 2>/dev/null | tr -d '[:space:]')
+      if [ "$r" = "1" ]; then
+        ok "新口令已生效（容器间真实网络路径验证通过）"
+      else
+        warn "新口令网络认证未通过，请检查 $ENV_FILE 的 DATABASE_URL"
+      fi
+      log "  新数据库口令: ${C_BOLD}${newpass}${C_RESET}"
+      step "重建容器以应用新口令"
+      crun stack_up_staged || warn "重建未完全成功，请检查 $CLI_NAME status"
+      ;;
+  esac
+}
+
+# =============================================================================
+# 命令: systemd
+# =============================================================================
+cmd_systemd() {
+  local action="${1:-status}"
+  case "$action" in -h|--help) help_systemd; exit 0 ;; esac
+  wm_paths
+  local dst=/etc/systemd/system
+  # macOS 用 launchd；systemd 单元体系本期未适配，明确报错而非静默失败
+  if [ "$OS_KIND" = "Darwin" ] || ! systemd_ok; then
+    if [ "$OS_KIND" = "Darwin" ]; then
+      die "macOS 使用 launchd，systemd 单元不适用（本 CLI 的 launchd 适配尚未实现）"
+    fi
+    die "未找到 systemctl（systemd 不可用）"
+  fi
+
+  case "$action" in
+    install)
+      require_ready
+      [ "$(id -u)" = 0 ] || die "需要 root"
+      mkdir -p "$LOG_DIR"
+      for u in "${SYSTEMD_UNITS[@]}"; do
+        systemd_unit "$u" > "$dst/$u" || die "生成 $u 失败"
+        chmod 0644 "$dst/$u"
+        info "  已安装 $dst/$u"
+      done
+      systemctl daemon-reload
+      crun systemctl enable --now windmill-backup.timer windmill-update-check.timer || warn "启用 timer 失败"
+      crun systemctl enable windmill-stack.service >/dev/null 2>&1 || true
+      crun systemctl start windmill-stack.service >/dev/null 2>&1 || warn "stack 对齐服务返回非零，见 $CLI_NAME logs systemd"
+      hr
+      ok "systemd 单元已安装"
+      systemctl --no-pager list-timers 'windmill-*' 2>/dev/null | head -5 | sed 's/^/  /' || true
+      log "  stack 开机对齐: $(systemctl is-enabled windmill-stack.service 2>/dev/null)/$(systemctl is-active windmill-stack.service 2>/dev/null)"
+      log "  日志: journalctl -u 'windmill-*' 或 $CLI_NAME logs systemd"
+      hr
+      ;;
+    uninstall)
+      require_ready
+      [ "$(id -u)" = 0 ] || die "需要 root"
+      for u in "${SYSTEMD_UNITS[@]}"; do
+        if [ -f "$dst/$u" ]; then
+          crun systemctl disable --now "$u" >/dev/null 2>&1 || true
+          crun rm -f "$dst/$u"
+          info "  已移除 $u"
+        fi
+      done
+      crun systemctl daemon-reload >/dev/null 2>&1 || true
+      crun systemctl reset-failed 'windmill-*' >/dev/null 2>&1 || true
+      ok "systemd 单元已卸载"
+      ;;
+    status)
+      if [ ! -f "$dst/windmill-backup.timer" ]; then
+        warn "未安装 systemd 单元。执行: $CLI_NAME systemd install"
+        exit 3
+      fi
+      hr; log "${C_BOLD}定时任务${C_RESET}"; hr
+      systemctl --no-pager list-timers 'windmill-*' 2>/dev/null | sed 's/^/  /' || true
+      hr
+      log "${C_BOLD}服务状态${C_RESET}"
+      for s in windmill-stack.service windmill-backup.service windmill-update-check.service; do
+        printf '  %-34s enabled=%s active=%s\n' "$s" \
+          "$(systemctl is-enabled "$s" 2>/dev/null || echo -)" "$(systemctl is-active "$s" 2>/dev/null || echo -)"
+      done
+      hr
+      log "${C_DIM}日志: $CLI_NAME logs systemd${C_RESET}"
+      hr
+      ;;
+    *) usage_die "systemd: 未知动作 ${action}（install|status|uninstall）" ;;
+  esac
+}
+
+# =============================================================================
+# 命令: version
+# =============================================================================
+cmd_version() {
+  wm_paths
+  printf '%s%s%s %s\n' "$C_BOLD" "$CLI_NAME" "$C_RESET" "$WINDMILL_CLI_VERSION"
+  info "  CLI  构建于 $CLI_UPDATED"
+  if [ -f "$COMPOSE_FILE" ]; then
+    printf '  %-14s %s\n' "部署版本" "$(current_version)"
+    printf '  %-14s %s\n' "镜像版本" "$(env_version)"
+    printf '  %-14s %s\n' "运行版本" "$(probe_version)"
+    printf '  %-14s %s\n' "compose"  "$(docker compose version --short 2>/dev/null || echo '?')"
+    printf '  %-14s %s\n' "docker"   "$(docker --version 2>/dev/null | cut -d' ' -f3 | tr -d ',')"
+  else
+    info "  未发现部署（${WM_DIR}）"
+  fi
+}
+
+# =============================================================================
+# 帮助
+# =============================================================================
+help_main() {
+  cat <<HELP
+${C_BOLD}${CLI_NAME}${C_RESET} — Windmill 自托管运维 CLI  ${C_DIM}v${WINDMILL_CLI_VERSION}${C_RESET}
+
+${C_BOLD}用法${C_RESET}
+  ${CLI_NAME} [全局选项] <命令> [命令选项]
+
+${C_BOLD}全局选项${C_RESET}
+  -d, --dir DIR      部署目录（默认 \$AIBOX_HOME/apps/windmill，即 ~/.aibox/apps/windmill）
+      --port N       对外 HTTP 端口（默认 80，仅 init 生效）
+      --proxy URL    出口代理，用于查询上游 release
+      --ghcr-mirror URL
+                     ghcr 镜像源（国内加速）。直连 ghcr.io 约 0.5MB/s，
+                     配 https://ghcr.nju.edu.cn 可到 ~60MB/s（实测 100 倍差距）
+      --hub-mirror URL
+                     docker.io 镜像源（postgres 用）。daemon 的 registry-mirrors
+                     若含黑洞条目会让 docker pull 静默挂死，用此项可绕开
+  -y, --yes          跳过所有交互确认
+  -q, --quiet        精简输出（systemd 调用时使用）
+      --dry-run      只打印将要执行的动作，不真正修改
+  -h, --help         显示帮助
+  -V, --version      显示 CLI 版本
+
+${C_BOLD}生命周期${C_RESET}
+  init               全新部署一个空实例（生成配置 → 拉镜像 → 启动 → 加固）
+  deploy             重建部署：配置齐全则重建容器，配置丢失则从快照补齐并恢复
+  destroy            拆除部署（默认备份转移到 \$AIBOX_HOME/backups/（无 HOME 时 /var/backups）；--all 彻底清除）
+  up                 启动 / 对齐 stack（幂等，开机自动调用）
+  down               停止 stack（数据卷保留）
+
+${C_BOLD}日常运维${C_RESET}
+  status             服务、数据、备份、资源总览
+  doctor             环境自检（部署前体检）
+  check              检查上游是否有新版本（退出码 10 = 有新版）
+  upgrade [版本]     无损升级，失败自动回滚（快照 + 镜像双保险）
+  rollback [版本] [快照]   手工回滚
+  backup [--full]    备份：默认每日（仅库）；--full 生成含配置的完整快照
+  snapshots          列出所有快照与每日备份
+  restore <来源>     从快照目录或每日备份文件恢复
+  drill [快照]       备份可恢复性演练（独立容器，不碰生产库）
+  logs [服务] [-f]   查看日志（服务名 systemd 则看定时任务日志）
+  shell <服务>       进入容器 shell
+  exec <服务> <命令> 在容器内执行命令
+  psql [库名]        进入数据库
+  credentials        查看凭据 / --rotate-admin / --rotate-db
+  systemd <动作>     install | status | uninstall
+  version            显示 CLI 与部署各层版本
+
+${C_BOLD}退出码${C_RESET}
+  0 成功   1 运行失败   2 用法错误   3 前置条件不足   10 check 发现新版本
+
+${C_BOLD}常用示例${C_RESET}
+  ${CLI_NAME} doctor                             # 部署前体检
+  ${CLI_NAME} init --version 1.811.1             # 全新部署指定版本
+  ${CLI_NAME} backup --full                      # 立即做一份完整快照
+  ${CLI_NAME} drill                              # 验证最新快照真的能恢复
+  ${CLI_NAME} upgrade                            # 升级到上游最新版
+  ${CLI_NAME} logs windmill_server -f            # 跟踪 server 日志
+  ${CLI_NAME} destroy --all --yes                # 彻底清空（含备份与镜像）
+
+${C_DIM}单一文件、无外部依赖；配置模板内嵌，删掉部署目录也不影响本 CLI。${C_RESET}
+HELP
+}
+
+help_init() {
+  cat <<HELP
+${C_BOLD}${CLI_NAME} init${C_RESET} — 全新部署一个空实例
+
+${C_BOLD}用法${C_RESET}
+  ${CLI_NAME} init [选项]
+
+${C_BOLD}选项${C_RESET}
+  --version X.Y.Z   目标版本（默认查询上游最新 release）
+  --port N          对外 HTTP 端口（默认 80）
+  --ghcr-mirror URL ghcr 镜像源（国内强烈建议）。直连 ghcr.io 实测约 0.5MB/s，
+                    全新部署要拉 ~6GiB（>1 小时）；https://ghcr.nju.edu.cn 实测 ~60MB/s
+  --hub-mirror URL  docker.io 镜像源（postgres）。daemon 的 registry-mirrors 里
+                    若混入黑洞条目，docker pull 会静默挂死，用此项绕开；
+                    例 https://docker.1ms.run
+  --no-harden       跳过加固（不设 Base URL、不改默认 admin 口令）
+  --no-systemd      跳过 systemd 定时任务安装
+  --force           目标目录已有部署时覆盖配置
+
+${C_BOLD}流程${C_RESET}
+  生成配置 → 随机数据库口令 → 校验 → 拉镜像 → 分阶段启动 → 健康检查
+  → 设 Base URL + 轮换 admin 口令 → 安装定时任务 → 输出凭据
+
+${C_BOLD}示例${C_RESET}
+  ${CLI_NAME} init --version 1.811.1 --ghcr-mirror https://ghcr.nju.edu.cn
+  ${CLI_NAME} init                   # 版本查上游最新；直连 ghcr.io，国内很慢
+
+${C_BOLD}产物${C_RESET}
+  $WM_DIR/docker-compose.yml   含 7 处本地化改动（见文件头注释）
+  $WM_DIR/Caddyfile            移除 :25 layer4 块（宿主 exim4 占用）
+  $WM_DIR/.env                 版本钉死 + 随机数据库口令 + ghcr 镜像源（chmod 600）
+  $WM_DIR/CREDENTIALS.txt      admin 与数据库凭据（chmod 600）
+HELP
+}
+
+help_deploy() {
+  cat <<HELP
+${C_BOLD}${CLI_NAME} deploy${C_RESET} — 重建部署
+
+${C_BOLD}用法${C_RESET}
+  ${CLI_NAME} deploy [选项]
+
+${C_BOLD}选项${C_RESET}
+  --recreate          只重建容器，保留数据卷（配置齐全时的默认行为）
+  --from <快照目录>    从完整快照恢复（含配置与数据库）
+  --from-daily [文件]  从每日备份恢复（仅数据库）
+  --core-only         只启动 db + server（用于同机演练，不抢 80 端口）
+
+不带选项时自动判断：配置缺失 → 从最新快照补齐；卷完好 → 只重建容器。
+
+${C_BOLD}示例${C_RESET}
+  ${CLI_NAME} deploy                                  # 自动
+  ${CLI_NAME} deploy --from ~/.aibox/apps/windmill/backups/20260914-181917
+  ${CLI_NAME} deploy --recreate                       # 容器状态异常时对齐
+HELP
+}
+
+help_destroy() {
+  cat <<HELP
+${C_BOLD}${CLI_NAME} destroy${C_RESET} — 拆除部署
+
+${C_BOLD}用法${C_RESET}
+  ${CLI_NAME} destroy [选项]
+
+${C_BOLD}选项${C_RESET}
+  --keep-backups    备份转移到 \$AIBOX_HOME/backups/（无 HOME 时 /var/backups）（默认行为，安全）
+  --all             彻底清除：备份与镜像一并删除，不可恢复
+  --purge-images    只额外删除镜像
+
+${C_BOLD}默认会删除${C_RESET}
+  systemd 单元、容器、所有数据卷、$WM_DIR 目录
+${C_BOLD}默认会保留${C_RESET}
+  镜像（重新部署时可省去 9-10G 拉取）、备份（转移到 \$AIBOX_HOME/backups/（无 HOME 时 /var/backups））
+HELP
+}
+
+help_up()      { printf '%s up%s\n\n  %s up [--core-only]\n  分阶段启动 stack。幂等，可随时执行；开机由 windmill-stack.service 自动调用。\n' "$C_BOLD$CLI_NAME" "$C_RESET" "$CLI_NAME"; }
+help_down()    { printf '%s down%s\n\n  %s down\n  停止 stack，保留数据卷。重启: %s up\n' "$C_BOLD$CLI_NAME" "$C_RESET" "$CLI_NAME" "$CLI_NAME"; }
+
+help_upgrade() {
+  cat <<HELP
+${C_BOLD}${CLI_NAME} upgrade${C_RESET} — 无损升级
+
+${C_BOLD}用法${C_RESET}
+  ${CLI_NAME} upgrade              # 升级到上游最新 release
+  ${CLI_NAME} upgrade 1.812.0      # 升级到指定版本
+  ${CLI_NAME} upgrade --check      # 只检查不升级
+
+${C_BOLD}选项${C_RESET}
+  --ghcr-mirror URL  临时指定 ghcr 镜像源（不指定则沿用 .env 中的 WM_GHCR_MIRROR）
+  --hub-mirror URL   临时指定 docker.io 镜像源（同上）
+
+${C_BOLD}流程${C_RESET}
+  前置检查 → 全量快照 → 固化旧镜像为 rollback-<版本> 标签 → 排空 worker
+  → 切换版本并拉取 → 分阶段启动 → 健康检查 → 失败则自动回滚
+
+${C_BOLD}关于「无损」的边界${C_RESET}
+  能做到：数据不丢、正在跑的任务不被打断、失败自动回滚。
+  做不到：UI 零中断 —— server 重建 + 跑迁移期间有 20-60 秒 502。
+  要真正零中断需两台 server 做负载均衡，家用属过度设计。
+
+${C_BOLD}重要${C_RESET}
+  Windmill 的数据库迁移单向不可逆，没有 down migration。
+  所以回滚 ≠ 换回旧镜像，回滚 = 换回旧镜像 + 恢复数据库快照。
+HELP
+}
+
+help_rollback() {
+  cat <<HELP
+${C_BOLD}${CLI_NAME} rollback${C_RESET} — 回滚
+
+${C_BOLD}用法${C_RESET}
+  ${CLI_NAME} rollback                     # 回滚到最近快照记录的版本
+  ${CLI_NAME} rollback 1.809.0             # 指定版本（用最新快照）
+  ${CLI_NAME} rollback 1.809.0 20260914-174209   # 指定版本 + 指定快照
+  ${CLI_NAME} rollback --list              # 列出可用快照
+  ${CLI_NAME} rollback --images-only       # 只回退镜像，不动数据库
+
+${C_BOLD}注意${C_RESET}
+  默认行为是破坏性的：会删除 db 数据卷并用快照重建。这是必须的 ——
+  迁移单向不可逆，只换镜像回不去。执行前会校验快照完整性并要求输入 yes。
+HELP
+}
+
+help_backup() {
+  cat <<HELP
+${C_BOLD}${CLI_NAME} backup${C_RESET} — 备份
+
+${C_BOLD}用法${C_RESET}
+  ${CLI_NAME} backup            每日备份 → backups/daily/cluster-<ts>.sql.gz
+                                仅数据库，体积小，保留 7 份
+  ${CLI_NAME} backup --full     完整快照 → backups/<ts>/（库 + 配置 + meta）
+                                灾后重建只有这种可用，保留 5 份
+  ${CLI_NAME} backup --keep 30  临时改保留份数
+
+${C_BOLD}提示${C_RESET}
+  备份"存在"不等于"能恢复"。定期跑 ${CLI_NAME} drill 验证。
+HELP
+}
+
+help_drill() {
+  cat <<HELP
+${C_BOLD}${CLI_NAME} drill${C_RESET} — 备份可恢复性演练
+
+在一个完全独立的临时 postgres 容器里恢复指定快照，校验数据条数后销毁。
+不接触生产数据库，可随时安全执行。
+
+${C_BOLD}用法${C_RESET}
+  ${CLI_NAME} drill               # 用最新快照
+  ${CLI_NAME} drill <快照目录>
+  ${CLI_NAME} drill --keep        # 保留演练容器便于人工查看
+HELP
+}
+
+help_logs() {
+  cat <<HELP
+${C_BOLD}${CLI_NAME} logs${C_RESET} — 查看日志
+
+${C_BOLD}用法${C_RESET}
+  ${CLI_NAME} logs [服务] [-f] [-n 行数]
+
+服务默认 windmill_server，可取值：
+  db | windmill_server | windmill_worker | windmill_worker_native
+  | windmill_extra | caddy | systemd（看定时任务日志）
+
+${C_BOLD}示例${C_RESET}
+  ${CLI_NAME} logs                       # server 最近 200 行
+  ${CLI_NAME} logs windmill_worker -f    # 跟踪 worker 日志
+  ${CLI_NAME} logs systemd -n 100        # 定时任务日志
+HELP
+}
+
+help_shell()   { printf '%s shell%s\n\n  %s shell <服务>\n  进入容器 shell（需交互式终端）。例: %s shell windmill_server\n' "$C_BOLD$CLI_NAME" "$C_RESET" "$CLI_NAME" "$CLI_NAME"; }
+help_credentials() {
+  cat <<HELP
+${C_BOLD}${CLI_NAME} credentials${C_RESET} — 凭据管理
+
+${C_BOLD}用法${C_RESET}
+  ${CLI_NAME} credentials                        显示当前凭据
+  ${CLI_NAME} credentials --rotate-admin       轮换 admin 口令（自动生成）
+  ${CLI_NAME} credentials --rotate-admin --old <当前口令> --new <新口令>
+  ${CLI_NAME} credentials --rotate-db            轮换数据库口令并重建容器
+
+${C_BOLD}API 陷阱${C_RESET}
+  · /api/auth/login 返回的是裸 token（text/plain），不是 JSON
+  · 改口令端点是 setpassword，不是 set_password（后者 404）
+  · 数据库口令轮换后必须立即重建容器，否则老容器持有旧口令连不上
+HELP
+}
+
+help_systemd() {
+  cat <<HELP
+${C_BOLD}${CLI_NAME} systemd${C_RESET} — 定时任务管理
+
+${C_BOLD}用法${C_RESET}
+  ${CLI_NAME} systemd install     安装单元并启用（幂等，会覆盖同名单元）
+  ${CLI_NAME} systemd status      查看定时任务与服务状态
+  ${CLI_NAME} systemd uninstall   停用并移除单元
+
+${C_BOLD}安装的单元${C_RESET}
+  windmill-backup.timer          每天 03:30 数据库备份
+  windmill-update-check.timer    每周一 09:00 检查上游新版本
+  windmill-stack.service         开机自动对齐 stack（补齐 created 状态的容器）
+HELP
+}
+
+cmd_help() {
+  local topic="${1:-}"
+  case "$topic" in
+    ""|main)     help_main ;;
+    init)        help_init ;;
+    deploy)      help_deploy ;;
+    destroy)     help_destroy ;;
+    up)          help_up ;;
+    down)        help_down ;;
+    upgrade)     help_upgrade ;;
+    rollback)    help_rollback ;;
+    backup)      help_backup ;;
+    drill)       help_drill ;;
+    logs)        help_logs ;;
+    shell)       help_shell ;;
+    credentials) help_credentials ;;
+    systemd)     help_systemd ;;
+    *)           help_main ;;
+  esac
+}
+
+# =============================================================================
+# 入口分发
+# =============================================================================
+CLI_SET_DIR=0; CLI_SET_PORT=0; CLI_SET_PROXY=0; CLI_SET_MIRROR=0; CLI_SET_HUB=0
+
+main() {
+  # --- 全局选项 -------------------------------------------------------------
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -d|--dir)    WM_DIR="${2:-}"; CLI_SET_DIR=1; shift 2 ;;
+      --port)      HTTP_PORT="${2:-}"; CLI_SET_PORT=1; shift 2 ;;
+      --proxy)     PROXY_URL="${2:-}"; CLI_SET_PROXY=1; shift 2 ;;
+      --ghcr-mirror) WM_GHCR_MIRROR="${2:-}"; CLI_SET_MIRROR=1; shift 2 ;;
+      --hub-mirror)  WM_HUB_MIRROR="${2:-}"; CLI_SET_HUB=1; shift 2 ;;
+      -y|--yes)    ASSUME_YES=1; shift ;;
+      -q|--quiet)  QUIET=1; shift ;;
+      --dry-run)   DRY_RUN=1; shift ;;
+      -h|--help)   help_main; exit 0 ;;
+      -V|--version) printf '%s %s\n' "$CLI_NAME" "$WINDMILL_CLI_VERSION"; exit 0 ;;
+      --)          shift; break ;;
+      -*)          usage_die "未知全局选项: $1" ;;
+      *)           break ;;
+    esac
+  done
+
+  wm_paths
+  # 从 .env 继承（命令行未显式指定时）
+  if [ -f "$ENV_FILE" ]; then
+    if [ "$CLI_SET_PORT" = 0 ]; then
+      local p; p=$(get_env HTTP_PORT); HTTP_PORT="${p:-$HTTP_PORT}"
+    fi
+    if [ "$CLI_SET_PROXY" = 0 ]; then
+      local px; px=$(get_env WM_PROXY); PROXY_URL="${px:-$PROXY_URL}"
+    fi
+    if [ "$CLI_SET_MIRROR" = 0 ]; then
+      local mm; mm=$(get_env WM_GHCR_MIRROR); WM_GHCR_MIRROR="${mm:-$WM_GHCR_MIRROR}"
+    fi
+    if [ "$CLI_SET_HUB" = 0 ]; then
+      local hm; hm=$(get_env WM_HUB_MIRROR); WM_HUB_MIRROR="${hm:-$WM_HUB_MIRROR}"
+    fi
+  fi
+
+  local cmd="${1:-help}"
+  if [ $# -gt 0 ]; then shift; fi
+
+  # 允许**全局开关**出现在子命令之后（-y/--yes、-q/--quiet、--dry-run）。
+  # 背景：本 CLI 生成的 systemd 单元里选项是挂在子命令后面的，例如
+  #   ExecStart=... windmill up --quiet
+  #   ExecStart=... windmill backup --daily --quiet --yes
+  #   ExecStart=... windmill check --quiet
+  # 而全局选项扫描只发生在子命令**之前**，于是这些调用会撞「未知参数」并让单元
+  # failed（实测 windmill-stack.service 因此起不来；备份命令则卡在 --yes）。
+  # 这里在分发前把任意位置出现的全局开关摘掉，使两种写法都成立。
+  if [ $# -gt 0 ]; then
+    local _kept=() _a
+    for _a in "$@"; do
+      case "$_a" in
+        -q|--quiet)  QUIET=1 ;;
+        -y|--yes)    ASSUME_YES=1 ;;
+        --dry-run)   DRY_RUN=1 ;;
+        *)           _kept+=("$_a") ;;
+      esac
+    done
+    set -- "${_kept[@]+"${_kept[@]}"}"
+  fi
+
+  case "$cmd" in
+    init)        cmd_init "$@" ;;
+    deploy)      cmd_deploy "$@" ;;
+    destroy)     cmd_destroy "$@" ;;
+    up)          cmd_up "$@" ;;
+    down)        cmd_down "$@" ;;
+    status|st)   cmd_status "$@" ;;
+    doctor|dr)   cmd_doctor "$@" ;;
+    check)       cmd_check "$@" ;;
+    upgrade)     cmd_upgrade "$@" ;;
+    rollback|rb) cmd_rollback "$@" ;;
+    backup|bk)   cmd_backup "$@" ;;
+    snapshots)   cmd_snapshots "$@" ;;
+    restore)     cmd_restore "$@" ;;
+    drill)       cmd_drill "$@" ;;
+    logs|log)    cmd_logs "$@" ;;
+    shell|sh)    cmd_shell "$@" ;;
+    exec)        cmd_exec "$@" ;;
+    psql)        cmd_psql "$@" ;;
+    credentials|cred) cmd_credentials "$@" ;;
+    systemd)     cmd_systemd "$@" ;;
+    version|ver) cmd_version "$@" ;;
+    help)        cmd_help "$@" ;;
+    *)           usage_die "未知命令: $cmd" ;;
+  esac
+}
+
+main "$@"

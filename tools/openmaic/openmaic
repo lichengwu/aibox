@@ -3,7 +3,7 @@
 #  openmaic — OpenMAIC 统一运维 CLI
 #
 #  归属：aibox 模块 tools/openmaic（仓库 https://github.com/lichengwu/aibox）
-#  运行位置：**部署主机**（Linux，需 docker；默认部署目录 /opt/openmaic）
+#  运行位置：**部署主机**（Linux，需 docker；默认部署目录 $AIBOX_HOME/apps/openmaic）
 #            由 `aibox install openmaic` 分发到目标主机，本仓库即为唯一源头。
 #  站点信息：不含任何硬编码地址。主机相关项（代理等）通过
 #            /etc/openmaic/openmaic.conf 或 OPENMAIC_* 环境变量传入。
@@ -16,7 +16,7 @@
 #    * 幂等：up / backup / doctor 可重复执行
 #    * 并发保护：upgrade / restore / down 持锁；backup 抢不到锁则跳过
 #    * 配置与运行时分离：/etc/openmaic 存密钥（可跨重装复用）
-#                          /opt/openmaic 存运行时产物（可整体清理）
+#                          $AIBOX_HOME/apps/openmaic 存运行时产物（可整体清理）
 # =============================================================================
 set -uo pipefail
 
@@ -41,7 +41,29 @@ CONF_FILE="$CONF_DIR/openmaic.conf"
 PERSIST_BUILD="$CONF_DIR/env.build"
 PERSIST_RUNTIME="$CONF_DIR/env.runtime"
 
-BASE_DIR="${OPENMAIC_BASE_DIR:-/opt/openmaic}"
+# 部署根：按 aibox 模块约定从 $AIBOX_HOME/apps 派生（见 aibox docs/module-spec.md）。
+# macOS 与 Linux 用同一表达式，不做平台分支：
+#   Linux(root)  -> /root/.aibox/apps/openmaic
+#   macOS(用户)  -> ~/.aibox/apps/openmaic
+# 显式 OPENMAIC_BASE_DIR 优先。守卫不可省：systemd 服务上下文里没有 HOME（实测），
+# 解析不到时必须报错退出，绝不能拼出 /.aibox/apps/openmaic 这种路径。
+BASE_DIR="${OPENMAIC_BASE_DIR:-}"
+if [ -z "$BASE_DIR" ]; then
+  _apps_root="${AIBOX_APPS_ROOT:-}"
+  if [ -z "$_apps_root" ]; then
+    # 注意是 ${AIBOX_HOME:-$HOME/.aibox}，不是 ${AIBOX_HOME:-$HOME} ——
+    # 后者会丢掉 .aibox 这一层，解析出 $HOME/apps/openmaic。
+    _apps_base="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}"
+    if [ -z "$_apps_base" ]; then
+      printf '[openmaic] 无法确定部署根：HOME 与 AIBOX_HOME 均为空\n' >&2
+      printf '[openmaic] 请显式指定，例如: OPENMAIC_BASE_DIR=/root/.aibox/apps/openmaic openmaic status\n' >&2
+      exit 3
+    fi
+    _apps_root="$_apps_base/apps"
+  fi
+  BASE_DIR="$_apps_root/openmaic"
+fi
+unset _apps_root _apps_base 2>/dev/null || true
 
 # 配置文件可覆盖以下默认值（环境变量优先级最高）
 if [ -f "$CONF_FILE" ]; then

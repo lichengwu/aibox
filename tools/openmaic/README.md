@@ -10,7 +10,7 @@ OpenMAIC 是一套 Docker Compose 部署（应用 + PostgreSQL + 视频渲染服
 
 ## 运行位置（重要）
 
-CLI 面向 **Linux 部署主机**（需要 `docker compose`、`flock`，默认部署目录 `/opt/openmaic`）。
+CLI 面向 **Linux 部署主机**（需要 `docker compose`、`flock`，默认部署目录 `$AIBOX_HOME/apps/openmaic`）。
 
 在非 Linux 机器上：
 
@@ -32,7 +32,7 @@ aibox update openmaic       # 内容有变化才覆盖，一致则跳过
 aibox uninstall openmaic    # 只删 CLI 本体
 ```
 
-`aibox uninstall openmaic` **不会**删 `/etc/openmaic`（密钥、访问密码）与 `/opt/openmaic`（部署目录）—— 那些属于「这套部署」而非「这个命令」。要清部署请用 `openmaic clean`。
+`aibox uninstall openmaic` **不会**删 `/etc/openmaic`（密钥、访问密码）与部署根 `$AIBOX_HOME/apps/openmaic`（部署目录）—— 那些属于「这套部署」而非「这个命令」。要清部署请用 `openmaic clean`。
 
 ## 动作透传
 
@@ -60,7 +60,7 @@ CLI 运行时（也可写进 `/etc/openmaic/openmaic.conf`，环境变量优先�
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `OPENMAIC_CONF_DIR` | `/etc/openmaic` | 配置与密钥目录 |
-| `OPENMAIC_BASE_DIR` | `/opt/openmaic` | 部署根目录 |
+| `OPENMAIC_BASE_DIR` | `$AIBOX_HOME/apps/openmaic` | 部署根目录（见下方《落点》） |
 | `OPENMAIC_PROXY_URL` | 空 | 拉取源码用的代理，接受完整 URL（`http://host:port` / `socks5://host:port`）。**优先于下面的旧键** |
 | `OPENMAIC_PROXY_HOST` | 空 | 同上（旧键，兼容保留）。值可写裸 `host:port`，会自动补 `http://` |
 | `OPENMAIC_HEALTH_URL` | `http://127.0.0.1:3000/api/health` | 健康检查地址 |
@@ -71,6 +71,22 @@ CLI 运行时（也可写进 `/etc/openmaic/openmaic.conf`，环境变量优先�
 | `OPENMAIC_BUILD_TIMEOUT_RENDER` | `2400` | 渲染镜像构建超时（秒） |
 
 仓库里不含任何站点地址；主机相关的值一律由此显式传入。
+
+## 落点
+
+| 平台 | 身份 | 部署根 |
+| --- | --- | --- |
+| Linux | root | `/root/.aibox/apps/openmaic` |
+| macOS | 普通用户 | `~/.aibox/apps/openmaic` |
+
+两平台同一表达式 `${AIBOX_APPS_ROOT:-${AIBOX_HOME:-$HOME/.aibox}/apps}/openmaic`，
+**不做平台分支** —— 约定见仓库 `docs/module-spec.md`《部署目录与配置落点约定》。
+
+- 配置目录 `/etc/openmaic`（写一次、天天读）与部署根（**每条命令都写**）刻意分离：
+  后者必须落在「日常身份可写」且「容器运行时默认共享」的路径下 —— 否则 `status` 这类
+  只读命令也要提权，且 compose 里的相对挂载会 `Mounts denied`。
+- **不把部署根放 `/opt` 下**：macOS 上 Docker Desktop 默认不共享 `/opt`（这条与 sudo 无关）。
+- 解析不到 `HOME` 且未给显式值时，CLI **直接报错退出（`3`）**，不会拼出 `/.aibox/...`。
 
 ## 代理
 
@@ -121,7 +137,7 @@ openmaic completion bash                # 补全脚本
 
 | 文件 | 作用 |
 | --- | --- |
-| `openmaic` | CLI 本体（单文件 bash，1483 行） |
+| `openmaic` | CLI 本体（单文件 bash，约 1500 行） |
 | `lib.sh` | 共享：落点解析、版本读取、语法检查、`host_notice`、代理下发（`sync_proxy_to_conf`） |
 | `install.sh` | 安装 |
 | `uninstall.sh` | 卸载（只删本体） |

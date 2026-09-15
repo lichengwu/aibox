@@ -177,6 +177,21 @@ expect -re {\[y/N\]} { send "y\r" }
 **验证要点**：pty 下输出含 ANSI 控制序列，用 `cat -v` 看真实内容；统计 `^[[<n>A`
 （光标上移）的**数值是否等于块高**，是检验重绘行数算错的最快方式。
 
+### #8 bash 3.2：`local a="x" b="${a}/y"` 同行引用，`set -u` 下报 unbound
+
+`local` 声明多个变量时，bash 3.2 会在**执行任何赋值前先展开全部右侧表达式** ——
+第二个变量的 `${a}` 展开时第一个还没赋值，配合 `set -u` 直接炸：
+
+```bash
+/bin/bash -c 'set -u; f(){ local a="/etc/w" b="${a}/windmill.conf"; echo "$b"; }; f'
+# bash: a: unbound variable
+```
+
+bash 5 没这个问题，所以「本机跑得好好的下发脚本」到 macOS bash 3.2 上才会炸。
+（windmill 模块 lib.sh 实际踩到，`bash -n` 查不出来 —— 纯运行期展开问题。）
+**修法**：拆成两行 `local a="..."` / `local b="${a}/..."`。
+**排查**：`grep -rnE 'local [a-z_]+="[^"]*"[ ]+[a-z_]+="\$\{[a-z_]+\}'`。
+
 ## 开发新模块
 
 1. 建 `tools/<name>/`，至少含 `install.sh`（钩子契约见 [`docs/module-spec.md`](docs/module-spec.md)）。
@@ -187,6 +202,7 @@ expect -re {\[y/N\]} { send "y\r" }
 6. **`svc.sh` 是「动作入口」而不是「必须是守护进程」**：常驻服务（pi-web）用 `start/stop/restart`，纯 CLI 分发（openmaic）可以直接把动作透传给下发的命令。
 7. **平台差异只告警不硬拦**：安装本身通常跨平台（就是拷文件），真正跑不动的限制由脚本在执行时报清楚，比安装期拦截更少误伤。
 8. 本机是 macOS（bash 3.2），钩子必须兼容；钩子**下发给别的平台**的脚本则要注意别用 bash 4 语法 —— 见踩坑记录 #2。
+9. **部署型模块的落点别自己发明**（详见 [`docs/module-spec.md`](docs/module-spec.md) 的《部署目录与配置落点约定》）：部署根统一 `$AIBOX_HOME/apps/<name>`（两平台同一表达式，无需分支），配置统一 `/etc/<name>/<name>.conf`。两条实测硬约束：Docker Desktop 在 macOS 默认**不共享 `/opt`**（放那儿会让 compose 的相对挂载报 `Mounts denied`）；**systemd 系统服务里没有 `HOME`**（靠 `$HOME` 派生的路径在服务上下文里会解析成空，单元必须显式 `Environment=`）。
 
 ## License
 

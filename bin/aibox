@@ -846,6 +846,28 @@ cmd_self_update() {
 }
 
 cmd_self_uninstall() {
+  # fail-closed：$AIBOX_HOME/apps/ 下是**部署实例**（数据库、备份、日志、数据卷
+  # 挂载点），生命周期比 aibox 本身长 —— 卸掉管理器不等于要删它们。
+  # 裸 rm -rf "$AIBOX_HOME" 面前加一行提示不算保护，必须真的拦下来。
+  local apps_root="$AIBOX_HOME/apps" deploys=""
+  if [ -d "$apps_root" ]; then
+    deploys="$(find "$apps_root" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort || true)"
+  fi
+
+  if [ -n "$deploys" ]; then
+    warn "检测到 $apps_root 下有部署实例："
+    printf '%s\n' "$deploys" | while IFS= read -r d; do
+      warn "  · $d"
+    done
+    warn "它们属于「这套部署」而不是「aibox 状态」，删除后不可恢复。"
+    if [ "${ASSUME_YES:-0}" != "1" ]; then
+      ask_confirm "仍要连同这些部署一起删除？" || {
+        warn "已取消，未做任何改动"
+        return 2
+      }
+    fi
+  fi
+
   warn "将删除 $AIBOX_HOME 与 $AIBOX_BIN_DIR/aibox"
   warn "已装模块的自身卸载请先: aibox uninstall <module>"
   rm -rf "$AIBOX_HOME"
@@ -866,7 +888,7 @@ aibox $AIBOX_VERSION — AI coding 工具集模块管理器
   aibox list-available            可用模块
   aibox <module> <action> [args]  调用模块服务动作（如 aibox pi-web start）
   aibox self update               更新 aibox 主程序
-  aibox self uninstall            卸载 aibox
+  aibox self uninstall [--yes]    卸载 aibox（apps/ 下有部署实例时需 --yes 确认）
   aibox self version              主程序版本
   aibox version | -v | --version
   aibox help | -h | --help
@@ -892,9 +914,11 @@ EOF
 # ---------- 全局选项 ----------
 # --no-proxy：本次调用绕过代理（需放在命令最前）
 BYPASS_PROXY=0
+ASSUME_YES=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-proxy) BYPASS_PROXY=1; shift ;;
+    --yes | -y) ASSUME_YES=1; shift ;;
     --)         shift; break ;;
     *)          break ;;
   esac
@@ -918,11 +942,22 @@ case "${1:-help}" in
                     cmd_list_available ;;
   proxy)            shift; cmd_proxy "$@" ;;
   self)
-    case "${2:-}" in
+    shift
+    # 允许 --yes 出现在子命令之后（aibox self uninstall --yes）。
+    # 只在 self 范围内剥离，**不动**模块透传的参数 —— 模块自己可能也有 --yes。
+    _self_kept=()
+    for _self_a in "$@"; do
+      case "$_self_a" in
+        --yes | -y) ASSUME_YES=1 ;;
+        *)          _self_kept+=("$_self_a") ;;
+      esac
+    done
+    set -- ${_self_kept[@]+"${_self_kept[@]}"}
+    case "${1:-}" in
       update)       cmd_self_update ;;
       uninstall)   cmd_self_uninstall ;;
       version)     echo "aibox $AIBOX_VERSION" ;;
-      *)           die "用法: aibox self {update|uninstall|version}" ;;
+      *)           die "用法: aibox self {update|uninstall|version} [--yes]" ;;
     esac ;;
   version|-v|--version) echo "aibox $AIBOX_VERSION" ;;
   help|-h|--help)   usage ;;

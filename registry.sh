@@ -27,3 +27,17 @@ AIBOX_MODULE_openmaic_uninstall="uninstall.sh"
 AIBOX_MODULE_openmaic_update="update.sh"
 AIBOX_MODULE_openmaic_svc="svc.sh"
 AIBOX_MODULE_openmaic_actions="status health doctor version up down restart logs render upgrade rollback backup restore db config models install clean powerlog url"
+
+AIBOX_MODULES="${AIBOX_MODULES} windmill"
+
+AIBOX_MODULE_windmill_version="1.1.0"
+AIBOX_MODULE_windmill_description="Windmill self-host ops CLI (init/upgrade/backup/drill/doctor) — deploy root \$AIBOX_HOME/apps/windmill, config /etc/windmill"
+AIBOX_MODULE_windmill_platform=""
+AIBOX_MODULE_windmill_dir="tools/windmill"
+AIBOX_MODULE_windmill_files="lib.sh windmill install.sh uninstall.sh update.sh svc.sh"
+AIBOX_MODULE_windmill_install="install.sh"
+AIBOX_MODULE_windmill_uninstall="uninstall.sh"
+AIBOX_MODULE_windmill_update="update.sh"
+AIBOX_MODULE_windmill_svc="svc.sh"
+AIBOX_MODULE_windmill_actions="status doctor version up down logs shell credentials systemd destroy backup upgrade rollback check deploy restore drill snapshots init"
+
