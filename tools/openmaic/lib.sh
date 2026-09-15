@@ -150,3 +150,10 @@ openmaic_deploy_root() {
   fi
   printf '%s/openmaic' "${base}"
 }
+
+# Dashboard 接口（aibox dashboard 调用）：输出 endpoint/credential/health
+dashboard_info() {
+  echo "endpoint=http://127.0.0.1:3000"
+  echo "credential=.env.local（API Key、访问密码）"
+  echo "health=curl -s http://127.0.0.1:3000/api/health"
+}

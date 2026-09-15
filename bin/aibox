@@ -1024,6 +1024,77 @@ cmd_list_available() {
   done
 }
 
+# Dashboard：模块状态 + endpoint + 凭据可视化。
+# aibox dashboard —— 全局总览表；aibox <module> dashboard —— 单模块详情 + 健康探测。
+cmd_dashboard() {
+  local name="${1:-}"
+  if [ -n "$name" ]; then
+    cmd_dashboard_detail "$name"
+  else
+    cmd_dashboard_overview
+  fi
+}
+
+cmd_dashboard_overview() {
+  load_registry
+  printf '  %-14s %-10s %-36s %s\n' "模块" "状态" "endpoint" "凭据"
+  echo "  ────────────────────────────────────────────────────────────────────"
+  local m info endpoint cred status
+  for m in ${AIBOX_MODULES:-}; do
+    if is_installed "$m"; then
+      status="✓已装"
+      info=""
+      if [ -f "$AIBOX_MOD_DIR/$m/lib.sh" ]; then
+        info="$(AIBOX_MODULE="$m" AIBOX_HOME="$AIBOX_HOME" bash -c ". '$AIBOX_MOD_DIR/$m/lib.sh' 2>/dev/null && type dashboard_info >/dev/null 2>&1 && dashboard_info 2>/dev/null || true" 2>/dev/null)"
+      fi
+      endpoint=$(printf '%s\n' "$info" | sed -n 's/^endpoint=//p')
+      cred=$(printf '%s\n' "$info" | sed -n 's/^credential=//p')
+    else
+      status="✗未装"
+      endpoint="—"
+      cred=$(module_field "$m" dashboard_hint)
+    fi
+    printf '  %-14s %-10s %-36s %s\n' "$m" "$status" "${endpoint:-—}" "${cred:-—}"
+  done
+}
+
+cmd_dashboard_detail() {
+  local name="$1"
+  load_registry
+  module_exists "$name" || die "未知模块: $name"
+  echo "=== $name ==="
+  if ! is_installed "$name"; then
+    warn "$name 未安装"
+    log "endpoint: —"
+    log "凭据: $(module_field "$name" dashboard_hint)"
+    log "安装: aibox install $name"
+    return
+  fi
+  local info endpoint cred logf health code
+  info="$(AIBOX_MODULE="$name" AIBOX_HOME="$AIBOX_HOME" bash -c ". '$AIBOX_MOD_DIR/$name/lib.sh' 2>/dev/null && dashboard_info 2>/dev/null || true" 2>/dev/null)"
+  endpoint=$(printf '%s\n' "$info" | sed -n 's/^endpoint=//p')
+  cred=$(printf '%s\n' "$info" | sed -n 's/^credential=//p')
+  logf=$(printf '%s\n' "$info" | sed -n 's/^log=//p')
+  health=$(printf '%s\n' "$info" | sed -n 's/^health=//p')
+  log "状态: ✓已装"
+  [ -n "$endpoint" ] && log "endpoint: $endpoint"
+  [ -n "$cred" ] && log "凭据: $cred"
+  [ -n "$logf" ] && log "日志: $logf"
+  if [ -n "$endpoint" ]; then
+    case "$endpoint" in
+      http://*|https://*)
+        code=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "$endpoint" 2>/dev/null) || code="000"
+        [ -n "$code" ] || code="000"
+        case "$code" in
+          200|204|301|302|401) ok "健康: ✓ HTTP $code" ;;
+          000) bad "健康: ✗ 不可达" ;;
+          *) warn "健康: HTTP $code" ;;
+        esac ;;
+      *) [ -n "$health" ] && log "健康探测: $health" ;;
+    esac
+  fi
+}
+
 # 输出模块开发指南（upstream 链接 + DEVELOPMENT.md 路径），从 module.yaml upstream 读。
 cmd_dev_guide() {
   local name="$1"
@@ -1050,6 +1121,11 @@ cmd_module_action() {
   # dev-guide 特例：主 CLI 读 module.yaml upstream，不透传 svc.sh（未装也能查）
   if [ "$action" = "dev-guide" ]; then
     cmd_dev_guide "$name"
+    return
+  fi
+  # dashboard 特例：主 CLI 读模块 dashboard_info + 健康探测，不透传 svc.sh
+  if [ "$action" = "dashboard" ]; then
+    cmd_dashboard_detail "$name"
     return
   fi
   is_installed "$name" || die "$name 未安装（先: aibox install ${name}）"
@@ -1182,6 +1258,7 @@ case "${1:-help}" in
   list-available|available|search)
                     cmd_list_available ;;
   ports)            cmd_ports ;;
+  dashboard)       cmd_dashboard ;;
   proxy)            shift; cmd_proxy "$@" ;;
   self)
     shift

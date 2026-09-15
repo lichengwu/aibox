@@ -317,3 +317,12 @@ probe_via_clash() {
     warn "经 mihomo    ${code}（代理可能不可用）"
   fi
 }
+
+# Dashboard 接口（aibox dashboard 调用）：输出 endpoint/credential/log/health
+dashboard_info() {
+  state_load
+  echo "endpoint=socks5://127.0.0.1:${CLASH_PORT}"
+  echo "credential=API secret ${CLASH_SECRET:-未设}"
+  echo "log=$(log_dir)/mihomo.log"
+  echo "health=curl -s -H 'Authorization: Bearer ${CLASH_SECRET}' http://127.0.0.1:${CLASH_API_PORT}/proxies/AUTO"
+}

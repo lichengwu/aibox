@@ -254,3 +254,12 @@ show_status() {
   echo "---"
   curl -s -o /dev/null --max-time 3 -w "HTTP %{http_code}（pi/${PASSWORD}）\n" -u "pi:${PASSWORD}" "http://127.0.0.1:${PORT}/" || echo "curl 探测失败"
 }
+
+# Dashboard 接口（aibox dashboard 调用）：输出 endpoint/credential/log/health
+dashboard_info() {
+  resolve_password
+  echo "endpoint=http://127.0.0.1:${PORT}"
+  echo "credential=用户名 pi / 密码 ${PASSWORD}"
+  echo "log=${LOG_DIR}/pi-web.log"
+  echo "health=curl -s -o /dev/null -w '%{http_code}' -u pi:${PASSWORD} http://127.0.0.1:${PORT}/"
+}

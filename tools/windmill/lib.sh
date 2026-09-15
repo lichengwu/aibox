@@ -132,3 +132,10 @@ wm_deploy_root() {
   fi
   printf '%s/windmill' "${base}"
 }
+
+# Dashboard 接口（aibox dashboard 调用）：输出 endpoint/credential/health
+dashboard_info() {
+  echo "endpoint=http://127.0.0.1:8080"
+  echo "credential=CREDENTIALS.txt + .env（POSTGRES_PASSWORD）"
+  echo "health=curl -s http://127.0.0.1:8080"
+}
