@@ -1004,7 +1004,8 @@ services:
   db:
     deploy:
       # To use an external database, set replicas to 0 and set DATABASE_URL to the external database url in the .env file
-      replicas: 1
+      # 连共享 aibox base PG：.env DB_REPLICAS=0 + DATABASE_URL=postgres://aibox:aibox@aibox-base-pg:5432/windmill
+      replicas: ${DB_REPLICAS:-1}
     image: postgres:18
     shm_size: 1g
     restart: unless-stopped
