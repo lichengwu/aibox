@@ -52,11 +52,59 @@ ok()   { printf '\033[32m[ok]\033[0m %s\n' "$*"; }
 bad()  { printf '\033[31m[!!]\033[0m %s\n' "$*"; }
 info() { printf '       %s\n' "$*"; }
 
+# 从 stdin 解析 module.yaml 子集（§2.2），输出 eval-able 的 AIBOX_MODULE_<name>_* 赋值。
+# 兼容 BSD awk（index/substr/sub，无捕获组，bash 3.2 的 nawk 可跑）。
+# $1=模块名。标量→AIBOX_MODULE_<name>_<key>；列表→空格分隔；嵌套→<parent>_<subkey>。
+parse_yaml_module_stdin() {
+  awk -v NAME="$1" '
+    BEGIN { parent=""; subparent=""; listkey=""; listval="" }
+    /^[[:space:]]*#/ { next }
+    /^[[:space:]]*$/ { next }
+    {
+      content=$0
+      while (substr(content,1,1)==" ") content=substr(content,2)
+      indent=length($0)-length(content)
+      if (substr(content,1,1)=="-") {
+        item=substr(content,2); sub(/^ +/, "", item)
+        if (listkey=="") listkey=(subparent!="" ? NAME"_"parent"_"subparent : NAME"_"parent)
+        listval=(listval=="" ? "" : listval" ") stripq(item)
+        next
+      }
+      colon=index(content,":")
+      if (colon>0) {
+        k=substr(content,1,colon-1); v=substr(content,colon+1)
+        sub(/^ +/, "", v); sub(/ +$/, "", v)
+        if (listkey!="") { printvar(listkey,listval); listkey=""; listval="" }
+        if (indent==0) {
+          parent=""; subparent=""
+          if (v=="") parent=k; else printvar(NAME"_"k, stripq(v))
+        } else {
+          if (v=="") subparent=k
+          else if (parent!="") printvar(NAME"_"parent"_"k, stripq(v))
+        }
+      }
+    }
+    END { if (listkey!="") printvar(listkey,listval) }
+    function printvar(k,v) { printf "AIBOX_MODULE_%s=\"%s\"\n", k, v }
+    function stripq(s) {
+      if (substr(s,1,1)=="\"" && substr(s,length(s),1)=="\"") return substr(s,2,length(s)-2)
+      return s
+    }
+  '
+}
+
 # ---------- registry ----------
 load_registry() {
-  local reg
+  local reg m mu yaml
   reg="$(curl -fsSL "$AIBOX_RAW/registry.sh" 2>/dev/null)" || die "拉取 registry 失败：$AIBOX_RAW/registry.sh"
   eval "$reg"
+  # registry.sh 只列模块名（AIBOX_MODULES）；字段从各模块的 module.yaml 解析注入
+  # 模块名连字符转下划线作变量名（pi-web → pi_web），路径仍用连字符 curl
+  for m in ${AIBOX_MODULES:-}; do
+    mu="${m//-/_}"
+    yaml="$(curl -fsSL "$AIBOX_RAW/tools/$m/module.yaml" 2>/dev/null)" || { warn "拉 $m module.yaml 失败（确认模块已发布）"; continue; }
+    eval "$(printf '%s\n' "$yaml" | parse_yaml_module_stdin "$mu")"
+  done
 }
 
 # 读模块字段：module_field <name> <field> —— 依赖已 load_registry

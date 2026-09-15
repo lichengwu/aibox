@@ -1,13 +1,9 @@
 name: lint
 
-# 质量门：bash 语法检查 + shellcheck + 项目特有踩坑扫描。
-# - bash -n：在 CI 的 bash 5 上对所有脚本做语法检查（兼容 macOS bash 3.2 的脚本也能过）。
-# - shellcheck：error 级硬阻断（warning 暂不阻断，待代码清理干净后收紧）。
-#   --shell=bash：lib.sh/registry.sh 是被 source 的库（无 shebang），显式指定 shell
-#   避免 SC2148（"add shebang"）误报。
-# - gotchas：扫 AGENTS.md 踩坑 #1（全角标点紧跟裸 $VAR）与 #8（local 同行引用前一个 local 变量），
-#   这两个是 bash 3.2 + UTF-8 的运行期问题，shellcheck 抓不到，只能靠正则挡回归。
-#   #8 用 PCRE 反向引用精确匹配"第二个变量引用第一个变量名"，排除注释行，避免误报。
+# 质量门：bash 语法 + shellcheck + 踩坑扫描 + module.yaml 规范 + 端口冲突。
+# - bash -n / shellcheck / gotchas：脚本质量（见 AGENTS.md 踩坑 #1 #2 #6 #8）
+# - module-lint：module.yaml 必填字段 + §2.2 子集合规（yq 权威校验，保证 awk 可解析）
+# - port-conflict：模块间端口冲突检测（静态声明 + CI 挡提交，见 spec §3）
 
 on:
   push:
@@ -28,7 +24,6 @@ jobs:
         run: |
           set -e
           fail=0
-          # 只检查 git 跟踪的脚本：主 CLI、bootstrap、registry、各模块钩子与 CLI 主体
           while IFS= read -r f; do
             if ! bash -n "$f"; then
               echo "::error file=${f}::bash -n 语法错误"
@@ -48,8 +43,7 @@ jobs:
         run: |
           set -e
           mapfile -t files < <(git ls-files | grep -E '\.sh$|^(bin/aibox|tools/[^/]+/(openmaic|windmill))$')
-          # CLI 主体面向 Linux bash 5（含 bash 4+ 特性，见 AGENTS.md 踩坑 #2），
-          # shellcheck 静态分析支持 bash 4 语法，error 级即可覆盖真实问题。
+          # --shell=bash：lib.sh/registry.sh 是被 source 的库（无 shebang），显式指定 shell 避免 SC2148
           shellcheck --severity=error --external-sources --shell=bash "${files[@]}"
 
   bash32-gotchas:
@@ -63,22 +57,79 @@ jobs:
           fail=0
           mapfile -t files < <(git ls-files | grep -E '\.sh$|^(bin/aibox|tools/[^/]+/(openmaic|windmill))$')
           for f in "${files[@]}"; do
-            # 踩坑 #1：全角标点紧跟裸 $VAR（macOS bash 3.2 + UTF-8 locale 报 unbound）。
-            # 正则要求非 ASCII 紧贴变量名才算命中；排除注释行（含说明性示例）。
             m1="$(grep -nP '\$[A-Za-z_][A-Za-z0-9_]*[，。、；：！？（）「」]' "$f" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
             if [ -n "$m1" ]; then
-              echo "::error file=${f}::踩坑 #1: 全角标点紧跟裸 \$VAR，改用 \${VAR} 显式界定"
-              echo "$m1"
-              fail=1
+              echo "::error file=${f}::踩坑 #1: 全角标点紧跟裸 \$VAR，改用 \${VAR}"
+              echo "$m1"; fail=1
             fi
-            # 踩坑 #8：local a="x" b="${a}/y" 同行引用前一个 local 变量（bash 3.2 运行期 unbound）。
-            # 用 PCRE 反向引用精确匹配"第二个变量值引用第一个变量名"，排除注释行，避免误报
-            # （local a="x" b="$OTHER" 引用的是外部变量，不命中）。
             m8="$(grep -nP 'local\s+([A-Za-z_]\w*)\s*=\s*"[^"]*"\s+[A-Za-z_]\w*\s*=\s*"\$\{?\1' "$f" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
             if [ -n "$m8" ]; then
               echo "::error file=${f}::踩坑 #8: local 同行引用前一个变量，拆成两行"
-              echo "$m8"
-              fail=1
+              echo "$m8"; fail=1
             fi
           done
           exit $fail
+
+  module-lint:
+    name: module.yaml lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install yq
+        run: |
+          sudo wget -qO/usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+      - name: 校验 module.yaml（必填字段 + 子集合规 + ports 格式）
+        run: |
+          set -e
+          fail=0
+          for f in tools/*/module.yaml; do
+            [ -f "$f" ] || continue
+            # 必填字段
+            for key in name version description dir; do
+              yq -e ".$key" "$f" >/dev/null 2>&1 || { echo "::error file=$f::缺必填字段 $key"; fail=1; }
+            done
+            yq -e '.hooks.install' "$f" >/dev/null 2>&1 || { echo "::error file=$f::缺 hooks.install"; fail=1; }
+            # §2.2 子集合规：无锚点/引用(&/*)、无多行(|/>)、无流式({}/[])
+            if grep -nE '[&*]|\| |>|\{|\}|\[|\]' "$f" | grep -vE '^[0-9]+:[[:space:]]*#'; then
+              echo "::error file=$f::含 §2.2 禁止的 YAML 语法（锚点/多行/流式），awk 解析器不支持"; fail=1
+            fi
+            # ports 格式：端口/协议:用途
+            for p in $(yq -o=ts '.ports[]' "$f" 2>/dev/null || true); do
+              echo "$p" | grep -qE '^[0-9]+/(tcp|udp):' || { echo "::error file=$f::ports 格式错（应为 端口/协议:用途）: $p"; fail=1; }
+            done
+            echo "  ok: $f"
+          done
+          exit $fail
+
+  port-conflict:
+    name: port conflict
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install yq
+        run: |
+          sudo wget -qO/usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+      - name: 检测模块间端口冲突（端口+协议唯一）
+        run: |
+          set -e
+          declare -A owner
+          dup=0
+          for f in tools/*/module.yaml; do
+            [ -f "$f" ] || continue
+            m=$(yq '.name' "$f")
+            for p in $(yq -o=ts '.ports[]' "$f" 2>/dev/null || true); do
+              pp="${p%%/*}"   # 端口
+              proto=$(echo "$p" | sed -E 's#^[0-9]+/([a-z]+):.*#\1#')
+              key="${pp}/${proto}"
+              if [ -n "${owner[$key]:-}" ]; then
+                echo "::error::端口 $key 冲突：${owner[$key]} 与 $m 都声明了"
+                dup=1
+              else
+                owner[$key]="$m"
+              fi
+            done
+          done
+          [ $dup -eq 0 ] && echo "✅ 端口无冲突"
+          exit $dup

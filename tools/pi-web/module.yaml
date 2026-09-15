@@ -1,0 +1,44 @@
+name: pi-web
+version: 1.0.0
+description: "Deploy @agegr/pi-web as a launchd/systemd service (HTTP Basic auth, auto-restart)"
+platform: ""
+dir: tools/pi-web
+
+deps:
+  - "node:22"
+  - npm
+
+ports:
+  - 30141/tcp:http
+
+files:
+  - lib.sh
+  - install.sh
+  - uninstall.sh
+  - update.sh
+  - svc.sh
+
+hooks:
+  install: install.sh
+  uninstall: uninstall.sh
+  update: update.sh
+  svc: svc.sh
+
+actions:
+  - start
+  - stop
+  - restart
+  - status
+  - logs
+  - diagnose
+
+upstream:
+  homepage: https://github.com/agegr/pi-web
+  docs: https://github.com/agegr/pi-web#readme
+  install: https://github.com/agegr/pi-web#installation
+  test: https://github.com/agegr/pi-web#development
+
+dashboard:
+  endpoints:
+    - "http://127.0.0.1:30141"
+  hint: "用户名 pi / 密码见 aibox pi-web status（plist PI_WEB_PASSWORD）"

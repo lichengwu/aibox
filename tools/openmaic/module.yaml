@@ -1,0 +1,57 @@
+name: openmaic
+version: 1.0.0
+description: "OpenMAIC ops CLI (install/upgrade/backup/doctor)"
+platform: ""
+dir: tools/openmaic
+
+deps:
+  - docker
+  - docker-compose
+  - git
+
+ports:
+  - 3000/tcp:app
+  - 5432/tcp:pg
+
+files:
+  - lib.sh
+  - openmaic
+  - install.sh
+  - uninstall.sh
+  - update.sh
+  - svc.sh
+
+hooks:
+  install: install.sh
+  uninstall: uninstall.sh
+  update: update.sh
+  svc: svc.sh
+
+actions:
+  - status
+  - health
+  - doctor
+  - version
+  - up
+  - down
+  - restart
+  - logs
+  - render
+  - upgrade
+  - rollback
+  - backup
+  - restore
+  - db
+  - config
+  - models
+  - install
+  - clean
+  - powerlog
+  - url
+
+upstream:
+  homepage: https://github.com/THU-MAIC/OpenMAIC
+  docs: https://github.com/THU-MAIC/OpenMAIC#readme
+
+dashboard:
+  hint: "凭据见 .env.local（API Key、访问密码）；endpoint http://127.0.0.1:3000"

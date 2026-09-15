@@ -1,0 +1,55 @@
+name: windmill
+version: 1.1.0
+description: "Windmill self-host ops CLI (init/upgrade/backup/drill/doctor)"
+platform: ""
+dir: tools/windmill
+
+deps:
+  - docker
+  - docker-compose
+  - python3
+
+ports:
+  - 8080/tcp:http
+
+files:
+  - lib.sh
+  - windmill
+  - install.sh
+  - uninstall.sh
+  - update.sh
+  - svc.sh
+
+hooks:
+  install: install.sh
+  uninstall: uninstall.sh
+  update: update.sh
+  svc: svc.sh
+
+actions:
+  - status
+  - doctor
+  - version
+  - up
+  - down
+  - logs
+  - shell
+  - credentials
+  - systemd
+  - destroy
+  - backup
+  - upgrade
+  - rollback
+  - check
+  - deploy
+  - restore
+  - drill
+  - snapshots
+  - init
+
+upstream:
+  homepage: https://github.com/windmill-labs/windmill
+  docs: https://www.windmill.dev/docs/
+
+dashboard:
+  hint: "凭据见 CREDENTIALS.txt + .env（POSTGRES_PASSWORD），路径 apps/windmill/"

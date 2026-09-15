@@ -1,0 +1,41 @@
+name: clash
+version: 1.0.0
+description: "Clash 订阅代理池 — mihomo 内核编排（自动测速/切换/失败回退）"
+platform: ""
+dir: tools/clash
+
+ports:
+  - 7890/tcp:mixed
+  - 9090/tcp:api
+
+files:
+  - lib.sh
+  - install.sh
+  - uninstall.sh
+  - update.sh
+  - svc.sh
+
+hooks:
+  install: install.sh
+  uninstall: uninstall.sh
+  update: update.sh
+  svc: svc.sh
+
+actions:
+  - start
+  - stop
+  - restart
+  - status
+  - refresh
+  - set
+  - select
+  - test
+  - logs
+  - doctor
+
+upstream:
+  homepage: https://github.com/MetaCubeX/mihomo
+  docs: https://wiki.metacubex.one/
+
+dashboard:
+  hint: "出口 socks5://127.0.0.1:7890；API 127.0.0.1:9090（state CLASH_SECRET）"
