@@ -91,9 +91,9 @@ jobs:
               yq -e ".$key" "$f" >/dev/null 2>&1 || { echo "::error file=$f::缺必填字段 $key"; fail=1; }
             done
             yq -e '.hooks.install' "$f" >/dev/null 2>&1 || { echo "::error file=$f::缺 hooks.install"; fail=1; }
-            # §2.2 子集合规：无锚点/引用(&/*)、无多行(|/>)、无流式({}/[])；${...} 在引号串里是标量值，不算流式
-            if grep -nE '[&*]|\| |>|\{|\}|\[|\]' "$f" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -vE '\$\{[^}]*\}'; then
-              echo "::error file=$f::含 §2.2 禁止的 YAML 语法（锚点/多行/流式），awk 解析器不支持"; fail=1
+            # §2.2 子集合规：锚点/引用(&name/*name)、块标量(key:|/>),  流式(key:{/[]/-{/-[)；注：引号串里的 ${...} / <...> 是标量值，不算
+            if grep -nE '[&*][A-Za-z_]|:[[:space:]]*[|>]|:[[:space:]]*[[{]|^[[:space:]]*-[[:space:]]*[[{]' "$f" | grep -vE '^[0-9]+:[[:space:]]*#'; then
+              echo "::error file=$f::含 §2.2 禁止的 YAML 语法（锚点/块标量/流式），awk 解析器不支持"; fail=1
             fi
             # ports 格式：端口/协议:用途
             for p in $(yq -o=ts '.ports[]' "$f" 2>/dev/null || true); do
