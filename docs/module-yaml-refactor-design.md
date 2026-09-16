@@ -301,10 +301,11 @@ AIBOX_REDIS_PORT=36379
 
 `parse_yaml_module_stdin`（`bin/aibox`）：
 
-1. `files` 解析后，与标准 5 文件做 union 去重（顺序：标准集在前，额外项在后），赋给 `AIBOX_MODULE_<name>_files`。向后兼容旧 yaml（列全 → union 后仍是全集，不重复下载）。
+1. `files` 的 union 在 `download_module` 做（标准集 ∪ files 去重，标准集在前），不在解析器里 —— 局部、最小侵入。向后兼容旧 yaml（列全 → union 后仍是全集，不重复下载）。
 2. `services` / `provides` 作为新列表字段照常解析（`AIBOX_MODULE_<name>_services` / `_provides`，空格分隔标量），供 CI 校验、`install` 判定 createdb、compose wrapper 判定是否加 `--env-file`。
 3. `dashboard.endpoints`（已有列表）保留；`dashboard.hint`（已有标量）保留；废弃其他子字段（CI 报错即可）。
-4. `module_field` 读取 `services`/`provides` 时仍返回空格分隔串，由调用方再 split。
+4. **`esc()` 在 `printvar` 转义值里的 `$` / `"` / `` ` `` / `\`**，使值里的 `${...}`（如 `${PORT}`、`${AIBOX_POSTGRES_*}`）保持字面、不被 `eval` 展开 —— 修原解析器把值里 `$VAR`/`${VAR}` 在 `eval` 注入时展开的漏洞（`set -u` 下会炸成 unbound）。dashboard endpoints 的 `${PORT}` 占位因此可用。
+5. `module_field` 读取 `services`/`provides` 时仍返回空格分隔串，由调用方再 split。
 
 零结构破坏，最小改动。
 
@@ -573,6 +574,30 @@ docker compose --env-file .env --env-file "$AIBOX_HOME/base.env" \
 ```
 
 `DATABASE_URL` 在 compose 解析时由 `${AIBOX_POSTGRES_*}` 插值得出 —— `.env` 给 `AIBOX_POSTGRES_DB`，`base.env` 给其余。改 base 凭据 → `base restart` 重写 base.env → 下次 `aibox windmill restart` 自动用新值。
+
+---
+
+## 11. 实现状态（2026-09-16）
+
+**已实现并验证（commit `1b3369a`）：**
+
+- **Phase A**：awk `esc()` + `download_module` files union + `cmd_module_action` 无动作列 help + 5 个 module.yaml 全部更新（files 瘦身 / dashboard 瘦身 / ports 全名 / services·provides）。
+- **Phase B**：`base/lib.sh` `write_base_env()` + `base start` 写 `$AIBOX_HOME/base.env`；`base/docker-compose.yml` service `pg`→`postgres`、container `aibox-base-pg`→`aibox-base-postgres`、env `AIBOX_BASE_PG_*`→`AIBOX_BASE_POSTGRES_*`（`pg_data` 卷保留旧数据）；`bin/aibox` `ensure_services`（install 时见 services → base start + createdb）。
+- **Phase C（openmaic）**：`docker-compose.shared.yml` + heredoc `DATABASE_URL` 改 `${AIBOX_POSTGRES_*}`；`compose()`/`compose_timed()` 共享模式追加 `--env-file base.env`。
+- **Phase C（windmill）**：机械重命名 `aibox-base-pg`→`aibox-base-postgres` / `AIBOX_BASE_PG_*`→`AIBOX_BASE_POSTGRES_*`（CLI + shared.yml + DEVELOPMENT.md）。
+- **CI**：`module-lint` 扩充（files 存在 / lifecycle / dashboard 两子字段 / 全名白名单）+ §2.2 grep 排除 `${...}`；新增 `deps-lint` job。
+
+**实测（docker）**：
+
+- `aibox base start` → `aibox-base-postgres` 起 + `$AIBOX_HOME/base.env` 写；旧 DB（`testdb`/`windmill`）经 `pg_data` 卷保留。
+- `docker compose --env-file base.env -f … config` → `${AIBOX_POSTGRES_*}` 插值为 `postgres://aibox:aibox@aibox-base-postgres:5432/<db>`；不带 `--env-file` 则空 —— 证明 base.env 是唯一源。
+- openmaic 真实 shared.yml + base.env → `config` 渲染 `DATABASE_URL` 正确解析、`replicas:0`、join `aibox-base`。
+- `bash -n` 全过；bash 3.2 gotcha #1 #8 扫描净；`aibox list/ports/dashboard/dev-guide` 回归正常。
+
+**遗留（design §9 标注的「单独迭代」，本轮不在范围）**：
+
+- **windmill deep var-conversion**：当前 windmill 的 `DATABASE_URL` 在 `init` 渲染的 `.env` 里（unquoted heredoc 烘焙），用 `${AIBOX_BASE_POSTGRES_*:-aibox}` 默认值；非 live 读 base.env。匹配 base 默认凭据可用；若自定义 base 凭据，需 `windmill init` 重渲染，或后续把 `DATABASE_URL` 移到 shared.yml `environment:` + `_compose()` 加 `--env-file base.env`（同 openmaic —— 即附录 B windmill 示例所示的 target 形态，当前尚未落地）。
+- **数据迁移 `pg_dump`**：存量独立 PG → 共享 PG 的灌库，属运行时 ops，需在部署主机执行（design §9 阶段 C 步骤 2）。
 
 ---
 
