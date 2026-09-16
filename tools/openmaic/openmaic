@@ -99,7 +99,7 @@ esac
 RENDER_ENABLED="${OPENMAIC_RENDER_ENABLED:-1}"
 # 连共享 aibox base PG（避免每模块独立 PG，省资源）：
 #   1=启用 —— apply_local_patches 会把 docker-compose.shared.yml 落到 $APP_DIR，
-#            compose() 自动 -f 追加；install 时自动在 aibox-base-pg 建库 openmaic（若 base 在跑）。
+#            compose() 自动 -f 追加；install 时自动在 aibox-base-postgres 建库 openmaic（若 base 在跑）。
 #   0=独立 PG（默认，上游 compose 自带 postgres 服务）。
 # 也可直接把 override 文件丢进 $APP_DIR 触发共享模式（shared_pg_active 以文件在位为准）。
 SHARED_PG="${OPENMAIC_SHARED_PG:-0}"
@@ -265,10 +265,21 @@ compose_files() {
   return 0
 }
 
+# 共享模式下追加 --env-file $AIBOX_HOME/base.env（连接信息单一源，compose 插值 ${AIBOX_POSTGRES_*}）。
+# base.env 由 aibox base start 写；缺失则警告（app 连不上，doctor 可见）但不阻断 compose 本身。
+compose_env_file() {
+  shared_pg_active || return 0
+  if [ ! -f "${AIBOX_HOME}/base.env" ]; then
+    warn "共享模式但 ${AIBOX_HOME}/base.env 不存在（先: aibox base start）"
+    return 0
+  fi
+  printf -- '--env-file %s' "${AIBOX_HOME}/base.env"
+}
+
 compose() {
   ( cd "$APP_DIR" || exit 1
     # shellcheck disable=SC2046
-    docker compose $(compose_profiles) $(compose_files) "$@" )
+    docker compose $(compose_profiles) $(compose_files) $(compose_env_file) "$@" )
 }
 
 # 带超时的调用 —— 网络被墙时 docker build 会静默挂起而非报错，必须有上限
@@ -276,17 +287,17 @@ compose_timed() {
   local secs="$1"; shift
   ( cd "$APP_DIR" || exit 1
     # shellcheck disable=SC2046
-    timeout "$secs" docker compose $(compose_profiles) $(compose_files) "$@" )
+    timeout "$secs" docker compose $(compose_profiles) $(compose_files) $(compose_env_file) "$@" )
 }
 
 # ---- 共享 aibox base PG 适配层 ----
 # 共享模式是否生效：flag=1 或 override 文件已落到 $APP_DIR（后者让手工丢文件也能生效）。
 shared_pg_active() { [ "$SHARED_PG" = 1 ] || [ -f "$SHARED_OVERRIDE" ]; }
 
-# 当前 PG 是否可连。共享模式查 aibox-base-pg 容器，否则查本地 postgres 服务。
+# 当前 PG 是否可连。共享模式查 aibox-base-postgres 容器，否则查本地 postgres 服务。
 pg_running() {
   if shared_pg_active; then
-    docker ps --format '{{.Names}}' 2>/dev/null | grep -qx aibox-base-pg
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -qx aibox-base-postgres
   else
     compose ps --status running --services 2>/dev/null | grep -qx postgres
   fi
@@ -296,18 +307,18 @@ pg_running() {
 pg_psql() {
   local mode="$1"; shift
   if shared_pg_active; then
-    [ "$mode" = tty ] && docker exec -it aibox-base-pg psql -U aibox -d openmaic "$@" \
-                      || docker exec -i  aibox-base-pg psql -U aibox -d openmaic "$@"
+    [ "$mode" = tty ] && docker exec -it aibox-base-postgres psql -U aibox -d openmaic "$@" \
+                      || docker exec -i  aibox-base-postgres psql -U aibox -d openmaic "$@"
   else
     [ "$mode" = tty ] && compose exec    postgres psql -U "$DB_USER" -d "$DB_NAME" "$@" \
                       || compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" "$@"
   fi
 }
 
-# pg_dump 入口（共享走 aibox-base-pg）。
+# pg_dump 入口（共享走 aibox-base-postgres）。
 pg_dump_cmd() {
   if shared_pg_active; then
-    docker exec aibox-base-pg pg_dump -U aibox -d openmaic "$@"
+    docker exec aibox-base-postgres pg_dump -U aibox -d openmaic "$@"
   else
     compose exec -T postgres pg_dump -U "$DB_USER" -d "$DB_NAME" "$@"
   fi
@@ -417,7 +428,7 @@ ensure_shared_pg_override() {
 
 _shared_override_write() {
   [ -f "$APP_DIR/docker-compose.yml" ] || { warn "上游 docker-compose.yml 未检出，跳过共享 override"; return 0; }
-  if [ -f "$SHARED_OVERRIDE" ] && grep -q 'aibox-base-pg' "$SHARED_OVERRIDE" 2>/dev/null; then
+  if [ -f "$SHARED_OVERRIDE" ] && grep -q 'aibox-base-postgres' "$SHARED_OVERRIDE" 2>/dev/null; then
     dim "  共享 PG override 已在位，跳过"
     return 0
   fi
@@ -440,8 +451,9 @@ _shared_override_write() {
 # 降级（回独立 PG）: OPENMAIC_SHARED_PG=0 后 openmaic up（CLI 会删 override）。
 #
 # 原理: postgres replicas:0（不起本地 PG）；openmaic app 加 aibox-base network
-#       （经服务名 aibox-base-pg 连共享 PG），并在 environment 写死 DATABASE_URL 指向
-#       共享 PG（覆盖 .env.local 的 DATABASE_URL —— environment 优先级高于 env_file）。
+#       （经服务名 aibox-base-postgres 连共享 PG），environment 的 DATABASE_URL 用
+#       ${AIBOX_POSTGRES_*} 构造 —— 值由 $AIBOX_HOME/base.env 经 compose --env-file 注入
+#       （覆盖 .env.local 的 DATABASE_URL —— environment 优先级高于 env_file）。
 #       .env.local 仍需存在（PERSISTENCE_DEV_TOKEN、API Key、ACCESS_CODE 等）。
 #       render-service 不改 —— 它在 internal: true 的 render 网络上，加 aibox-base
 #       会破坏其出网隔离。
@@ -457,7 +469,7 @@ services:
       - render
       - aibox-base
     environment:
-      - DATABASE_URL=postgres://aibox:aibox@aibox-base-pg:5432/openmaic
+      - DATABASE_URL=postgres://${AIBOX_POSTGRES_USER}:${AIBOX_POSTGRES_PASSWORD}@aibox-base-postgres:${AIBOX_POSTGRES_PORT}/openmaic
 
 networks:
   aibox-base:
@@ -470,23 +482,23 @@ OVERRIDE
 ensure_shared_db() {
   [ "$SHARED_PG" = 1 ] || return 0
   if [ "$DRY_RUN" = 1 ]; then
-    dim "  [dry-run] 将确保共享库 openmaic（aibox-base-pg）"
+    dim "  [dry-run] 将确保共享库 openmaic（aibox-base-postgres）"
     return 0
   fi
-  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx aibox-base-pg; then
-    warn "OPENMAIC_SHARED_PG=1 但 aibox-base-pg 未运行"
+  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx aibox-base-postgres; then
+    warn "OPENMAIC_SHARED_PG=1 但 aibox-base-postgres 未运行"
     hint "先启动共享 base: aibox base start && aibox base createdb openmaic"
     hint "  （未启动时 openmaic up 后应用连不上 PG，健康检查会失败）"
     return 0
   fi
-  if docker exec aibox-base-pg psql -U aibox -tAc "SELECT 1 FROM pg_database WHERE datname='openmaic'" 2>/dev/null | grep -q 1; then
-    ok "共享库 openmaic 已就绪（aibox-base-pg）"
+  if docker exec aibox-base-postgres psql -U aibox -tAc "SELECT 1 FROM pg_database WHERE datname='openmaic'" 2>/dev/null | grep -q 1; then
+    ok "共享库 openmaic 已就绪（aibox-base-postgres）"
     return 0
   fi
-  if docker exec aibox-base-pg psql -U aibox -c 'CREATE DATABASE "openmaic";' >/dev/null 2>&1; then
-    ok "已创建共享库 openmaic（aibox-base-pg）"
+  if docker exec aibox-base-postgres psql -U aibox -c 'CREATE DATABASE "openmaic";' >/dev/null 2>&1; then
+    ok "已创建共享库 openmaic（aibox-base-postgres）"
   else
-    err "创建共享库 openmaic 失败（aibox-base-pg 的 user 非 aibox？调整 AIBOX_BASE_PG_USER 后重试，并同步改 override 的 DATABASE_URL）"
+    err "创建共享库 openmaic 失败（aibox-base-postgres 的 user 非 aibox？调整 AIBOX_BASE_POSTGRES_USER 后重试，并同步改 override 的 DATABASE_URL）"
     return "$EXIT_PRECHECK"
   fi
 }
@@ -597,7 +609,7 @@ do_backup_inner() {
 
   if ! pg_running; then
     if shared_pg_active; then
-      err "aibox-base-pg 未运行，跳过备份（aibox base start）"
+      err "aibox-base-postgres 未运行，跳过备份（aibox base start）"
     else
       err "postgres 未运行，跳过备份"
     fi
@@ -778,10 +790,10 @@ cmd_doctor() {
   compose ps --status running --services 2>/dev/null | grep -qx "$SERVICE_APP" \
     && chk_ok "应用容器" "运行中" || chk_bad "应用容器" "未运行"
   if shared_pg_active; then
-    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx aibox-base-pg; then
-      chk_ok "PostgreSQL" "共享 aibox-base-pg 运行中"
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx aibox-base-postgres; then
+      chk_ok "PostgreSQL" "共享 aibox-base-postgres 运行中"
     else
-      chk_bad "PostgreSQL" "共享 aibox-base-pg 未运行（aibox base start）"
+      chk_bad "PostgreSQL" "共享 aibox-base-postgres 未运行（aibox base start）"
     fi
     [ -f "$SHARED_OVERRIDE" ] \
       && chk_ok "共享 PG override" "在位" \

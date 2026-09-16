@@ -1,13 +1,15 @@
 # aibox 共享基础组件：PostgreSQL 18 + Redis 7
-# 各模块连共享实例（network aibox-base + env 指向 host:35432），init 时建自己的库（<module> 或 <module>_<用途>）
+# 各模块连共享实例（network aibox-base + env 指向 aibox-base-postgres），
+# init 时建自己的库（<module> 或 <module>_<用途>）。
+# 连接信息由 base start 写入 $AIBOX_HOME/base.env，消费模块经 compose --env-file 注入。
 services:
-  pg:
+  postgres:
     image: postgres:18
-    container_name: aibox-base-pg
+    container_name: aibox-base-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${AIBOX_BASE_PG_USER:-aibox}
-      POSTGRES_PASSWORD: ${AIBOX_BASE_PG_PASSWORD:-aibox}
+      POSTGRES_USER: ${AIBOX_BASE_POSTGRES_USER:-aibox}
+      POSTGRES_PASSWORD: ${AIBOX_BASE_POSTGRES_PASSWORD:-aibox}
       POSTGRES_DB: aibox
     ports:
       - "35432:5432"

@@ -76,7 +76,7 @@ PG_IMAGE="postgres:18"
 CADDY_IMAGE="ghcr.io/windmill-labs/caddy-l4:2.11.4-1"
 # 共享 base PG：compose 已把 db service 设为 replicas:0，DATABASE_URL 改指 base PG。
 # 库操作走固定容器名 + 业务用户 aibox（独立模式为 compose 的 db / postgres）。
-SHARED_PG_CONTAINER="aibox-base-pg"
+SHARED_PG_CONTAINER="aibox-base-postgres"
 SHARED_PG_USER="aibox"
 # ghcr 镜像源（国内加速）。空 = 直连 ghcr.io。
 # 直连实测约 0.5 MB/s，而 windmill-extra 压缩后就有 1.99 GiB，
@@ -569,7 +569,7 @@ pull_images() {
 # =============================================================================
 # 数据库 / 健康
 # =============================================================================
-# 共享模式判定：.env 的 DATABASE_URL 指向 aibox-base-pg 时，compose 的 db service
+# 共享模式判定：.env 的 DATABASE_URL 指向 aibox-base-postgres 时，compose 的 db service
 # （已设 replicas:0）不再运行，所有库操作改走共享 base PG 容器。
 shared_pg_active() {
   case "$(get_env DATABASE_URL)" in
@@ -578,7 +578,7 @@ shared_pg_active() {
   esac
 }
 
-# 库操作容器路由：共享 → docker exec aibox-base-pg；独立 → dexec db（compose exec）。
+# 库操作容器路由：共享 → docker exec aibox-base-postgres；独立 → dexec db（compose exec）。
 # 仅负责选容器；连接用户（-U aibox / -U postgres）由调用方经 pg_user() 决定。
 pg_exec() {
   if shared_pg_active; then
@@ -1102,7 +1102,7 @@ render_compose() {
 ##     db 改 `deploy.replicas: 0`；windmill_server/worker/worker_native/indexer
 ##     去 depends_on、接入 external network `aibox-base`。
 ##     前置：aibox base start + aibox base createdb windmill，
-##     .env DATABASE_URL=postgres://aibox:aibox@aibox-base-pg:5432/windmill。
+##     .env DATABASE_URL=postgres://aibox:aibox@aibox-base-postgres:5432/windmill。
 ##
 ## 另注：postgres:18 的挂载点必须是 /var/lib/postgresql（父目录），不可改回
 ##       pre-18 的 /var/lib/postgresql/data，否则会静默生成空集群。
@@ -1127,7 +1127,7 @@ services:
     deploy:
       # 连共享 aibox base PG（不起本地独立 db）：
       #   aibox base start + aibox base createdb windmill
-      #   .env DATABASE_URL=postgres://aibox:aibox@aibox-base-pg:5432/windmill
+      #   .env DATABASE_URL=postgres://aibox:aibox@aibox-base-postgres:5432/windmill
       replicas: 0
     image: postgres:18
     shm_size: 1g
@@ -1381,8 +1381,8 @@ render_env() {
 
 # --- 数据库（连共享 aibox base PG，db replicas:0 不起本地 PG）----------------
 # 前置: aibox base start && aibox base createdb windmill
-# 凭据: AIBOX_BASE_PG_USER/AIBOX_BASE_PG_PASSWORD（默认 aibox/aibox）
-DATABASE_URL=postgres://${AIBOX_BASE_PG_USER:-aibox}:${AIBOX_BASE_PG_PASSWORD:-aibox}@aibox-base-pg:5432/windmill
+# 凭据: AIBOX_BASE_POSTGRES_USER/AIBOX_BASE_POSTGRES_PASSWORD（默认 aibox/aibox）
+DATABASE_URL=postgres://${AIBOX_BASE_POSTGRES_USER:-aibox}:${AIBOX_BASE_POSTGRES_PASSWORD:-aibox}@aibox-base-postgres:5432/windmill
 # POSTGRES_PASSWORD 保留供独立模式 db 卷初始化（共享模式 db replicas:0 不起本地 PG）
 POSTGRES_PASSWORD=${dbpass}
 
@@ -2252,7 +2252,7 @@ cmd_doctor() {
     chk "部署目录" 1 "${WM_DIR}（尚未部署）"
   fi
 
-  # 数据库：共享模式探 aibox-base-pg 的 pg_isready；独立模式探本地 db healthcheck。
+  # 数据库：共享模式探 aibox-base-postgres 的 pg_isready；独立模式探本地 db healthcheck。
   # 两者都收敛到 db_healthy()，doctor/status/upgrade/backup 共用同一判定。
   if db_healthy; then
     chk "数据库" 1 "$(shared_pg_active && printf '共享 %s' "${SHARED_PG_CONTAINER}" || printf '本地 db healthy')"

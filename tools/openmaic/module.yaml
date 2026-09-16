@@ -11,15 +11,13 @@ deps:
 
 ports:
   - 3000/tcp:app
-  - 5432/tcp:pg
+  - 5432/tcp:postgres
 
 files:
-  - lib.sh
   - openmaic
-  - install.sh
-  - uninstall.sh
-  - update.sh
-  - svc.sh
+
+services:
+  - base:postgres#openmaic
 
 hooks:
   install: install.sh
@@ -54,4 +52,6 @@ upstream:
   docs: https://github.com/THU-MAIC/OpenMAIC#readme
 
 dashboard:
-  hint: "凭据见 .env.local（API Key、访问密码）；endpoint http://127.0.0.1:3000"
+  endpoints:
+    - "http://127.0.0.1:${PORT}"
+  hint: "凭据见 .env.local；DATABASE_URL 由 shared.yml 用 ${AIBOX_POSTGRES_*} 构造（base.env 注入）"

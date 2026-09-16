@@ -42,7 +42,7 @@ windmill compose 的 db service 已改为 `replicas: 0 (hardcoded，连共享 PG
 2. 建库：`aibox base createdb windmill`
 3. windmill `.env` 配置：
    - `DB_REPLICAS=0`（不起本地 db）
-   - `DATABASE_URL=postgres://aibox:aibox@aibox-base-pg:5432/windmill`（容器经 aibox-base network 连共享 PG 服务名）
+   - `DATABASE_URL=postgres://aibox:aibox@aibox-base-postgres:5432/windmill`（容器经 aibox-base network 连共享 PG 服务名）
 4. compose 加 network：services 加 `networks: [default, aibox-base]`，底部加 `networks:` 段含 `aibox-base: external: true`
 5. depends_on db：`DB_REPLICAS=0` 时 db 不起，`depends_on` condition 改 `service_started` 或用 compose override 去掉
 
@@ -50,7 +50,7 @@ windmill compose 的 db service 已改为 `replicas: 0 (hardcoded，连共享 PG
 
 1. `windmill backup`（pg_dumpall 独立 cluster）
 2. `aibox base start` + `aibox base createdb windmill`
-3. 恢复：`cat cluster.sql | docker exec -i aibox-base-pg psql -U aibox`
+3. 恢复：`cat cluster.sql | docker exec -i aibox-base-postgres psql -U aibox`
 4. 改 `.env`（DB_REPLICAS=0 + DATABASE_URL 共享）+ `windmill up`
 5. 验证：`windmill status` + 数据可读写
 

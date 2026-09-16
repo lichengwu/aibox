@@ -38,14 +38,14 @@
 openmaic 的 DB 连接在 `.env.local`（`DATABASE_URL=postgres://openmaic:...`）。连共享 base PG
 **已由 CLI 驱动**（`OPENMAIC_SHARED_PG=1` 开启），不再需手工改上游 compose：
 
-1. 启共享 base：`aibox base start`（PG 35432，容器名 `aibox-base-pg`）
+1. 启共享 base：`aibox base start`（PG 35432，容器名 `aibox-base-postgres`）
 2. 开启共享模式：`/etc/openmaic/openmaic.conf` 写 `OPENMAIC_SHARED_PG=1`
    （或临时 `OPENMAIC_SHARED_PG=1 openmaic install`）
 3. `openmaic install` —— CLI 自动：
    - 落 `docker-compose.shared.yml` 到 `$APP_DIR`（`apply_local_patches` 内幂等生成）
    - `compose()` 调用自动 `-f` 追加该 override（up/install/upgrade/backup 等全生效）
-   - 若 `aibox-base-pg` 在跑，`CREATE DATABASE openmaic`（幂等；未跑则提示不阻断）
-   - override 用 `environment: DATABASE_URL=postgres://aibox:aibox@aibox-base-pg:5432/openmaic`
+   - 若 `aibox-base-postgres` 在跑，`CREATE DATABASE openmaic`（幂等；未跑则提示不阻断）
+   - override 用 `environment: DATABASE_URL=postgres://aibox:aibox@aibox-base-postgres:5432/openmaic`
      覆盖 `.env.local` 的 `DATABASE_URL`（environment 优先级高于 env_file），并给 `openmaic`
      service 加 `aibox-base` network；`postgres` service `replicas: 0` 不起本地 PG
 4. `.env.local` 仍需存在（放 `PERSISTENCE_DEV_TOKEN`、`QWEN_API_KEY`、`ACCESS_CODE` 等），
@@ -57,14 +57,14 @@ openmaic 的 DB 连接在 `.env.local`（`DATABASE_URL=postgres://openmaic:...`�
 **降级**（回独立 PG）：`OPENMAIC_SHARED_PG=0` 后 `openmaic up`（CLI 会删 override），
 或手工删 `$APP_DIR/docker-compose.shared.yml`。
 
-`openmaic doctor` 在共享模式下改查 `aibox-base-pg` 容器在跑 + override 在位；
-`openmaic backup/restore/db` 在共享模式下走 `docker exec aibox-base-pg pg_dump/psql`（不再找本地 postgres）。
+`openmaic doctor` 在共享模式下改查 `aibox-base-postgres` 容器在跑 + override 在位；
+`openmaic backup/restore/db` 在共享模式下走 `docker exec aibox-base-postgres pg_dump/psql`（不再找本地 postgres）。
 
 ### 存量数据迁移（独立 PG → 共享 PG）
 
 1. `openmaic backup`（pg_dump 独立 PG）
 2. `aibox base start` + `aibox base createdb openmaic`（或 `OPENMAIC_SHARED_PG=1 openmaic install` 自动建）
-3. 恢复：`gunzip -c <备份> | docker exec -i aibox-base-pg psql -U aibox -d openmaic`
+3. 恢复：`gunzip -c <备份> | docker exec -i aibox-base-postgres psql -U aibox -d openmaic`
    （等价于切到共享模式后 `openmaic restore <备份>`）
 4. `OPENMAIC_SHARED_PG=1 openmaic up` + 验证数据
 

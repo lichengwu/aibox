@@ -86,7 +86,8 @@ parse_yaml_module_stdin() {
       }
     }
     END { if (listkey!="") printvar(listkey,listval) }
-    function printvar(k,v) { printf "AIBOX_MODULE_%s=\"%s\"\n", k, v }
+    function esc(s,   r) { r=s; gsub(/\\/, "\\\\", r); gsub(/"/, "\\\"", r); gsub(/\$/, "\\$", r); gsub(/`/, "\\`", r); return r }
+    function printvar(k,v) { printf "AIBOX_MODULE_%s=\"%s\"\n", k, esc(v) }
     function stripq(s) {
       if (substr(s,1,1)=="\"" && substr(s,length(s),1)=="\"") return substr(s,2,length(s)-2)
       return s
@@ -167,7 +168,7 @@ installed_names() {
 
 # 下载模块脚本到本地缓存（结果写入 AIBOX_LAST_DEST）
 download_module() {
-  local name="$1" dir files f
+  local name="$1" dir files f extra dl
   load_registry
   module_exists "$name" || die "未知模块: ${name}（aibox list-available 查看可用模块）"
   dir="$(module_field "$name" dir)"
@@ -175,7 +176,12 @@ download_module() {
   [ -n "$dir" ] || die "模块 $name 缺少 dir 字段"
   AIBOX_LAST_DEST="$AIBOX_MOD_DIR/$name"
   mkdir -p "$AIBOX_LAST_DEST"
-  for f in $files; do
+  # 标准集（lib.sh/install.sh/uninstall.sh/update.sh/svc.sh）隐式下载；files 只列额外文件，union 去重
+  dl="lib.sh install.sh uninstall.sh update.sh svc.sh"
+  for extra in $files; do
+    case " $dl " in *" $extra "*) ;; *) dl="${dl:+$dl }$extra" ;; esac
+  done
+  for f in $dl; do
     log "  拉 $dir/$f"
     curl -fsSL "$AIBOX_RAW/$dir/$f" -o "$AIBOX_LAST_DEST/$f" || die "下载 $dir/$f 失败（确认分支/路径）"
     chmod +x "$AIBOX_LAST_DEST/$f" 2>/dev/null || true
@@ -954,7 +960,34 @@ cmd_install() {
     AIBOX_MODULE="$name" bash "$dest/$inst"
   fi
   mark_installed "$name" "$(module_field "$name" version)"
+  ensure_services "$name"
   log "已安装 $name ($(module_field "$name" version)) -> $dest"
+}
+
+# 处理模块的 services 依赖（module.yaml services 字段）：
+# 对 base:postgres#<db> → 确保 base 起动 + 写 base.env + 建库 <db>。best-effort，不阻断 install。
+ensure_services() {
+  local name="$1" svc db
+  local services; services="$(module_field "$name" services)"
+  [ -n "$services" ] || return 0
+  for svc in $services; do
+    case "$svc" in
+      base:postgres#*) ;;
+      *) continue ;;
+    esac
+    db="${svc#*#}"
+    if ! is_installed base; then
+      warn "模块 ${name} 依赖 base:postgres，但 base 未安装（先: aibox install base）"
+      continue
+    fi
+    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx aibox-base-postgres; then
+      log "  起动共享 base（${name} 依赖）..."
+      AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" start || { warn "base start 失败（aibox base start 手动起）"; continue; }
+    fi
+    log "  建库 ${db}（共享 PG）..."
+    AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" createdb "${db}" || warn "base createdb ${db} 失败（aibox base createdb ${db} 手动建）"
+  done
+  return 0
 }
 
 cmd_uninstall() {
@@ -1131,7 +1164,10 @@ cmd_module_action() {
   shift
   local action="${1:-}"
   if [ -z "$action" ]; then
-    echo "模块 ${name}。用法: aibox $name <action>"
+    load_registry
+    echo "模块 ${name}。用法: aibox ${name} <action>"
+    local acts; acts="$(module_field "${name}" actions)"
+    [ -n "$acts" ] && echo "可用动作: ${acts}"
     return
   fi
   shift

@@ -13,12 +13,11 @@ ports:
   - 8080/tcp:http
 
 files:
-  - lib.sh
   - windmill
-  - install.sh
-  - uninstall.sh
-  - update.sh
-  - svc.sh
+
+services:
+  - base:postgres#windmill
+  - base:redis
 
 hooks:
   install: install.sh
@@ -27,11 +26,10 @@ hooks:
   svc: svc.sh
 
 actions:
+  - start
+  - stop
+  - restart
   - status
-  - doctor
-  - version
-  - up
-  - down
   - logs
   - shell
   - credentials
@@ -52,4 +50,6 @@ upstream:
   docs: https://www.windmill.dev/docs/
 
 dashboard:
-  hint: "凭据见 CREDENTIALS.txt + .env（POSTGRES_PASSWORD），路径 apps/windmill/"
+  endpoints:
+    - "http://127.0.0.1:${PORT}"
+  hint: "凭据见 CREDENTIALS.txt + .env；DB 经 ${AIBOX_POSTGRES_HOST} 连共享 PG（base.env 注入）"

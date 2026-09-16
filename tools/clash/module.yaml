@@ -8,13 +8,6 @@ ports:
   - 7890/tcp:mixed
   - 9090/tcp:api
 
-files:
-  - lib.sh
-  - install.sh
-  - uninstall.sh
-  - update.sh
-  - svc.sh
-
 hooks:
   install: install.sh
   uninstall: uninstall.sh
@@ -38,4 +31,6 @@ upstream:
   docs: https://wiki.metacubex.one/
 
 dashboard:
+  endpoints:
+    - "mixed: socks5://127.0.0.1:7890  api: http://127.0.0.1:9090"
   hint: "出口 socks5://127.0.0.1:7890；API 127.0.0.1:9090（state CLASH_SECRET）"

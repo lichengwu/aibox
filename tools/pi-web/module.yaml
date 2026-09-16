@@ -11,13 +11,6 @@ deps:
 ports:
   - 30141/tcp:http
 
-files:
-  - lib.sh
-  - install.sh
-  - uninstall.sh
-  - update.sh
-  - svc.sh
-
 hooks:
   install: install.sh
   uninstall: uninstall.sh
@@ -40,5 +33,5 @@ upstream:
 
 dashboard:
   endpoints:
-    - "http://127.0.0.1:30141"
+    - "http://127.0.0.1:${PORT}"
   hint: "用户名 pi / 密码见 aibox pi-web status（plist PI_WEB_PASSWORD）"

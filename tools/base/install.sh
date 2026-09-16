@@ -12,4 +12,4 @@ log "compose 已放置: ${COMPOSE_FILE}"
 echo
 log "启动: aibox base start"
 log "建库: aibox base createdb <module> [用途]"
-log "各部署型模块连共享 PG（network aibox-base + env 指向 127.0.0.1:${PG_PORT}）"
+log "各部署型模块连共享 PG（network aibox-base + 经 ${AIBOX_HOME}/base.env 注入连接信息）"

@@ -8,16 +8,15 @@ deps:
   - docker
   - docker-compose
 
+provides:
+  - postgres
+  - redis
+
 ports:
-  - 35432/tcp:pg
+  - 35432/tcp:postgres
   - 36379/tcp:redis
 
 files:
-  - lib.sh
-  - install.sh
-  - uninstall.sh
-  - update.sh
-  - svc.sh
   - docker-compose.yml
 
 hooks:
@@ -38,4 +37,6 @@ upstream:
   docs: https://www.postgresql.org/docs/
 
 dashboard:
-  hint: "共享 PG 5432 / Redis 36379；aibox base createdb 模块名 建库"
+  endpoints:
+    - "postgres: postgres://127.0.0.1:35432  redis: redis://127.0.0.1:36379"
+  hint: "aibox base createdb <module> 建库；连接信息见 $AIBOX_HOME/base.env"

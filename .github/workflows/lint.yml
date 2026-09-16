@@ -79,27 +79,95 @@ jobs:
         run: |
           sudo wget -qO/usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
-      - name: 校验 module.yaml（必填字段 + 子集合规 + ports 格式）
+      - name: 校验 module.yaml（必填 + §2.2 子集 + ports + files + lifecycle + dashboard + 全名）
         run: |
           set -e
           fail=0
           for f in tools/*/module.yaml; do
             [ -f "$f" ] || continue
+            name="$(yq '.name' "$f")"
             # 必填字段
             for key in name version description dir; do
               yq -e ".$key" "$f" >/dev/null 2>&1 || { echo "::error file=$f::缺必填字段 $key"; fail=1; }
             done
             yq -e '.hooks.install' "$f" >/dev/null 2>&1 || { echo "::error file=$f::缺 hooks.install"; fail=1; }
-            # §2.2 子集合规：无锚点/引用(&/*)、无多行(|/>)、无流式({}/[])
-            if grep -nE '[&*]|\| |>|\{|\}|\[|\]' "$f" | grep -vE '^[0-9]+:[[:space:]]*#'; then
+            # §2.2 子集合规：无锚点/引用(&/*)、无多行(|/>)、无流式({}/[])；${...} 在引号串里是标量值，不算流式
+            if grep -nE '[&*]|\| |>|\{|\}|\[|\]' "$f" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -vE '\$\{[^}]*\}'; then
               echo "::error file=$f::含 §2.2 禁止的 YAML 语法（锚点/多行/流式），awk 解析器不支持"; fail=1
             fi
             # ports 格式：端口/协议:用途
             for p in $(yq -o=ts '.ports[]' "$f" 2>/dev/null || true); do
               echo "$p" | grep -qE '^[0-9]+/(tcp|udp):' || { echo "::error file=$f::ports 格式错（应为 端口/协议:用途）: $p"; fail=1; }
             done
+            # files：列出的额外文件必须存在于 tools/<name>/
+            for ff in $(yq -o=ts '.files[]' "$f" 2>/dev/null || true); do
+              [ -f "tools/$name/$ff" ] || { echo "::error file=$f::files 列出但仓库不存在: $ff"; fail=1; }
+            done
+            # lifecycle：含 start 的模块须含全 lifecycle 集（start/stop/restart/status/logs）
+            if yq -o=ts '.actions[]' "$f" 2>/dev/null | grep -qx start; then
+              for a in start stop restart status logs; do
+                yq -o=ts '.actions[]' "$f" 2>/dev/null | grep -qx "$a" || { echo "::error file=$f::服务型模块（含 start）缺 lifecycle 动作: $a"; fail=1; }
+              done
+            fi
+            # dashboard：只允许 endpoints + hint 子字段
+            while IFS= read -r k; do
+              [ -z "$k" ] && continue
+              case "$k" in endpoints|hint) ;; *) echo "::error file=$f::dashboard 只允许 endpoints/hint，出现: $k"; fail=1;; esac
+            done < <(yq '.dashboard' "$f" 2>/dev/null | grep -E '^[a-z_-]+:' | sed -E 's/^([a-z_-]+):.*/\1/')
+            # services/provides：component 名须全名白名单
+            for c in $(yq -o=ts '.services[]' "$f" 2>/dev/null | sed -E 's/^[^:]*://; s/#.*//' || true) \
+                     $(yq -o=ts '.provides[]' "$f" 2>/dev/null || true); do
+              case "$c" in postgres|redis) ;; *) echo "::error file=$f::component 须全名白名单 (postgres|redis)，出现: $c"; fail=1;; esac
+            done
             echo "  ok: $f"
           done
+          exit $fail
+
+  deps-lint:
+    name: deps-lint (services/provides + 禁硬编码凭据)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install yq
+        run: |
+          sudo wget -qO/usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+      - name: services/provides 校验 + 禁硬编码凭据
+        run: |
+          set -e
+          fail=0
+          # 1. 禁硬编码凭据：tools/*/docker-compose*.yml（base 除外）不得出现 aibox:aibox@ / postgres://aibox:
+          while IFS= read -r line; do
+            echo "::error file=${line%%:*}::compose 禁硬编码凭据（须用 \${AIBOX_POSTGRES_*} 经 base.env 注入）: ${line}"
+            fail=1
+          done < <(grep -rnE 'aibox:aibox@|postgres://aibox:' tools/*/docker-compose*.yml 2>/dev/null | grep -v 'tools/base/' || true)
+          # 2. services provider/component 必须命中某 provider 的 provides；dbname 须为 <module> 或 <module>_<用途>
+          declare -A provides
+          for f in tools/*/module.yaml; do
+            [ -f "$f" ] || continue
+            m=$(yq '.name' "$f")
+            for c in $(yq -o=ts '.provides[]' "$f" 2>/dev/null || true); do
+              provides["${m}:${c}"]=1
+            done
+          done
+          for f in tools/*/module.yaml; do
+            [ -f "$f" ] || continue
+            m=$(yq '.name' "$f")
+            for svc in $(yq -o=ts '.services[]' "$f" 2>/dev/null || true); do
+              provider="${svc%%:*}"
+              rest="${svc#*:}"
+              component="${rest%%#*}"
+              case "$svc" in *'#'*) db="${rest#*#}";; *) db="";; esac
+              [ -n "${provides["${provider}:${component}"]:-}" ] || { echo "::error file=$f::services ${svc} 未命中 provider ${provider} 的 provides ${component}"; fail=1; }
+              if [ -n "$db" ]; then
+                case "$db" in
+                  "$m"|"$m"_*) ;;
+                  *) echo "::error file=$f::services dbname 须为 ${m} 或 ${m}_<用途>，实际: $db"; fail=1;;
+                esac
+              fi
+            done
+          done
+          [ $fail -eq 0 ] && echo "✅ deps-lint 通过"
           exit $fail
 
   port-conflict:
