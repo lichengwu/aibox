@@ -96,11 +96,25 @@ parse_yaml_module_stdin() {
 
 # ---------- registry ----------
 load_registry() {
-  local reg m mu yaml
+  local m mu yaml f
+  AIBOX_MODULES=""
+  # 本地源（file://）：扫 tools/*/module.yaml 自动发现模块（spec §2.1，不依赖 registry.sh）
+  if [ "${AIBOX_RAW#file://}" != "$AIBOX_RAW" ]; then
+    local repo_dir="${AIBOX_RAW#file://}"
+    for f in "$repo_dir"/tools/*/module.yaml; do
+      [ -f "$f" ] || continue
+      m="$(awk -F': *' '/^name:/{gsub(/"/,"",$2); print $2; exit}' "$f")"
+      [ -n "$m" ] || continue
+      AIBOX_MODULES="${AIBOX_MODULES:+$AIBOX_MODULES }$m"
+      mu="${m//-/_}"
+      eval "$(parse_yaml_module_stdin "$mu" < "$f")"
+    done
+    return
+  fi
+  # 远程源：registry.sh 列模块名（远程不能 glob 目录，registry.sh 作索引）
+  local reg
   reg="$(curl -fsSL "$AIBOX_RAW/registry.sh" 2>/dev/null)" || die "拉取 registry 失败：$AIBOX_RAW/registry.sh"
   eval "$reg"
-  # registry.sh 只列模块名（AIBOX_MODULES）；字段从各模块的 module.yaml 解析注入
-  # 模块名连字符转下划线作变量名（pi-web → pi_web），路径仍用连字符 curl
   for m in ${AIBOX_MODULES:-}; do
     mu="${m//-/_}"
     yaml="$(curl -fsSL "$AIBOX_RAW/tools/$m/module.yaml" 2>/dev/null)" || { warn "拉 $m module.yaml 失败（确认模块已发布）"; continue; }
