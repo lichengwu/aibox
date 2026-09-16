@@ -405,7 +405,7 @@ ensure_shared_pg_override() {
   else
     if [ -f "$SHARED_OVERRIDE" ]; then
       if [ "$DRY_RUN" = 1 ]; then
-        dim "  [dry-run] 将移除 $SHARED_OVERRIDE（OPENMAIC_SHARED_PG=0，回独立 PG）"
+        dim "  [dry-run] 将移除 ${SHARED_OVERRIDE}（OPENMAIC_SHARED_PG=0，回独立 PG）"
       else
         rm -f "$SHARED_OVERRIDE"
         ok "已移除共享 PG override（OPENMAIC_SHARED_PG=0，回独立 PG）"
@@ -463,7 +463,7 @@ networks:
   aibox-base:
     external: true
 OVERRIDE
-  ok "共享 PG override 已就位（$SHARED_OVERRIDE）"
+  ok "共享 PG override 已就位（${SHARED_OVERRIDE}）"
 }
 
 # 在共享 aibox base PG 上建 openmaic 库（幂等）。install 时调用；base 未跑则提示不阻断。

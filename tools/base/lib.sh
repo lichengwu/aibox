@@ -5,7 +5,10 @@ CLI_NAME="base"
 
 # 部署根（module-spec 部署型约定）
 base_deploy_root() {
-  if [ -n "${BASE_DIR:-}" ]; then printf '%s' "${BASE_DIR}"; return 0; fi
+  if [ -n "${BASE_DIR:-}" ]; then
+    printf '%s' "${BASE_DIR}"
+    return 0
+  fi
   local b="${AIBOX_APPS_ROOT:-}"
   if [ -z "$b" ]; then
     b="${AIBOX_HOME:-${HOME:+${HOME}/.aibox}}/apps"
@@ -21,9 +24,12 @@ PG_PASSWORD="${AIBOX_BASE_PG_PASSWORD:-aibox}"
 REDIS_HOST="127.0.0.1"
 REDIS_PORT="${AIBOX_BASE_REDIS_PORT:-36379}"
 
-log()  { printf '\033[36m[base]\033[0m %s\n' "${*}"; }
+log() { printf '\033[36m[base]\033[0m %s\n' "${*}"; }
 warn() { printf '\033[33m[!]\033[0m %s\n' "${*}" >&2; }
-die()  { printf '\033[31m[x]\033[0m %s\n' "${*}" >&2; exit 1; }
+die() {
+  printf '\033[31m[x]\033[0m %s\n' "${*}" >&2
+  exit 1
+}
 
 # docker compose 包装（-f 指定 compose 文件）
 compose() {
@@ -70,8 +76,8 @@ cmd_createdb() {
     log "数据库 ${dbname} 已存在（共享 PG ${PG_HOST}:${PG_PORT}）"
     return 0
   fi
-  docker exec aibox-base-pg psql -U "$PG_USER" -c "CREATE DATABASE \"${dbname}\";" >/dev/null 2>&1 \
-    || die "创建数据库 ${dbname} 失败（PG 未启动？aibox base start）"
+  docker exec aibox-base-pg psql -U "$PG_USER" -c "CREATE DATABASE \"${dbname}\";" >/dev/null 2>&1 ||
+    die "创建数据库 ${dbname} 失败（PG 未启动？aibox base start）"
   log "数据库 ${dbname} 就绪（共享 PG ${PG_HOST}:${PG_PORT}）"
 }
 

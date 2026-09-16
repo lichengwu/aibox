@@ -23,7 +23,11 @@ if [ "$OS_KIND" = "Darwin" ]; then
 else
   log "enable $LABEL ..."
   loginctl enable-linger "${UID_}" 2>/dev/null || warn "enable-linger 失败（用户登出后服务会停）"
-  systemctl --user enable --now "$LABEL" || { warn "enable 失败"; warn "诊断: aibox pi-web diagnose"; exit 1; }
+  systemctl --user enable --now "$LABEL" || {
+    warn "enable 失败"
+    warn "诊断: aibox pi-web diagnose"
+    exit 1
+  }
 fi
 sleep 3
 show_status
