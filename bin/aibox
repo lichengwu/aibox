@@ -111,13 +111,15 @@ load_registry() {
     done
     return
   fi
-  # 远程源：registry.sh 列模块名（远程不能 glob 目录，registry.sh 作索引）
-  local reg
-  reg="$(curl -fsSL "$AIBOX_RAW/registry.sh" 2>/dev/null)" || die "拉取 registry 失败：$AIBOX_RAW/registry.sh"
-  eval "$reg"
-  for m in ${AIBOX_MODULES:-}; do
+  # 远程源（GitHub raw）：GitHub API 列 tools/ 目录（删 registry.sh，不留兼容）
+  local api_json d
+  api_json="$(curl -fsSL "https://api.github.com/repos/${AIBOX_REPO}/contents/tools" 2>/dev/null)" || die "拉取模块列表失败（GitHub API：${AIBOX_REPO}/tools；或用 file:// 本地源）"
+  for d in $(printf '%s\n' "$api_json" | awk -F'"' '/"name":/{print $4}'); do
+    yaml="$(curl -fsSL "$AIBOX_RAW/tools/$d/module.yaml" 2>/dev/null)" || continue
+    m="$(printf '%s\n' "$yaml" | awk -F': *' '/^name:/{gsub(/"/,"",$2); print $2; exit}')"
+    [ -n "$m" ] || continue
+    AIBOX_MODULES="${AIBOX_MODULES:+$AIBOX_MODULES }$m"
     mu="${m//-/_}"
-    yaml="$(curl -fsSL "$AIBOX_RAW/tools/$m/module.yaml" 2>/dev/null)" || { warn "拉 $m module.yaml 失败（确认模块已发布）"; continue; }
     eval "$(printf '%s\n' "$yaml" | parse_yaml_module_stdin "$mu")"
   done
 }
