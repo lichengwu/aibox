@@ -1,0 +1,15 @@
+# Default owner for everything not matched below
+*           @lichengwu
+
+# Core manager + bootstrap + CI
+/bin/aibox          @lichengwu
+/install.sh         @lichengwu
+/.github/           @lichengwu
+/docs/              @lichengwu
+
+# Modules — each module dir is owned by the maintainer; add reviewers per-module as the project grows
+/tools/pi-web/      @lichengwu
+/tools/openmaic/    @lichengwu
+/tools/windmill/    @lichengwu
+/tools/clash/       @lichengwu
+/tools/base/        @lichengwu

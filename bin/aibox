@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# aibox — AI coding 工具集模块管理器
-# 仓库: https://github.com/lichengwu/aibox
+# aibox — a lightweight, zero-dependency module manager for AI coding toolkits
+# Repo: https://github.com/lichengwu/aibox
 #
-# 用法:
-#   aibox install <module>          安装模块
-#   aibox uninstall <module>        卸载模块
-#   aibox update <module> [--restart|--no-restart] [--all] | --all   更新模块
-#   aibox list                      已安装模块
-#   aibox list-available            可用模块
-#   aibox <module> <action> [args]  调用模块服务动作（如 aibox pi-web start）
+# Usage:
+#   aibox install <module>            install a module
+#   aibox uninstall <module>          uninstall a module
+#   aibox update <module> [--restart|--no-restart] [--all] | --all   update modules
+#   aibox list                        list installed modules
+#   aibox list-available             list available modules
+#   aibox <module> <action> [args]   invoke a module service action (e.g. aibox pi-web start)
 #   aibox self {update|uninstall|version}
 #   aibox help
 set -euo pipefail
@@ -20,29 +20,35 @@ AIBOX_HOME="${AIBOX_HOME:-$HOME/.aibox}"
 AIBOX_MOD_DIR="$AIBOX_HOME/modules"
 AIBOX_INSTALLED="$AIBOX_HOME/installed.sh"
 AIBOX_BIN_DIR="${AIBOX_BIN_DIR:-$HOME/.local/bin}"
-AIBOX_VERSION="0.3.1"
+AIBOX_VERSION="0.4.0"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 
-# ---------- 代理 ----------
-# 配置存于 $AIBOX_HOME/config（KEY=VALUE，权限 600，可手动编辑）。
-# 生效范围：aibox 自身 + 它派生的模块钩子（靠环境变量继承）。
-# 不覆盖：Docker daemon 的 pull、以及已在运行的其他进程 —— 环境变量改不了它们。
+# Registry cache (avoids hitting the unauthenticated GitHub API on every call;
+# the 60 req/hour/IP limit bites users behind shared NAT). TTL in seconds.
+AIBOX_REGISTRY_CACHE="${AIBOX_REGISTRY_CACHE:-$AIBOX_HOME/registry.cache}"
+AIBOX_REGISTRY_TTL="${AIBOX_REGISTRY_TTL:-3600}"
+
+# ---------- proxy ----------
+# Config lives at $AIBOX_HOME/config (KEY=VALUE, mode 600, hand-editable).
+# Scope: aibox itself + the module hooks it spawns (via inherited env vars).
+# Not overridden: Docker daemon pulls, and other already-running processes —
+# env vars cannot reach them.
 AIBOX_PROXY_URL=""
 AIBOX_PROXY_ENABLED="1"
 AIBOX_NO_PROXY_DEFAULT="localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,.local"
 AIBOX_NO_PROXY="$AIBOX_NO_PROXY_DEFAULT"
 AIBOX_PROXY_SOURCE=""
 PROBE_CONFIRMED=0
-# 代理自检目标：就用 aibox 真正要访问的那个文件，测别的没意义
+# Probe target: use the very file aibox actually fetches — testing anything else is meaningless.
 case "$AIBOX_RAW" in
   file://*) PROBE_TARGET="https://raw.githubusercontent.com/${AIBOX_REPO}/${AIBOX_BRANCH}/install.sh" ;;
   *)        PROBE_TARGET="$AIBOX_RAW/install.sh" ;;
 esac
 
-# 注入给模块钩子（钩子契约见 docs/module-spec.md）。
-# 此前只在文档里写了会注入，实际只注入了 AIBOX_MODULE；这里补齐。
-# AIBOX_BIN_DIR 一并导出，模块才能把东西装到与主 CLI 相同的目录。
+# Injected into module hooks (hook contract: docs/module-spec.md).
+# Previously only documented as injected; actually only AIBOX_MODULE was. Fixed.
+# AIBOX_BIN_DIR is exported so modules install into the same dir as the main CLI.
 export AIBOX_HOME AIBOX_RAW AIBOX_BIN_DIR
 
 log()  { printf '\033[36m[aibox]\033[0m %s\n' "$*"; }
@@ -52,9 +58,9 @@ ok()   { printf '\033[32m[ok]\033[0m %s\n' "$*"; }
 bad()  { printf '\033[31m[!!]\033[0m %s\n' "$*"; }
 info() { printf '       %s\n' "$*"; }
 
-# 从 stdin 解析 module.yaml 子集（§2.2），输出 eval-able 的 AIBOX_MODULE_<name>_* 赋值。
-# 兼容 BSD awk（index/substr/sub，无捕获组，bash 3.2 的 nawk 可跑）。
-# $1=模块名。标量→AIBOX_MODULE_<name>_<key>；列表→空格分隔；嵌套→<parent>_<subkey>。
+# Parse a module.yaml subset (§2.2) from stdin into eval-able AIBOX_MODULE_<name>_* assignments.
+# BSD awk compatible (index/substr/sub, no capture groups; runs on bash 3.2's nawk).
+# $1=module name. Scalars -> AIBOX_MODULE_<name>_<key>; lists -> space-joined; nested -> <parent>_<subkey>.
 parse_yaml_module_stdin() {
   awk -v NAME="$1" '
     BEGIN { parent=""; subparent=""; listkey=""; listval="" }
@@ -80,7 +86,7 @@ parse_yaml_module_stdin() {
           if (v=="") parent=k; else printvar(NAME"_"k, stripq(v))
         } else {
           if (v=="") subparent=k
-          else if (parent=="hooks") printvar(NAME"_"k, stripq(v))  # hooks.install → _install（兼容 module_field）
+          else if (parent=="hooks") printvar(NAME"_"k, stripq(v))  # hooks.install -> _install (module_field compat)
           else if (parent!="") printvar(NAME"_"parent"_"k, stripq(v))
         }
       }
@@ -95,13 +101,31 @@ parse_yaml_module_stdin() {
   '
 }
 
+# Is the registry cache fresh (mtime within TTL)? Returns 0 if fresh, 1 if stale/missing.
+# Extracted so tests can exercise the staleness logic directly.
+_cache_fresh() {
+  local f="$1" now mtime age
+  [ -f "$f" ] || return 1
+  now="$(date +%s)"
+  mtime="$(date -r "$f" +%s 2>/dev/null || stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)"
+  age=$((now - ${mtime:-0}))
+  [ "$age" -lt "${AIBOX_REGISTRY_TTL:-3600}" ]
+}
+
 # ---------- registry ----------
+# load_registry populates AIBOX_MODULES and AIBOX_MODULE_<name>_* in the current process.
+# Local (file://) source: scan tools/*/module.yaml directly (spec §2.1, no registry.sh).
+# Remote (GitHub raw) source: GitHub API lists tools/ dirs, fetches each module.yaml.
+#   Result is cached to $AIBOX_REGISTRY_CACHE with a TTL to dodge the unauthenticated
+#   GitHub API rate limit (60 req/hour/IP). Cache holds only AIBOX_MODULE_* assignments
+#   (the same content that would be eval'd anyway), mode 600.
 load_registry() {
   local m mu yaml f
-  AIBOX_MODULES=""
-  # 本地源（file://）：扫 tools/*/module.yaml 自动发现模块（spec §2.1，不依赖 registry.sh）
+
+  # Local source: no cache (always fresh, reads the working tree).
   if [ "${AIBOX_RAW#file://}" != "$AIBOX_RAW" ]; then
     local repo_dir="${AIBOX_RAW#file://}"
+    AIBOX_MODULES=""
     for f in "$repo_dir"/tools/*/module.yaml; do
       [ -f "$f" ] || continue
       m="$(awk -F': *' '/^name:/{gsub(/"/,"",$2); print $2; exit}' "$f")"
@@ -112,20 +136,53 @@ load_registry() {
     done
     return
   fi
-  # 远程源（GitHub raw）：GitHub API 列 tools/ 目录（删 registry.sh，不留兼容）
-  local api_json d
-  api_json="$(curl -fsSL "https://api.github.com/repos/${AIBOX_REPO}/contents/tools" 2>/dev/null)" || die "拉取模块列表失败（GitHub API：${AIBOX_REPO}/tools；或用 file:// 本地源）"
+
+  # Remote source: serve from cache when fresh.
+  if _cache_fresh "$AIBOX_REGISTRY_CACHE"; then
+    # shellcheck disable=SC1090
+    . "$AIBOX_REGISTRY_CACHE" 2>/dev/null || { rm -f "$AIBOX_REGISTRY_CACHE"; _load_registry_remote; return; }
+    # Verify the cache actually produced a module list; otherwise refresh.
+    [ -n "${AIBOX_MODULES:-}" ] && return
+  fi
+
+  _load_registry_remote
+}
+
+# Remote fetch + cache write. Extracted so the cache-hit-fallback path can call it.
+_load_registry_remote() {
+  local m mu yaml d api_json
+  AIBOX_MODULES=""
+  api_json="$(curl -fsSL "https://api.github.com/repos/${AIBOX_REPO}/contents/tools" 2>/dev/null)" \
+    || die "Failed to fetch module list (GitHub API: ${AIBOX_REPO}/tools; or use a file:// local source)"
+  local _body_tmp="$AIBOX_REGISTRY_CACHE.body.tmp"
+  local _out_tmp="$AIBOX_REGISTRY_CACHE.out.tmp"
+  local _old_umask; _old_umask=$(umask); umask 077
+  : > "$_body_tmp"
   for d in $(printf '%s\n' "$api_json" | awk -F'"' '/"name":/{print $4}'); do
     yaml="$(curl -fsSL "$AIBOX_RAW/tools/$d/module.yaml" 2>/dev/null)" || continue
     m="$(printf '%s\n' "$yaml" | awk -F': *' '/^name:/{gsub(/"/,"",$2); print $2; exit}')"
     [ -n "$m" ] || continue
     AIBOX_MODULES="${AIBOX_MODULES:+$AIBOX_MODULES }$m"
     mu="${m//-/_}"
-    eval "$(printf '%s\n' "$yaml" | parse_yaml_module_stdin "$mu")"
+    printf '%s\n' "$(printf '%s\n' "$yaml" | parse_yaml_module_stdin "$mu")" >> "$_body_tmp"
   done
+  # Persist cache atomically (write to temp, then mv). umask 077 + explicit chmod 600;
+  # contains only module metadata, no secrets.
+  mkdir -p "$(dirname "$AIBOX_REGISTRY_CACHE")"
+  {
+    printf 'AIBOX_MODULES="%s"\n' "$AIBOX_MODULES"
+    cat "$_body_tmp"
+  } > "$_out_tmp"
+  mv "$_out_tmp" "$AIBOX_REGISTRY_CACHE"
+  chmod 600 "$AIBOX_REGISTRY_CACHE" 2>/dev/null || true
+  umask "$_old_umask"
+  rm -f "$_body_tmp" "$_out_tmp"
+  # Eval the same assignments into this process.
+  # shellcheck disable=SC1090
+  . "$AIBOX_REGISTRY_CACHE" 2>/dev/null || true
 }
 
-# 读模块字段：module_field <name> <field> —— 依赖已 load_registry
+# Read a module field: module_field <name> <field> — requires load_registry already done.
 module_field() {
   local key="AIBOX_MODULE_${1//-/_}_${2}"
   eval "printf '%s' \"\${${key}:-}\""
@@ -137,10 +194,10 @@ module_exists() {
   return 1
 }
 
-# 把模块名归一化为 installed 变量键（pi-web -> pi_web）
+# Normalize a module name to the installed-state variable key (pi-web -> pi_web).
 _ikey() { printf 'AIBOX_INSTALLED_%s' "${1//-/_}"; }
 
-# ---------- installed 状态（文件存储，纯变量，无需 source）----------
+# ---------- installed state (file-backed, plain vars, no source needed) ----------
 is_installed() {
   [ -f "$AIBOX_INSTALLED" ] || return 1
   grep -q "^$(_ikey "$1")=" "$AIBOX_INSTALLED"
@@ -166,34 +223,35 @@ installed_names() {
     | sed -E 's/^AIBOX_INSTALLED_//; s/=$//' | tr '_' '-'
 }
 
-# 下载模块脚本到本地缓存（结果写入 AIBOX_LAST_DEST）
+# Download module scripts to the local cache (result path in AIBOX_LAST_DEST).
 download_module() {
   local name="$1" dir files f extra dl
   load_registry
-  module_exists "$name" || die "未知模块: ${name}（aibox list-available 查看可用模块）"
+  module_exists "$name" || die "Unknown module: ${name} (aibox list-available shows available modules)"
   dir="$(module_field "$name" dir)"
   files="$(module_field "$name" files)"
-  [ -n "$dir" ] || die "模块 $name 缺少 dir 字段"
+  [ -n "$dir" ] || die "Module $name is missing the dir field"
   AIBOX_LAST_DEST="$AIBOX_MOD_DIR/$name"
   mkdir -p "$AIBOX_LAST_DEST"
-  # 标准集（lib.sh/install.sh/uninstall.sh/update.sh/svc.sh）隐式下载；files 只列额外文件，union 去重
+  # Standard set (lib.sh/install.sh/uninstall.sh/update.sh/svc.sh) is implicitly downloaded;
+  # files only lists extras; union dedup.
   dl="lib.sh install.sh uninstall.sh update.sh svc.sh"
   for extra in $files; do
     case " $dl " in *" $extra "*) ;; *) dl="${dl:+$dl }$extra" ;; esac
   done
   for f in $dl; do
-    log "  拉 $dir/$f"
-    curl -fsSL "$AIBOX_RAW/$dir/$f" -o "$AIBOX_LAST_DEST/$f" || die "下载 $dir/$f 失败（确认分支/路径）"
+    log "  fetch $dir/$f"
+    curl -fsSL "$AIBOX_RAW/$dir/$f" -o "$AIBOX_LAST_DEST/$f" || die "Download $dir/$f failed (check branch/path)"
     chmod +x "$AIBOX_LAST_DEST/$f" 2>/dev/null || true
   done
 }
 
-# ---------- 配置读写 ----------
+# ---------- config read/write ----------
 load_config() {
   [ -f "$AIBOX_CONFIG" ] || return 0
-  # 配置文件由 aibox proxy 维护，纯 KEY=VALUE；解析失败不致命
+  # Config is maintained by `aibox proxy`, plain KEY=VALUE; parse failure is non-fatal.
   # shellcheck disable=SC1090
-  . "$AIBOX_CONFIG" 2>/dev/null || warn "配置文件无法解析，已忽略：$AIBOX_CONFIG"
+  . "$AIBOX_CONFIG" 2>/dev/null || warn "Config file unparseable, ignored: $AIBOX_CONFIG"
   [ -n "${AIBOX_NO_PROXY:-}" ] || AIBOX_NO_PROXY="$AIBOX_NO_PROXY_DEFAULT"
   return 0
 }
@@ -204,28 +262,28 @@ save_config() {
   old_umask=$(umask)
   umask 077
   cat >"$AIBOX_CONFIG" <<EOF
-# aibox 配置文件 —— 由 aibox proxy 命令维护，也可手动编辑。
-# 可能含代理凭据，故权限保持 600。
+# aibox config — maintained by `aibox proxy`, also hand-editable.
+# May contain proxy credentials, hence mode 600.
 
-# 代理 URL（支持 http:// https:// socks5:// socks5h://）
+# Proxy URL (supports http:// https:// socks5:// socks5h://)
 AIBOX_PROXY_URL="$AIBOX_PROXY_URL"
 
-# 1=启用 / 0=停用（停用时配置保留）
+# 1=enabled / 0=disabled (config retained when disabled)
 AIBOX_PROXY_ENABLED="$AIBOX_PROXY_ENABLED"
 
-# 不走代理的地址，逗号分隔
+# Addresses that bypass the proxy, comma-separated
 AIBOX_NO_PROXY="$AIBOX_NO_PROXY"
 EOF
   umask "$old_umask"
   chmod 600 "$AIBOX_CONFIG"
 }
 
-# 脱敏：http://user:pass@host:port -> http://user:***@host:port
+# Redact: http://user:pass@host:port -> http://user:***@host:port
 mask_url() {
   printf '%s' "$1" | sed -E 's#(://[^:/@]+):[^@]*@#\1:***@#'
 }
 
-# 补全 scheme：允许只写 host:port
+# Complete scheme: allow bare host:port.
 normalize_proxy_url() {
   case "${1:-}" in
     "")    printf '' ;;
@@ -234,9 +292,10 @@ normalize_proxy_url() {
   esac
 }
 
-# 探测代理是否真的生效。判定用 %{proxy_used}，不能只看 HTTP 状态码 ——
-# 在能直连的网络里，200 是直连给的，只看状态码必然假阳性。
-# 结果同时写入 PROBE_CONFIRMED（1=已确认流量确实过代理）。
+# Probe whether the proxy is actually in effect. Judge by %{proxy_used}, not just
+# the HTTP status — on a directly-reachable network the 200 comes from the direct
+# connection, so status-only checks are always false positives.
+# Result also written to PROBE_CONFIRMED (1=traffic confirmed going through the proxy).
 proxy_probe() {
   local url="$1" target="${2:-$PROBE_TARGET}" out code used
   out=$(curl -s --max-time 15 -x "$url" -o /dev/null \
@@ -249,10 +308,11 @@ proxy_probe() {
   return 0
 }
 
-# 交互确认；非交互环境一律视为拒绝，避免脚本里静默执行
+# Interactive confirmation; non-interactive environments always decline (refuse),
+# so scripts can't silently proceed.
 ask_confirm() {
   [ -t 0 ] || {
-    warn "非交互环境，按放弃处理"
+    warn "Non-interactive environment, declining"
     return 1
   }
   local ans
@@ -261,9 +321,10 @@ ask_confirm() {
   case "$ans" in y | Y | yes | YES) return 0 ;; *) return 1 ;; esac
 }
 
-# 检测本地 clash 池（mihomo）是否启用。读 apps/clash/state 的 CLASH_ENABLED，
-# 不 probe 端口（避免每次 aibox 命令的延迟）；mihomo 挂了 curl 会失败，
-# clash status 能查。state 由 aibox clash on/off 维护。
+# Detect whether the local clash pool (mihomo) is enabled. Reads apps/clash/state's
+# CLASH_ENABLED; does not probe the port (avoids slowing every aibox command); if
+# mihomo is down curl will fail — `clash status` shows that. state is maintained by
+# `aibox clash on/off`.
 CLASH_PORT="7890"
 clash_active() {
   local st="${AIBOX_HOME}/apps/clash/state"
@@ -275,12 +336,12 @@ clash_active() {
   return 0
 }
 
-# 把生效中的代理导出为环境变量，供本进程与模块钩子使用。
-# 小写大写都要给：curl 只认小写的 http_proxy（大写 HTTP_PROXY 会被它忽略），
-# 而 apt 之类只认大写 —— 实测两者认的集合不同。
-# 无论代理来自配置还是环境，都汇总到 AIBOX_PROXY_URL 一个出口，
-# 模块就不必去猜该读哪个标准变量名。
-# 优先级：本地 clash 池（mihomo）> 静态代理 > 直连。
+# Export the effective proxy as env vars, for this process and the module hooks it spawns.
+# Both lowercase and uppercase: curl only honors lowercase http_proxy (uppercase
+# HTTP_PROXY is ignored by it), while apt-style tools only honor uppercase — in practice
+# the two sets differ. Whatever the source (config or env), everything is unified to a
+# single AIBOX_PROXY_URL outlet, so modules needn't guess which standard var to read.
+# Priority: local clash pool (mihomo) > static proxy > direct.
 apply_proxy() {
   local eff="" no_p="$AIBOX_NO_PROXY"
 
@@ -291,10 +352,10 @@ apply_proxy() {
     export no_proxy="$no_p" NO_PROXY="$no_p"
     AIBOX_PROXY_SOURCE="clash"
     AIBOX_PROXY_ENABLED=1
-    return 0   # 不覆盖 AIBOX_PROXY_URL：保留静态代理值供 clash off 回退 + proxy show 显示
+    return 0   # Don't overwrite AIBOX_PROXY_URL: keep the static value for clash-off fallback + `proxy show`.
   elif [ "$AIBOX_PROXY_ENABLED" = "1" ]; then
     if [ -n "${http_proxy:-}" ] || [ -n "${https_proxy:-}" ] || [ -n "${all_proxy:-}" ]; then
-      # 环境里已指定 → 尊重，不夺权，只做归一化导出
+      # Already set in env -> respect it, don't usurp, only normalize-export.
       eff="${http_proxy:-${https_proxy:-${all_proxy:-}}}"
       no_p="${no_proxy:-$AIBOX_NO_PROXY}"
       AIBOX_PROXY_SOURCE="env"
@@ -321,7 +382,7 @@ apply_proxy() {
   return 0
 }
 
-# --no-proxy：本次调用完全绕过代理（连环境里已有的也清掉）
+# --no-proxy: bypass the proxy entirely for this invocation (even env-set ones).
 bypass_proxy() {
   unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY || true
   unset AIBOX_PROXY_URL AIBOX_NO_PROXY || true
@@ -330,7 +391,7 @@ bypass_proxy() {
   return 0
 }
 
-# ---------- proxy 命令域 ----------
+# ---------- proxy command domain ----------
 cmd_proxy() {
   local sub="${1:-show}"
   case "$sub" in
@@ -342,42 +403,42 @@ cmd_proxy() {
     test)  shift; cmd_proxy_test "$@" ;;
     check) shift; cmd_proxy_check "$@" ;;
     env)   shift; cmd_proxy_env "$@" ;;
-    *)     die "用法: aibox proxy {show|set <url>|unset|on|off|test [url]|check [url]|env [--remote]}" ;;
+    *)     die "Usage: aibox proxy {show|set <url>|unset|on|off|test [url]|check [url]|env [--remote]}" ;;
   esac
 }
 
 cmd_proxy_show() {
-  # clash 池优先：开启时显示本地 mihomo（静态代理作回退提示）
+  # Clash pool takes priority: when on, show local mihomo (static proxy as fallback hint).
   if clash_active; then
-    log "代理配置（${AIBOX_CONFIG}）+ clash 池"
-    info "实际生效   socks5://127.0.0.1:${CLASH_PORT}（本地 mihomo，优先于静态代理）"
-    [ -n "$AIBOX_PROXY_URL" ] && info "静态代理   $(mask_url "$AIBOX_PROXY_URL")（clash off 后回退）"
-    info "clash      aibox clash status"
+    log "Proxy config (${AIBOX_CONFIG}) + clash pool"
+    info "Effective    socks5://127.0.0.1:${CLASH_PORT} (local mihomo, takes priority over static proxy)"
+    [ -n "$AIBOX_PROXY_URL" ] && info "Static proxy $(mask_url "$AIBOX_PROXY_URL") (fallback after 'clash off')"
+    info "Clash        aibox clash status"
     return 0
   fi
   if [ -z "$AIBOX_PROXY_URL" ]; then
-    log "未配置代理（直连）"
-    info "设置: aibox proxy set http://host:port  或  aibox clash set <订阅URL>"
+    log "No proxy configured (direct connection)"
+    info "Set one: aibox proxy set http://host:port  or  aibox clash set <subscription-url>"
     return 0
   fi
-  local state="已启用"
-  [ "$AIBOX_PROXY_ENABLED" = "1" ] || state="已停用"
-  log "代理配置（${AIBOX_CONFIG}）"
-  info "代理       $(mask_url "$AIBOX_PROXY_URL")"
-  info "状态       $state"
-  info "不走代理   $AIBOX_NO_PROXY"
+  local state="enabled"
+  [ "$AIBOX_PROXY_ENABLED" = "1" ] || state="disabled"
+  log "Proxy config (${AIBOX_CONFIG})"
+  info "Proxy        $(mask_url "$AIBOX_PROXY_URL")"
+  info "State        $state"
+  info "No-proxy     $AIBOX_NO_PROXY"
   case "$AIBOX_PROXY_SOURCE" in
-    env)      info "实际生效   $(mask_url "$AIBOX_PROXY_URL")（来自环境变量，优先于本配置）" ;;
-    config)   info "实际生效   $(mask_url "$AIBOX_PROXY_URL")" ;;
-    disabled) info "实际生效   无（代理已停用）" ;;
-    *)        info "实际生效   无（直连）" ;;
+    env)      info "Effective    $(mask_url "$AIBOX_PROXY_URL") (from env vars, takes priority over this config)" ;;
+    config)   info "Effective    $(mask_url "$AIBOX_PROXY_URL")" ;;
+    disabled) info "Effective    none (proxy disabled)" ;;
+    *)        info "Effective    none (direct connection)" ;;
   esac
   return 0
 }
 
 cmd_proxy_set() {
   local raw="${1:-}" no_test=0 no_check=0 url scheme a
-  # 留一份旧值：检查不理想时能原样退回去，含"本来就没配"这种情况
+  # Keep the old values: if the check is unsatisfactory we can roll back, including "was never set".
   local old_url="$AIBOX_PROXY_URL" old_enabled="$AIBOX_PROXY_ENABLED"
 
   if [ $# -gt 0 ]; then shift; fi
@@ -385,29 +446,29 @@ cmd_proxy_set() {
     case "$a" in
       --no-test)  no_test=1 ;;
       --no-check) no_check=1 ;;
-      *) die "未知选项：${a}（可用：--no-test / --no-check）" ;;
+      *) die "Unknown option: ${a} (available: --no-test / --no-check)" ;;
     esac
   done
-  # --no-test 的语义是"快点存下，别验了"，那全量检查也一并跳过
+  # --no-test means "save fast, don't verify", so skip the full check too.
   if [ "$no_test" = "1" ]; then no_check=1; fi
 
   url=$(normalize_proxy_url "$raw")
-  [ -n "$url" ] || die "用法: aibox proxy set <url>   例: aibox proxy set http://10.0.0.2:7897"
+  [ -n "$url" ] || die "Usage: aibox proxy set <url>   e.g. aibox proxy set http://10.0.0.2:7897"
 
   scheme="${url%%://*}"
   case "$scheme" in
     http | https | socks5 | socks5h) ;;
-    *) die "不支持的代理协议：${scheme}（支持 http / https / socks5 / socks5h）" ;;
+    *) die "Unsupported proxy scheme: ${scheme} (supported: http / https / socks5 / socks5h)" ;;
   esac
 
   if [ "$no_test" = "0" ]; then
-    log "测试代理 $(mask_url "$url") ..."
+    log "Testing proxy $(mask_url "$url") ..."
     if proxy_probe "$url"; then
-      ok "代理可用"
+      ok "Proxy reachable"
     else
-      bad "代理测试未通过（目标 ${PROBE_TARGET}）"
-      ask_confirm "仍然保存这个代理？" || {
-        log "已取消，配置未改动"
+      bad "Proxy test failed (target ${PROBE_TARGET})"
+      ask_confirm "Save this proxy anyway?" || {
+        log "Cancelled, config unchanged"
         return 1
       }
     fi
@@ -416,60 +477,60 @@ cmd_proxy_set() {
   AIBOX_PROXY_URL="$url"
   AIBOX_PROXY_ENABLED="1"
   save_config
-  ok "已保存 $(mask_url "$url")"
-  info "配置：${AIBOX_CONFIG}（权限 600）"
+  ok "Saved $(mask_url "$url")"
+  info "Config: ${AIBOX_CONFIG} (mode 600)"
 
   if [ "$no_check" = "1" ]; then
     return 0
   fi
 
-  # 存下来之后立刻验一遍。单点探针只证明"这个 url 能出去"，
-  # 证明不了"你要用的那些站点都能出去" —— 代理常常是部分可用。
+  # Verify right after saving. A single probe only proves "this url can reach out";
+  # it doesn't prove "the sites you need are reachable" — proxies are often partially available.
   echo
   if cmd_proxy_check "$url"; then
     return 0
   fi
 
   echo
-  if ask_confirm "撤销刚才的代理配置？"; then
+  if ask_confirm "Revert the proxy config just set?"; then
     AIBOX_PROXY_URL="$old_url"
     if [ -n "$old_url" ]; then
       AIBOX_PROXY_ENABLED="${old_enabled:-1}"
     fi
     save_config
     if [ -n "$old_url" ]; then
-      warn "已撤销，恢复为 $(mask_url "$old_url")"
+      warn "Reverted to $(mask_url "$old_url")"
     else
-      warn "已撤销，代理配置已清除（回到直连）"
+      warn "Reverted, proxy config cleared (back to direct connection)"
     fi
     return 1
   fi
 
-  warn "已保留。有不通过的站点，可随时 aibox proxy check 复查"
+  warn "Kept. Some sites failed; recheck anytime with 'aibox proxy check'"
   return 0
 }
 
 cmd_proxy_unset() {
   [ -n "$AIBOX_PROXY_URL" ] || {
-    log "本就没有配置代理"
+    log "No proxy configured to begin with"
     return 0
   }
   AIBOX_PROXY_URL=""
   AIBOX_PROXY_ENABLED="1"
   save_config
-  log "已清除代理配置"
+  log "Proxy config cleared"
   return 0
 }
 
 cmd_proxy_toggle() {
   local want="$1"
-  [ -n "$AIBOX_PROXY_URL" ] || die "尚未配置代理（aibox proxy set <url>）"
+  [ -n "$AIBOX_PROXY_URL" ] || die "No proxy configured yet (aibox proxy set <url>)"
   AIBOX_PROXY_ENABLED="$want"
   save_config
   if [ "$want" = "1" ]; then
-    log "已启用 $(mask_url "$AIBOX_PROXY_URL")"
+    log "Enabled $(mask_url "$AIBOX_PROXY_URL")"
   else
-    log "已停用（配置保留，aibox proxy on 可恢复）"
+    log "Disabled (config retained, 'aibox proxy on' restores it)"
   fi
   return 0
 }
@@ -478,32 +539,32 @@ cmd_proxy_test() {
   local url
   url=$(normalize_proxy_url "${1:-}")
   [ -n "$url" ] || url="$AIBOX_PROXY_URL"
-  [ -n "$url" ] || die "未配置代理。用法: aibox proxy test [url]"
+  [ -n "$url" ] || die "No proxy configured. Usage: aibox proxy test [url]"
 
-  log "代理测试"
-  info "代理   $(mask_url "$url")"
-  info "目标   $PROBE_TARGET"
+  log "Proxy test"
+  info "Proxy   $(mask_url "$url")"
+  info "Target  $PROBE_TARGET"
   echo
 
   local proxied=0
   if proxy_probe "$url"; then
     if [ "$PROBE_CONFIRMED" = "1" ]; then
-      ok "经代理出网    200（已确认流量走代理）"
+      ok "Via proxy     200 (traffic confirmed going through the proxy)"
     else
-      ok "经代理出网    200（curl 不支持 %{proxy_used}，无法确认是否真走代理）"
+      ok "Via proxy     200 (curl lacks %{proxy_used}, can't confirm whether proxy was used)"
     fi
     proxied=1
   else
-    bad "经代理出网    失败（代理不可达，或代理访问不了该目标）"
+    bad "Via proxy     failed (proxy unreachable, or the proxy cannot reach the target)"
   fi
 
   local dcode
   dcode=$(curl -s --max-time 10 --noproxy '*' -o /dev/null -w '%{http_code}' "$PROBE_TARGET" 2>/dev/null) || dcode=""
   [ -n "$dcode" ] || dcode="000"
   if [ "$dcode" = "200" ]; then
-    info "直连对照      200 —— 当前网络直连也通，代理并非必需"
+    info "Direct control 200 — direct connection also works here, proxy isn't required"
   else
-    info "直连对照      $dcode —— 直连不通，代理是必需的"
+    info "Direct control $dcode — direct connection fails, proxy is required"
   fi
 
   [ "$proxied" = "1" ] && return 0 || return 1
@@ -512,15 +573,15 @@ cmd_proxy_test() {
 cmd_proxy_env() {
   local remote=0 u
   [ "${1:-}" = "--remote" ] && remote=1
-  [ -n "$AIBOX_PROXY_URL" ] || die "未配置代理（aibox proxy set <url>）"
+  [ -n "$AIBOX_PROXY_URL" ] || die "No proxy configured (aibox proxy set <url>)"
   [ "$AIBOX_PROXY_ENABLED" = "1" ] || {
-    warn "代理已停用（aibox proxy on 启用）"
+    warn "Proxy is disabled (enable with 'aibox proxy on')"
     return 1
   }
   u="$AIBOX_PROXY_URL"
 
   if [ "$remote" = "1" ]; then
-    # 供下发到远端：KEY=VALUE，可直接 source，也可当参数传
+    # For shipping to a remote host: KEY=VALUE, sourceable, also passable as args.
     printf 'AIBOX_PROXY_URL=%s\n' "$u"
     printf 'http_proxy=%s\n' "$u"
     printf 'https_proxy=%s\n' "$u"
@@ -535,31 +596,32 @@ cmd_proxy_env() {
   return 0
 }
 
-# ---------- 连通性检查 ----------
-# 「代理配好了」不等于「代理能用」。set 完立刻验一遍，比等到装模块时才炸好。
+# ---------- connectivity check ----------
+# "Proxy configured" != "proxy usable". Check right after `set` is better than
+# discovering it's broken at install time.
 #
-# 站点清单：每行 "标签|URL|分组"，分组相同即自动归到一个小标题下。
-# 整体覆盖：AIBOX_PROBE_SITES='标签|URL|分组
-# 标签|URL|分组'
-AIBOX_PROBE_SITES_DEFAULT='github.com|https://github.com|开发依赖
-api.github.com|https://api.github.com|开发依赖
-raw.githubusercontent.com|https://raw.githubusercontent.com/lichengwu/aibox/main/install.sh|开发依赖
-docker hub|https://registry-1.docker.io/v2/|开发依赖
-ghcr.io|https://ghcr.io/v2/|开发依赖
-npm registry|https://registry.npmjs.org|开发依赖
-pypi|https://pypi.org/simple/|开发依赖
-go proxy|https://proxy.golang.org|开发依赖
-google|https://www.google.com/generate_204|开发依赖
-huggingface|https://huggingface.co|开发依赖
-maven central|https://repo1.maven.org/maven2/|开发依赖
-npmmirror|https://registry.npmmirror.com|国内镜像
-tuna|https://mirrors.tuna.tsinghua.edu.cn|国内镜像
-dashscope|https://dashscope.aliyuncs.com|国内镜像'
+# Site list: each line "label|url|group"; same group auto-collapses under one subheading.
+# Full override: AIBOX_PROBE_SITES='label|url|group
+# label|url|group'
+AIBOX_PROBE_SITES_DEFAULT='github.com|https://github.com|Dev deps
+api.github.com|https://api.github.com|Dev deps
+raw.githubusercontent.com|https://raw.githubusercontent.com/lichengwu/aibox/main/install.sh|Dev deps
+docker hub|https://registry-1.docker.io/v2/|Dev deps
+ghcr.io|https://ghcr.io/v2/|Dev deps
+npm registry|https://registry.npmjs.org|Dev deps
+pypi|https://pypi.org/simple/|Dev deps
+go proxy|https://proxy.golang.org|Dev deps
+google|https://www.google.com/generate_204|Dev deps
+huggingface|https://huggingface.co|Dev deps
+maven central|https://repo1.maven.org/maven2/|Dev deps
+npmmirror|https://registry.npmmirror.com|CN mirrors
+tuna|https://mirrors.tuna.tsinghua.edu.cn|CN mirrors
+dashscope|https://dashscope.aliyuncs.com|CN mirrors'
 AIBOX_PROBE_SITES="${AIBOX_PROBE_SITES:-$AIBOX_PROBE_SITES_DEFAULT}"
 PROBE_TIMEOUT="${AIBOX_PROBE_TIMEOUT:-8}"
 
-# 颜色只在 TTY 下开。非 TTY（管道 / 重定向到文件）输出不含控制字符，
-# 否则日志里会混进一堆 \033[K。
+# Colors only on a TTY. Non-TTY (pipe / redirect to file) output has no control chars,
+# otherwise logs fill up with \033[K.
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   C_RST=$'\033[0m'; C_DIM=$'\033[2m'; C_BOLD=$'\033[1m'
   C_GRN=$'\033[32m'; C_YEL=$'\033[33m'; C_RED=$'\033[31m'; C_CYA=$'\033[36m'
@@ -571,7 +633,7 @@ else
   TUI_TTY=0
 fi
 
-# 探测结果，下标与清单一一对应。P_DONE=1 表示已拿到结果。
+# Probe results, indexed to match the site list. P_DONE=1 means the result is in.
 P_LABEL=(); P_URL=(); P_GROUP=(); P_DONE=()
 P_CODE=(); P_TIME=(); P_USED=(); P_GRADE=()
 P_N=0
@@ -588,7 +650,7 @@ probe_load_sites() {
     case "$line" in '#'*) continue ;; esac
     case "$line" in
       *'|'*'|'*) ;;
-      *) warn "站点清单格式有误，已跳过：$line"; continue ;;
+      *) warn "Malformed site list line, skipped: $line"; continue ;;
     esac
     lab="${line%%|*}"
     rest="${line#*|}"
@@ -609,23 +671,24 @@ $AIBOX_PROBE_SITES
 PROBE_SITES_EOF
 }
 
-# 单站点探测。跑在后台子进程里，所以结果落文件 —— 子进程改不了父进程的数组。
-# env -u no_proxy：显式 -x 指定的代理仍会被 no_proxy 排除，那会让"走代理的检查"
-# 悄悄变成直连检查，结论就假了。
+# Single-site probe. Runs in a background subprocess, so results land in files —
+# the child can't mutate the parent's arrays.
+# `env -u no_proxy`: an explicitly -x'd proxy can still be excluded by no_proxy, which
+# would silently turn a "via-proxy check" into a "direct check" — making the result a lie.
 probe_fetch() {
   local idx="$1" url="$2" dir="$3" out
   out=$(env -u no_proxy -u NO_PROXY curl -s -I --max-time "$PROBE_TIMEOUT" \
     -x "$PROBE_PROXY" -o /dev/null \
     -w '%{http_code} %{time_total} %{proxy_used}' "$url" 2>/dev/null) || out=""
-  # curl 连接失败时 -w 一个字符都不输出，必须兜底，否则状态码会变成空串
+  # On connection failure curl's -w emits nothing; must fall back, else the code becomes empty.
   [ -n "$out" ] || out="000 0.00 0"
   printf '%s\n' "$out" >"$dir/$idx"
 }
 
-# 判定：能拿到 HTTP 响应就算通。
-# 401（私有 registry 要认证）、404（根路径无内容）、405（不支持 HEAD）都只说明
-# 对端在正常应答，链路是通的；只有连接层失败（000）才是真的不通。
-# 5xx 记可疑 —— 可能是代理侧故障，也可能是对端自己挂了。
+# Verdict: any HTTP response counts as reachable.
+# 401 (private registry needs auth), 404 (no content at root), 405 (no HEAD) all just mean
+# the peer answered normally — the link is up; only connection-layer failure (000) is truly down.
+# 5xx is "suspicious" — could be proxy-side fault or the peer itself being down.
 probe_grade_of() {
   case "${1:-}" in
     ""|000) printf 'fail' ;;
@@ -641,7 +704,7 @@ probe_fmt_time() {
   esac
 }
 
-# 把已完成的结果从文件读回数组
+# Read completed results back from files into the arrays.
 probe_collect() {
   local i=0 line rest
   while [ "$i" -lt "$P_N" ]; do
@@ -658,11 +721,11 @@ probe_collect() {
   done
 }
 
-# 输出一行（含自身行首清屏），完成态与等待态格式不同
+# Print one line (with its own leading clear); finished and waiting states differ.
 probe_line() {
   local i="$1" frame="$2" grade code t mark note tcol
   if [ "${P_DONE[$i]:-0}" != "1" ]; then
-    printf '%s  %s%s%s %-28s %s等待%s\n' \
+    printf '%s  %s%s%s %-28s %swaiting%s\n' \
       "$C_CLR" "$C_DIM" "$frame" "$C_RST" "${P_LABEL[$i]:-}" "$C_DIM" "$C_RST"
     return 0
   fi
@@ -672,20 +735,20 @@ probe_line() {
   mark="${C_GRN}✔${C_RST}"
   note=""
   case "$grade" in
-    warn) mark="${C_YEL}!${C_RST}"; note="服务端错误" ;;
-    fail) mark="${C_RED}✘${C_RST}"; note="连接失败或超时" ;;
+    warn) mark="${C_YEL}!${C_RST}"; note="server error" ;;
+    fail) mark="${C_RED}✘${C_RST}"; note="connection failed or timed out" ;;
   esac
   tcol="$C_DIM"
   if [ "$grade" = "fail" ]; then
     tcol="$C_RED"
   elif [ "$grade" = "ok" ]; then
-    # 大于 3 秒算慢：能通但会拖累每一次拉取
+    # Over 3s is slow: works but drags every fetch.
     case "${t%%.*}" in
       ""|*[!0-9]*) ;;
-      *) if [ "${t%%.*}" -ge 3 ]; then tcol="$C_YEL"; [ -n "$note" ] || note="较慢"; fi ;;
+      *) if [ "${t%%.*}" -ge 3 ]; then tcol="$C_YEL"; [ -n "$note" ] || note="slow"; fi ;;
     esac
   fi
-  # 备注拼成后缀而不是固定宽度的尾列，避免行尾残留空格
+  # The note is a suffix, not a fixed-width trailing column, to avoid trailing-space residue.
   local note_suf=""
   if [ -n "$note" ]; then note_suf="  $note"; fi
   printf '%s  %s %-28s %s%-5s%s %s%s%s%s\n' \
@@ -707,7 +770,7 @@ probe_render() {
   done
 }
 
-# 重绘时要上移的行数 = 站点数 + 分组标题数（行数在整个过程中恒定）
+# Lines to move up on redraw = site count + group heading count (constant throughout).
 probe_line_count() {
   local i=0 prev="" g n=0
   while [ "$i" -lt "$P_N" ]; do
@@ -729,26 +792,26 @@ cmd_proxy_check() {
   done
   url="$(normalize_proxy_url "$url")"
   if [ -z "$url" ]; then url="$AIBOX_PROXY_URL"; fi
-  # --no-proxy 会清掉内存里的配置，这时回配置文件再取一次
+  # --no-proxy clears the in-memory config; re-read the file in that case.
   if [ -z "$url" ] && [ -f "$AIBOX_CONFIG" ]; then
     url="$(grep '^AIBOX_PROXY_URL=' "$AIBOX_CONFIG" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')"
     url="$(normalize_proxy_url "$url")"
   fi
-  [ -n "$url" ] || die "未配置代理。用法: aibox proxy check [url]"
+  [ -n "$url" ] || die "No proxy configured. Usage: aibox proxy check [url]"
 
   probe_load_sites
-  [ "$P_N" -gt 0 ] || die "站点清单为空（检查 AIBOX_PROBE_SITES）"
+  [ "$P_N" -gt 0 ] || die "Site list is empty (check AIBOX_PROBE_SITES)"
 
   PROBE_PROXY="$url"
-  PROBE_DIR="$(mktemp -d)" || die "无法创建临时目录"
+  PROBE_DIR="$(mktemp -d)" || die "Cannot create temp dir"
   trap 'rm -rf "$PROBE_DIR"' EXIT
 
   local total
   total="$(probe_line_count)"
-  printf '  连通性检查（经代理 %s）\n' "$(mask_url "$url")"
-  printf '  %s能拿到应答即算通 —— 401/404/405 都只说明链路到了对端%s\n' "$C_DIM" "$C_RST"
+  printf '  Connectivity check (via proxy %s)\n' "$(mask_url "$url")"
+  printf '  %sAny HTTP answer counts as reachable — 401/404/405 just mean the link reached the peer%s\n' "$C_DIM" "$C_RST"
 
-  # 全并发。串行最坏要 13×8=104 秒，并发只等最慢那一个。
+  # All concurrent. Serial worst case is 13×8=104s; concurrent only waits for the slowest.
   local i=0
   while [ "$i" -lt "$P_N" ]; do
     probe_fetch "$i" "${P_URL[$i]:-}" "$PROBE_DIR" &
@@ -757,7 +820,7 @@ cmd_proxy_check() {
 
   local frame_i=0 first=1 running=1
   local -a SPIN
-  # 逐帧取整个字符串，不做 ${s:i:1} 切片 —— 多字节字符在 C locale 下会被切成半个字节
+  # Take whole-string frames, no ${s:i:1} slicing — multibyte chars get sliced into half-bytes under a C locale.
   SPIN=( '⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏' )
   while [ "$running" = "1" ]; do
     probe_collect
@@ -776,7 +839,7 @@ cmd_proxy_check() {
     if [ "$running" = "1" ]; then sleep 0.12; fi
   done
   wait 2>/dev/null || true
-  # 非 TTY 不重绘，全部跑完后一次性静态输出
+  # Non-TTY: no redraw; print a single static dump after everything finishes.
   if [ "$TUI_TTY" != "1" ]; then probe_render ""; fi
 
   local okc=0 warnc=0 failc=0 failed_lines="" all_confirmed=1
@@ -787,47 +850,47 @@ cmd_proxy_check() {
       warn) warnc=$((warnc + 1)) ;;
       fail) failc=$((failc + 1)); failed_lines="${failed_lines}    ${P_LABEL[$i]:-}\n" ;;
     esac
-    # 只有每个站点都明确回报 proxy_used=1 才敢说"确实走了代理"。
-    # 兜底的 000 结果里 used=0，若只看"是否为空"就会在代理全挂时误报。
+    # Only if every site explicitly reports proxy_used=1 can we say "traffic confirmed via proxy".
+    # The 000 fallback has used=0; checking "is it empty" would misreport "all proxy dead" as "all via proxy".
     if [ "${P_USED[$i]:-}" != "1" ]; then all_confirmed=0; fi
     i=$((i + 1))
   done
 
   printf '\n'
-  printf '  %d 项：%s%d 通过%s' "$P_N" "$C_GRN" "$okc" "$C_RST"
-  if [ "$warnc" -gt 0 ]; then printf ' · %s%d 可疑%s' "$C_YEL" "$warnc" "$C_RST"; fi
-  if [ "$failc" -gt 0 ]; then printf ' · %s%d 失败%s' "$C_RED" "$failc" "$C_RST"; fi
+  printf '  %d items: %s%d ok%s' "$P_N" "$C_GRN" "$okc" "$C_RST"
+  if [ "$warnc" -gt 0 ]; then printf ' · %s%d suspicious%s' "$C_YEL" "$warnc" "$C_RST"; fi
+  if [ "$failc" -gt 0 ]; then printf ' · %s%d failed%s' "$C_RED" "$failc" "$C_RST"; fi
   printf '\n'
 
   if [ "$all_confirmed" = "1" ] && [ "$P_N" -gt 0 ]; then
-    printf '  %s流量已确认全部经代理（curl %%{proxy_used}）%s\n' "$C_DIM" "$C_RST"
+    printf '  %sAll traffic confirmed via proxy (curl %%{proxy_used})%s\n' "$C_DIM" "$C_RST"
   fi
 
   if [ "$failc" -gt 0 ]; then
-    printf '  %s不通：%s\n' "$C_RED" "$C_RST"
+    printf '  %sunreachable:%s\n' "$C_RED" "$C_RST"
     printf '%b' "$failed_lines"
-    info "排查：aibox proxy test 看直连对照；或换一个代理再试"
+    info "Troubleshoot: 'aibox proxy test' for the direct-connection control; or try another proxy"
     return 1
   fi
   return 0
 }
 
-# ---------- 依赖检查与自动安装 ----------
-# 读模块 deps 字段（格式：命令名，可带 @平台 或 :版本），检查是否满足，缺则按平台装。
-# deps 示例："docker@linux docker-compose python3" "node:22 npm" ""
-# @平台：仅在该平台检查（docker@linux=仅 Linux 检查，非 Linux 跳过+提示）
-# :版本：版本约束（node:22=node 主版本 >= 22）
+# ---------- dependency check + auto-install ----------
+# Read a module's deps field (format: command name, optional @platform or :version), check, install by platform.
+# deps examples: "docker@linux docker-compose python3" "node:22 npm" ""
+# @platform: only checked on that platform (docker@linux = check on Linux only)
+# :version: version constraint (node:22 = major version >= 22)
 check_deps() {
   local name="$1" deps plat dep cmd ptag ver
   load_registry
   plat="$(module_field "$name" platform)"
-  # 平台过滤：platform 非空且不匹配当前平台 → 跳过（pi-web 在 Linux 不查 node）
+  # Platform filter: non-empty platform that doesn't match -> skip (pi-web skips node check on Linux)
   if [ -n "$plat" ] && [ "$plat" != "$(uname -s | tr '[:upper:]' '[:lower:]')" ]; then
     return 0
   fi
   deps="$(module_field "$name" deps)"
   [ -n "$deps" ] || return 0
-  log "检查依赖: ${deps}"
+  log "Checking deps: ${deps}"
   for dep in $deps; do
     cmd="$dep"; ptag=""; ver=""
     case "$dep" in
@@ -836,21 +899,21 @@ check_deps() {
     case "$cmd" in
       *:*) ver="${cmd#*:}"; cmd="${cmd%%:*}" ;;
     esac
-    # @平台过滤
+    # @platform filter
     if [ -n "$ptag" ] && [ "$ptag" != "$(uname -s | tr '[:upper:]' '[:lower:]')" ]; then
-      info "  ${cmd}@${ptag}（当前 $(uname -s) 不检查；运行在 ${ptag} 时需）"
+      info "  ${cmd}@${ptag} (current $(uname -s) skips; required on ${ptag})"
       continue
     fi
     if dep_satisfied "$cmd" "$ver"; then
-      ok "  ${cmd} ✓"
+      ok "  ${cmd} ok"
     else
-      bad "  ${cmd} ✗（缺失）"
-      install_dep "$cmd" || warn "  ${cmd} 自动安装失败，可手动装后重试"
+      bad "  ${cmd} missing"
+      install_dep "$cmd" || warn "  ${cmd} auto-install failed; install manually and retry"
     fi
   done
 }
 
-# 检查依赖命令是否满足（含版本约束）
+# Check whether a dependency command is satisfied (incl. version constraint).
 dep_satisfied() {
   local cmd="$1" ver="${2:-}" cur
   case "$cmd" in
@@ -867,26 +930,27 @@ dep_satisfied() {
   esac
 }
 
-# 按平台自动安装依赖。轻量/有包管理器则装；需 sudo 或 GUI 交互则提示手动命令。
+# Auto-install deps by platform. Lightweight / has a package manager -> install; needs sudo
+# or GUI interaction -> print the manual command.
 install_dep() {
   local cmd="$1" os pm
   os="$(uname -s)"
-  log "  自动安装 ${cmd} ..."
+  log "  Auto-installing ${cmd} ..."
   if [ "$os" = "Darwin" ]; then
     if command -v brew >/dev/null 2>&1; then pm="brew"
-    else warn "  无 Homebrew（装 brew 后重试: https://brew.sh）"; return 1; fi
+    else warn "  No Homebrew (install brew and retry: https://brew.sh)"; return 1; fi
   elif command -v apt-get >/dev/null 2>&1; then pm="apt-get"
   elif command -v yum >/dev/null 2>&1; then pm="yum"
   elif command -v dnf >/dev/null 2>&1; then pm="dnf"
-  else warn "  无 apt/yum/dnf，请手动安装 ${cmd}"; return 1; fi
+  else warn "  No apt/yum/dnf; install ${cmd} manually"; return 1; fi
   case "$cmd" in
     docker|docker-compose)
       if [ "$os" = "Darwin" ]; then
-        log "  brew install --cask docker（Docker Desktop，含 compose v2）"
-        brew install --cask docker || { warn "  Docker Desktop 安装失败（https://docker.com 手动下）"; return 1; }
-        warn "  装完需启动 Docker.app 并同意许可（无法全自动）"
+        log "  brew install --cask docker (Docker Desktop, includes compose v2)"
+        brew install --cask docker || { warn "  Docker Desktop install failed (download manually: https://docker.com)"; return 1; }
+        warn "  After install, start Docker.app and accept the license (can't be fully automated)"
       else
-        warn "  docker 需 sudo，请执行: sudo ${pm} install -y docker.io docker-compose-v2 && sudo systemctl --now enable docker"
+        warn "  docker needs sudo, run: sudo ${pm} install -y docker.io docker-compose-v2 && sudo systemctl --now enable docker"
         return 1
       fi ;;
     node)
@@ -895,23 +959,23 @@ install_dep() {
         . "$HOME/.nvm/nvm.sh"
         nvm install 22 && nvm use 22 >/dev/null
       elif [ "$pm" = "brew" ]; then brew install node@22
-      else warn "  node 请用 nvm 装（curl nvm | bash）或 sudo ${pm} install nodejs"; return 1; fi ;;
+      else warn "  Install node via nvm (curl nvm | bash) or: sudo ${pm} install nodejs"; return 1; fi ;;
     python3)
-      if [ "$os" = "Darwin" ]; then warn "  macOS 自带 python3（/usr/bin/python3）；若缺装 Xcode CLT: xcode-select --install"
-      else warn "  请执行: sudo ${pm} install -y python3"; return 1; fi ;;
+      if [ "$os" = "Darwin" ]; then warn "  macOS ships python3 (/usr/bin/python3); if missing install Xcode CLT: xcode-select --install"
+      else warn "  Run: sudo ${pm} install -y python3"; return 1; fi ;;
     git)
-      if [ "$os" = "Darwin" ]; then warn "  macOS 自带 git（Xcode CLT）；若缺: xcode-select --install"
-      else warn "  请执行: sudo ${pm} install -y git"; return 1; fi ;;
-    *) warn "  未知依赖 ${cmd}，请手动安装"; return 1 ;;
+      if [ "$os" = "Darwin" ]; then warn "  macOS ships git (Xcode CLT); if missing: xcode-select --install"
+      else warn "  Run: sudo ${pm} install -y git"; return 1; fi ;;
+    *) warn "  Unknown dependency ${cmd}; install manually"; return 1 ;;
   esac
 }
 
-# ---------- 命令 ----------
-# 列出所有模块的端口分配表（从 module.yaml ports 字段）+ 实际监听探测。
+# ---------- commands ----------
+# List all modules' port assignments (from module.yaml ports) + live listen probes.
 cmd_ports() {
   load_registry
-  echo "端口分配表："
-  printf '  %-14s %-18s %-12s %s\n' "模块" "端口/协议" "用途" "状态"
+  echo "Port assignments:"
+  printf '  %-14s %-18s %-12s %s\n' "Module" "Port/Proto" "Usage" "Status"
   local m p port proto_usage proto usage status
   for m in ${AIBOX_MODULES:-}; do
     for p in $(module_field "$m" ports); do
@@ -920,7 +984,7 @@ cmd_ports() {
       proto="${proto_usage%%:*}"
       usage="${proto_usage#*:}"
       if command -v lsof >/dev/null 2>&1 && lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-        status="监听中"
+        status="listening"
       else
         status="—"
       fi
@@ -929,7 +993,7 @@ cmd_ports() {
   done
 }
 
-# install 时探测声明端口是否被外部占用（lsof），被占则 warn（可用环境变量覆盖）。
+# Probe declared ports for external occupation (lsof) at install time; warn if taken (env-overridable).
 check_ports() {
   local name="$1" ports p port
   ports="$(module_field "$name" ports)"
@@ -938,34 +1002,34 @@ check_ports() {
   for p in $ports; do
     port="${p%%/*}"
     if lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-      warn "端口 ${port} 已被占用（PID $(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | head -1)）；可用环境变量覆盖"
+      warn "Port ${port} already in use (PID $(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | head -1)); overridable via env var"
     fi
   done
 }
 
 cmd_install() {
   local name="${1:-}"
-  [ -n "$name" ] || die "用法: aibox install <module>"
+  [ -n "$name" ] || die "Usage: aibox install <module>"
   download_module "$name"
   local dest="$AIBOX_LAST_DEST"
   local plat; plat="$(module_field "$name" platform)"
   if [ -n "$plat" ] && [ "$plat" != "$(uname -s | tr '[:upper:]' '[:lower:]')" ]; then
-    warn "模块 $name 目标平台 ${plat}，当前 $(uname -s)（继续可能有错）"
+    warn "Module $name targets platform ${plat}, current is $(uname -s) (may error)"
   fi
   check_deps "$name"
   check_ports "$name"
   local inst; inst="$(module_field "$name" install)"
-  log "安装 $name ..."
+  log "Installing $name ..."
   if [ -n "$inst" ] && [ -f "$dest/$inst" ]; then
     AIBOX_MODULE="$name" bash "$dest/$inst"
   fi
   mark_installed "$name" "$(module_field "$name" version)"
   ensure_services "$name"
-  log "已安装 $name ($(module_field "$name" version)) -> $dest"
+  log "Installed $name ($(module_field "$name" version)) -> $dest"
 }
 
-# 处理模块的 services 依赖（module.yaml services 字段）：
-# 对 base:postgres#<db> → 确保 base 起动 + 写 base.env + 建库 <db>。best-effort，不阻断 install。
+# Handle a module's services deps (module.yaml services field):
+# for base:postgres#<db> -> ensure base is running + write base.env + create db <db>. Best-effort, non-blocking.
 ensure_services() {
   local name="$1" svc db
   local services; services="$(module_field "$name" services)"
@@ -977,34 +1041,34 @@ ensure_services() {
     esac
     db="${svc#*#}"
     if ! is_installed base; then
-      warn "模块 ${name} 依赖 base:postgres，但 base 未安装（先: aibox install base）"
+      warn "Module ${name} depends on base:postgres, but base isn't installed (first: aibox install base)"
       continue
     fi
     if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx aibox-base-postgres; then
-      log "  起动共享 base（${name} 依赖）..."
-      AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" start || { warn "base start 失败（aibox base start 手动起）"; continue; }
+      log "  Starting shared base (${name} depends on it)..."
+      AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" start || { warn "base start failed (start manually: aibox base start)"; continue; }
     fi
-    log "  建库 ${db}（共享 PG）..."
-    AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" createdb "${db}" || warn "base createdb ${db} 失败（aibox base createdb ${db} 手动建）"
+    log "  Creating db ${db} (shared PG)..."
+    AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" createdb "${db}" || warn "base createdb ${db} failed (create manually: aibox base createdb ${db})"
   done
   return 0
 }
 
 cmd_uninstall() {
   local name="${1:-}"
-  [ -n "$name" ] || die "用法: aibox uninstall <module>"
-  is_installed "$name" || { warn "$name 未安装"; return; }
+  [ -n "$name" ] || die "Usage: aibox uninstall <module>"
+  is_installed "$name" || { warn "$name not installed"; return; }
   local dest="$AIBOX_MOD_DIR/$name"
   load_registry
   local uninst; uninst="$(module_field "$name" uninstall)"
   if [ -n "$uninst" ] && [ -f "$dest/$uninst" ]; then
     AIBOX_MODULE="$name" bash "$dest/$uninst"
   else
-    warn "无 uninstall 钩子，仅清理缓存"
+    warn "No uninstall hook; cleaning cache only"
   fi
   rm -rf "$dest"
   unmark_installed "$name"
-  log "已卸载 $name"
+  log "Uninstalled $name"
 }
 
 cmd_update() {
@@ -1018,8 +1082,8 @@ cmd_update() {
   done
 
   if [ -n "$name" ]; then
-    is_installed "${name}" || die "${name} 未安装"
-    log "更新 ${name}（重新拉取模块脚本）..."
+    is_installed "${name}" || die "${name} not installed"
+    log "Updating ${name} (re-fetching module scripts)..."
     download_module "${name}"
     local dest="$AIBOX_LAST_DEST" upd
     upd="$(module_field "${name}" update)"
@@ -1027,31 +1091,31 @@ cmd_update() {
       # shellcheck disable=SC2086
       AIBOX_MODULE="${name}" bash "$dest/$upd" ${restart_arg:+"$restart_arg"}
     else
-      warn "无 update 钩子，已刷新脚本缓存"
+      warn "No update hook; refreshed script cache"
     fi
     mark_installed "${name}" "$(module_field "${name}" version)"
-    log "${name} 已更新到 $(module_field "${name}" version)"
+    log "${name} updated to $(module_field "${name}" version)"
   elif [ "$self_flag" = "1" ]; then
-    log "更新所有已装模块 ..."
+    log "Updating all installed modules ..."
     local m
     for m in $(installed_names); do cmd_update "$m"; done
   else
-    die "用法: aibox update <module> [--restart|--no-restart] [--all] | --all"
+    die "Usage: aibox update <module> [--restart|--no-restart] [--all] | --all"
   fi
 
   if [ "$self_flag" = "1" ]; then
-    log "更新 aibox 主程序 ..."
-    cmd_self_update || warn "aibox 自身更新失败（网络？），模块已更新"
+    log "Updating aibox itself ..."
+    cmd_self_update || warn "aibox self-update failed (network?); modules were updated"
   fi
 }
 
 cmd_list() {
   if [ ! -f "$AIBOX_INSTALLED" ]; then
-    echo "（尚未安装任何模块）"
-    echo "可用: aibox list-available"
+    echo "(no modules installed yet)"
+    echo "Available: aibox list-available"
     return
   fi
-  echo "已安装模块："
+  echo "Installed modules:"
   local key val name
   while IFS='=' read -r key val; do
     [ -n "$key" ] || continue
@@ -1064,18 +1128,18 @@ cmd_list() {
 
 cmd_list_available() {
   load_registry
-  echo "可用模块（registry @ ${AIBOX_BRANCH}）："
+  echo "Available modules (registry @ ${AIBOX_BRANCH}):"
   local m desc ver inst
   for m in ${AIBOX_MODULES:-}; do
     desc="$(module_field "$m" description)"
     ver="$(module_field "$m" version)"
-    inst=""; is_installed "$m" && inst="[已装]"
+    inst=""; is_installed "$m" && inst="[installed]"
     printf '  %-16s %-8s %s %s\n' "$m" "$ver" "$desc" "$inst"
   done
 }
 
-# Dashboard：模块状态 + endpoint + 凭据可视化。
-# aibox dashboard —— 全局总览表；aibox <module> dashboard —— 单模块详情 + 健康探测。
+# Dashboard: module status + endpoint + credentials, visualized.
+# `aibox dashboard` — global overview table; `aibox <module> dashboard` — module detail + health probe.
 cmd_dashboard() {
   local name="${1:-}"
   if [ -n "$name" ]; then
@@ -1087,12 +1151,12 @@ cmd_dashboard() {
 
 cmd_dashboard_overview() {
   load_registry
-  printf '  %-14s %-10s %-36s %s\n' "模块" "状态" "endpoint" "凭据"
+  printf '  %-14s %-10s %-36s %s\n' "Module" "Status" "Endpoint" "Credentials"
   echo "  ────────────────────────────────────────────────────────────────────"
   local m info endpoint cred status
   for m in ${AIBOX_MODULES:-}; do
     if is_installed "$m"; then
-      status="✓已装"
+      status="installed"
       info=""
       if [ -f "$AIBOX_MOD_DIR/$m/lib.sh" ]; then
         info="$(AIBOX_MODULE="$m" AIBOX_HOME="$AIBOX_HOME" bash -c ". '$AIBOX_MOD_DIR/$m/lib.sh' 2>/dev/null && type dashboard_info >/dev/null 2>&1 && dashboard_info 2>/dev/null || true" 2>/dev/null)"
@@ -1100,7 +1164,7 @@ cmd_dashboard_overview() {
       endpoint=$(printf '%s\n' "$info" | sed -n 's/^endpoint=//p')
       cred=$(printf '%s\n' "$info" | sed -n 's/^credential=//p')
     else
-      status="✗未装"
+      status="not installed"
       endpoint="—"
       cred=$(module_field "$m" dashboard_hint)
     fi
@@ -1111,13 +1175,13 @@ cmd_dashboard_overview() {
 cmd_dashboard_detail() {
   local name="$1"
   load_registry
-  module_exists "$name" || die "未知模块: $name"
+  module_exists "$name" || die "Unknown module: $name"
   echo "=== $name ==="
   if ! is_installed "$name"; then
-    warn "$name 未安装"
+    warn "$name not installed"
     log "endpoint: —"
-    log "凭据: $(module_field "$name" dashboard_hint)"
-    log "安装: aibox install $name"
+    log "credentials: $(module_field "$name" dashboard_hint)"
+    log "install: aibox install $name"
     return
   fi
   local info endpoint cred logf health code
@@ -1126,212 +1190,230 @@ cmd_dashboard_detail() {
   cred=$(printf '%s\n' "$info" | sed -n 's/^credential=//p')
   logf=$(printf '%s\n' "$info" | sed -n 's/^log=//p')
   health=$(printf '%s\n' "$info" | sed -n 's/^health=//p')
-  log "状态: ✓已装"
+  log "status: installed"
   [ -n "$endpoint" ] && log "endpoint: $endpoint"
-  [ -n "$cred" ] && log "凭据: $cred"
-  [ -n "$logf" ] && log "日志: $logf"
+  [ -n "$cred" ] && log "credentials: $cred"
+  [ -n "$logf" ] && log "log: $logf"
   if [ -n "$endpoint" ]; then
     case "$endpoint" in
       http://*|https://*)
         code=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "$endpoint" 2>/dev/null) || code="000"
         [ -n "$code" ] || code="000"
         case "$code" in
-          200|204|301|302|401) ok "健康: ✓ HTTP $code" ;;
-          000) bad "健康: ✗ 不可达" ;;
-          *) warn "健康: HTTP $code" ;;
+          200|204|301|302|401) ok "health: ok HTTP $code" ;;
+          000) bad "health: unreachable" ;;
+          *) warn "health: HTTP $code" ;;
         esac ;;
-      *) [ -n "$health" ] && log "健康探测: $health" ;;
+      *) [ -n "$health" ] && log "health probe: $health" ;;
     esac
   fi
 }
 
-# 输出模块开发指南（upstream 链接 + DEVELOPMENT.md 路径），从 module.yaml upstream 读。
+# Print a module dev guide (upstream links + DEVELOPMENT.md path), read from module.yaml upstream.
 cmd_dev_guide() {
   local name="$1"
   load_registry
-  module_exists "$name" || die "未知模块: $name"
-  echo "模块: $name v$(module_field "$name" version)"
-  echo "主页: $(module_field "$name" upstream_homepage)"
-  echo "文档: $(module_field "$name" upstream_docs)"
-  echo "安装: $(module_field "$name" upstream_install)"
-  echo "测试: $(module_field "$name" upstream_test)"
-  echo "开发指南: tools/$name/docs/DEVELOPMENT.md"
+  module_exists "$name" || die "Unknown module: $name"
+  echo "Module: $name v$(module_field "$name" version)"
+  echo "homepage: $(module_field "$name" upstream_homepage)"
+  echo "docs: $(module_field "$name" upstream_docs)"
+  echo "install: $(module_field "$name" upstream_install)"
+  echo "test: $(module_field "$name" upstream_test)"
+  echo "dev guide: tools/$name/docs/DEVELOPMENT.md"
 }
 
+# Dispatch a module action. NOTE: svc.sh is an "action entry point", NOT necessarily
+# a daemon. pi-web uses it to manage a launchd/systemd service; openmaic passes actions
+# through to the dispatched CLI; base implements createdb here. The contract is "the file
+# named by hooks.svc receives (action, args...)", nothing more. See docs/module-spec.md.
 cmd_module_action() {
   local name="${1:-}"
-  [ -n "$name" ] || die "用法: aibox <module> <action>  或  aibox help"
+  [ -n "$name" ] || die "Usage: aibox <module> <action>  or  aibox help"
   shift
   local action="${1:-}"
   if [ -z "$action" ]; then
     load_registry
-    echo "模块 ${name}。用法: aibox ${name} <action>"
+    echo "Module ${name}. Usage: aibox ${name} <action>"
     local acts; acts="$(module_field "${name}" actions)"
-    [ -n "$acts" ] && echo "可用动作: ${acts}"
+    [ -n "$acts" ] && echo "Available actions: ${acts}"
     return
   fi
   shift
-  # dev-guide 特例：主 CLI 读 module.yaml upstream，不透传 svc.sh（未装也能查）
+  # dev-guide special case: the main CLI reads module.yaml upstream, doesn't pass to svc.sh (works uninstalled).
   if [ "$action" = "dev-guide" ]; then
     cmd_dev_guide "$name"
     return
   fi
-  # dashboard 特例：主 CLI 读模块 dashboard_info + 健康探测，不透传 svc.sh
+  # dashboard special case: the main CLI reads module dashboard_info + health, doesn't pass to svc.sh.
   if [ "$action" = "dashboard" ]; then
     cmd_dashboard_detail "$name"
     return
   fi
-  is_installed "$name" || die "$name 未安装（先: aibox install ${name}）"
+  is_installed "$name" || die "$name not installed (first: aibox install ${name})"
   local svc="$AIBOX_MOD_DIR/$name/svc.sh"
-  [ -f "$svc" ] || die "缺少 ${svc}（试 aibox update ${name}）"
+  [ -f "$svc" ] || die "Missing ${svc} (try aibox update ${name})"
   AIBOX_MODULE="$name" bash "$svc" "$action" "$@"
 }
 
+# Self-update = idempotent re-bootstrap. Defense in depth: if AIBOX_SHA256 is set, the
+# bootstrap verifies the downloaded bin/aibox against it; if AIBOX_VERIFY=1, the bootstrap
+# tries to fetch and check the release SHA256SUMS sidecar (graceful if absent).
 cmd_self_update() {
   local before after
   before="$AIBOX_VERSION"
-  log "aibox 自身更新：当前 ${before}，重新 bootstrap ..."
-  if curl -fsSL "$AIBOX_RAW/install.sh" | bash; then
+  log "aibox self-update: currently ${before}, re-bootstrapping ..."
+  if curl -fsSL "$AIBOX_RAW/install.sh" | AIBOX_VERIFY="${AIBOX_VERIFY:-0}" AIBOX_SHA256="${AIBOX_SHA256:-}" bash; then
     after="$("$AIBOX_BIN_DIR/aibox" version 2>/dev/null | awk '{print $2}')"
     [ -z "$after" ] && after="unknown"
     if [ "$before" = "$after" ]; then
-      log "aibox 自身更新完成：已是最新 ($after)"
+      log "aibox self-update complete: already latest ($after)"
     else
-      log "aibox 自身更新完成：$before -> $after"
+      log "aibox self-update complete: $before -> $after"
     fi
     return 0
   fi
   return 1
 }
 
+# Fail-closed: $AIBOX_HOME/apps/ holds deploy instances (databases, backups, logs, data
+# volume mounts) whose lifecycle outlasts aibox itself — removing the manager does NOT
+# mean removing them. A bare `rm -rf "$AIBOX_HOME"` with a prompt line is not protection;
+# it must actually block.
 cmd_self_uninstall() {
-  # fail-closed：$AIBOX_HOME/apps/ 下是**部署实例**（数据库、备份、日志、数据卷
-  # 挂载点），生命周期比 aibox 本身长 —— 卸掉管理器不等于要删它们。
-  # 裸 rm -rf "$AIBOX_HOME" 面前加一行提示不算保护，必须真的拦下来。
   local apps_root="$AIBOX_HOME/apps" deploys=""
   if [ -d "$apps_root" ]; then
     deploys="$(find "$apps_root" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort || true)"
   fi
 
   if [ -n "$deploys" ]; then
-    warn "检测到 $apps_root 下有部署实例："
+    warn "Deploy instances found under $apps_root:"
     printf '%s\n' "$deploys" | while IFS= read -r d; do
-      warn "  · $d"
+      warn "  - $d"
     done
-    warn "它们属于「这套部署」而不是「aibox 状态」，删除后不可恢复。"
+    warn "They belong to \"this deployment\", not \"aibox state\". Deleting them is irreversible."
     if [ "${ASSUME_YES:-0}" != "1" ]; then
-      ask_confirm "仍要连同这些部署一起删除？" || {
-        warn "已取消，未做任何改动"
+      ask_confirm "Delete these deployments too?" || {
+        warn "Cancelled, nothing changed"
         return 2
       }
     fi
   fi
 
-  warn "将删除 $AIBOX_HOME 与 $AIBOX_BIN_DIR/aibox"
-  warn "已装模块的自身卸载请先: aibox uninstall <module>"
+  warn "Removing $AIBOX_HOME and $AIBOX_BIN_DIR/aibox"
+  warn "Uninstall installed modules' own artifacts first: aibox uninstall <module>"
   rm -rf "$AIBOX_HOME"
   rm -f "$AIBOX_BIN_DIR/aibox"
-  log "已卸载 aibox"
+  log "aibox uninstalled"
 }
 
 usage() {
   cat <<EOF
-aibox $AIBOX_VERSION — AI coding 工具集模块管理器
-仓库: https://github.com/lichengwu/aibox
+aibox $AIBOX_VERSION — a lightweight, zero-dependency module manager for AI coding toolkits
+Repo: https://github.com/lichengwu/aibox
 
-用法:
-  aibox install <module>          安装模块
-  aibox uninstall <module>        卸载模块
-  aibox update <module> [--restart|--no-restart] [--all] | --all   更新模块
-  aibox list                      已安装模块
-  aibox list-available            可用模块
-  aibox <module> <action> [args]  调用模块服务动作（如 aibox pi-web start）
-  aibox self update               更新 aibox 主程序
-  aibox self uninstall [--yes]    卸载 aibox（apps/ 下有部署实例时需 --yes 确认）
-  aibox self version              主程序版本
+Usage:
+  aibox install <module>            install a module
+  aibox uninstall <module>          uninstall a module
+  aibox update <module> [--restart|--no-restart] [--all] | --all   update modules; with --all also updates aibox itself
+  aibox list                        list installed modules
+  aibox list-available             list available modules
+  aibox ports                       show port assignments (declared + live)
+  aibox dashboard [module]          overview table, or single-module detail + health
+  aibox <module> <action> [args]   invoke a module action (e.g. aibox pi-web start)
+  aibox self update                 update aibox itself (idempotent re-bootstrap)
+  aibox self uninstall [--yes]      uninstall aibox (needs --yes if apps/ has deploy instances)
+  aibox self version                print aibox version
   aibox version | -v | --version
   aibox help | -h | --help
 
-代理（配置一次，aibox 自身与模块钩子都走它）:
-  aibox proxy                     查看当前配置与状态
-  aibox proxy set <url>           设置：测试 → 保存 → 校验常用站点连通性
-                                  （--no-test 全跳过，--no-check 只跳站点校验）
-  aibox proxy check [url]         校验开发站点连通性（github / docker / npm ...）
-                                  （有不通的会问你是否撤销这次配置）
-  aibox proxy test [url]          单点可达性（含"直连对照"，避免假阳性）
-  aibox proxy on | off            启用 / 停用（配置保留）
-  aibox proxy unset               清除配置
-  aibox proxy env [--remote]      输出 export 语句 / 远端下发格式
-  aibox --no-proxy <命令>         本次调用绕过代理
+Proxy (set once; covers aibox itself and module hooks):
+  aibox proxy                      show current config and state
+  aibox proxy set <url>            set: test -> save -> verify site connectivity
+                                    (--no-test skips all; --no-check skips site verification)
+  aibox proxy check [url]          verify dev-site connectivity (github / docker / npm ...)
+                                    (asks whether to revert if any fail)
+  aibox proxy test [url]           single-target reachability (includes a direct-connection control)
+  aibox proxy on | off             enable / disable (config retained)
+  aibox proxy unset                clear the config
+  aibox proxy env [--remote]       print export statements / remote-ship format
+  aibox --no-proxy <command>       bypass the proxy for this invocation
 
-  校验清单可用 AIBOX_PROBE_SITES 覆盖，格式每行 "标签|URL|分组"。
+  The site list is overridable via AIBOX_PROBE_SITES, format: "label|url|group" per line.
 
-clash 订阅代理池（mihomo 内核，自动测速/切换；详见 aibox clash --help）:
-  aibox install clash              安装 mihomo 内核（aibox 自动下载二进制）
-  aibox clash set <订阅URL>          存订阅 + 生成 config
-  aibox clash on | off              启停（on 后 aibox 出口自动切到本地 mihomo）
-  aibox clash status                状态 + 当前节点
-  aibox clash refresh               强制刷新订阅（超 1 周自动刷新）
-  aibox clash select <节点>         手动切节点
-  aibox clash test | logs | doctor  探测 / 日志 / 自检
+Clash subscription proxy pool (mihomo kernel, auto speed-test/switch; see aibox clash --help):
+  aibox install clash              install the mihomo kernel (aibox downloads the binary)
+  aibox clash set <sub-url>         store the subscription + generate config
+  aibox clash on | off              start/stop (on switches aibox egress to local mihomo)
+  aibox clash status                status + current node
+  aibox clash refresh               force-refresh the subscription (auto-refreshes after 1 week)
+  aibox clash select <node>         switch node manually
+  aibox clash test | logs | doctor  probe / logs / self-check
 
-  clash 开启时优先于静态代理；off 回退。详见 tools/clash/README.md。
+  Clash takes priority over the static proxy when on; reverts on off. See tools/clash/README.md.
 
-首个模块: aibox install pi-web
+Verification (defense in depth for the curl|bash bootstrap):
+  AIBOX_SHA256=<hash>              verify the downloaded bin/aibox against this checksum
+  AIBOX_VERIFY=1                   fetch and check the release SHA256SUMS sidecar if present
+
+First module: aibox install pi-web
 EOF
 }
 
-# ---------- 全局选项 ----------
-# --no-proxy：本次调用绕过代理（需放在命令最前）
-BYPASS_PROXY=0
-ASSUME_YES=0
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --no-proxy) BYPASS_PROXY=1; shift ;;
-    --yes | -y) ASSUME_YES=1; shift ;;
-    --)         shift; break ;;
-    *)          break ;;
+# ---------- global options / dispatch (only when executed, not sourced) ----------
+# Guarded so `bin/aibox` can be sourced by tests (bats) without dispatching.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  # --no-proxy: bypass the proxy for this invocation (must precede the command)
+  BYPASS_PROXY=0
+  ASSUME_YES=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --no-proxy) BYPASS_PROXY=1; shift ;;
+      --yes | -y) ASSUME_YES=1; shift ;;
+      --)         shift; break ;;
+      *)          break ;;
+    esac
+  done
+
+  # Load config and apply the proxy (covers layer 1: this process; layer 2: spawned module hooks)
+  load_config
+  if [ "$BYPASS_PROXY" = "1" ]; then
+    bypass_proxy
+  else
+    apply_proxy
+  fi
+
+  # ---------- dispatch ----------
+  case "${1:-help}" in
+    install)          shift; cmd_install "$@" ;;
+    uninstall)        shift; cmd_uninstall "$@" ;;
+    update)           shift; cmd_update "$@" ;;
+    list)             cmd_list ;;
+    list-available|available|search)
+                      cmd_list_available ;;
+    ports)            cmd_ports ;;
+    dashboard)        shift; cmd_dashboard "$@" ;;
+    proxy)            shift; cmd_proxy "$@" ;;
+    self)
+      shift
+      # Allow --yes after the subcommand (aibox self uninstall --yes).
+      # Only strip it within the self scope — **don't** touch module pass-through args
+      # (modules may have their own --yes).
+      _self_kept=()
+      for _self_a in "$@"; do
+        case "$_self_a" in
+          --yes | -y) ASSUME_YES=1 ;;
+          *)          _self_kept+=("$_self_a") ;;
+        esac
+      done
+      set -- ${_self_kept[@]+"${_self_kept[@]}"}
+      case "${1:-}" in
+        update)       cmd_self_update ;;
+        uninstall)   cmd_self_uninstall ;;
+        version)     echo "aibox $AIBOX_VERSION" ;;
+        *)           die "Usage: aibox self {update|uninstall|version} [--yes]" ;;
+      esac ;;
+    version|-v|--version) echo "aibox $AIBOX_VERSION" ;;
+    help|-h|--help)   usage ;;
+    *)                cmd_module_action "$@" ;;
   esac
-done
-
-# 加载配置并让代理生效（覆盖第 1 层本进程、第 2 层派生的模块钩子）
-load_config
-if [ "$BYPASS_PROXY" = "1" ]; then
-  bypass_proxy
-else
-  apply_proxy
 fi
-
-# ---------- dispatch ----------
-case "${1:-help}" in
-  install)          shift; cmd_install "$@" ;;
-  uninstall)        shift; cmd_uninstall "$@" ;;
-  update)           shift; cmd_update "$@" ;;
-  list)             cmd_list ;;
-  list-available|available|search)
-                    cmd_list_available ;;
-  ports)            cmd_ports ;;
-  dashboard)       cmd_dashboard ;;
-  proxy)            shift; cmd_proxy "$@" ;;
-  self)
-    shift
-    # 允许 --yes 出现在子命令之后（aibox self uninstall --yes）。
-    # 只在 self 范围内剥离，**不动**模块透传的参数 —— 模块自己可能也有 --yes。
-    _self_kept=()
-    for _self_a in "$@"; do
-      case "$_self_a" in
-        --yes | -y) ASSUME_YES=1 ;;
-        *)          _self_kept+=("$_self_a") ;;
-      esac
-    done
-    set -- ${_self_kept[@]+"${_self_kept[@]}"}
-    case "${1:-}" in
-      update)       cmd_self_update ;;
-      uninstall)   cmd_self_uninstall ;;
-      version)     echo "aibox $AIBOX_VERSION" ;;
-      *)           die "用法: aibox self {update|uninstall|version} [--yes]" ;;
-    esac ;;
-  version|-v|--version) echo "aibox $AIBOX_VERSION" ;;
-  help|-h|--help)   usage ;;
-  *)                cmd_module_action "$@" ;;
-esac

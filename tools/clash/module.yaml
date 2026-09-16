@@ -1,6 +1,6 @@
 name: clash
 version: 1.0.0
-description: "Clash 订阅代理池 — mihomo 内核编排（自动测速/切换/失败回退）"
+description: "Clash subscription proxy pool — mihomo kernel orchestration (auto speed-test/switch/failover)"
 platform: ""
 dir: tools/clash
 
@@ -33,4 +33,4 @@ upstream:
 dashboard:
   endpoints:
     - "mixed: socks5://127.0.0.1:7890  api: http://127.0.0.1:9090"
-  hint: "出口 socks5://127.0.0.1:7890；API 127.0.0.1:9090（state CLASH_SECRET）"
+  hint: "Egress socks5://127.0.0.1:7890; API 127.0.0.1:9090 (state CLASH_SECRET)"

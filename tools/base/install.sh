@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# base 模块 — 安装钩子：把 docker-compose.yml 落到部署根
+# base module — install hook: places docker-compose.yml at the deploy root
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 . "$DIR/lib.sh"
 
-log "安装 base 模块（共享 PG 18 + Redis 7）..."
+log "Installing the base module (shared PG 18 + Redis 7)..."
 mkdir -p "$(base_deploy_root)"
 cp "$DIR/docker-compose.yml" "$COMPOSE_FILE"
-log "compose 已放置: ${COMPOSE_FILE}"
+log "compose placed: ${COMPOSE_FILE}"
 echo
-log "启动: aibox base start"
-log "建库: aibox base createdb <module> [用途]"
-log "各部署型模块连共享 PG（network aibox-base + 经 ${AIBOX_HOME}/base.env 注入连接信息）"
+log "Start:    aibox base start"
+log "Create DB: aibox base createdb <module> [usage]"
+log "Deploy-type modules connect to the shared PG (network aibox-base + connection info injected via ${AIBOX_HOME}/base.env)"

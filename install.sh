@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# aibox 一键安装（bootstrap）
-# 用法:
+# aibox one-line install (bootstrap)
+# Usage:
 #   curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main/install.sh | bash
-# 环境变量:
-#   AIBOX_BRANCH  (默认 main)   指定分支
-#   AIBOX_BIN_DIR (默认 ~/.local/bin) 主 CLI 安装目录
-# 幂等：可重复执行，也用于 `aibox self update`。
+# Env vars:
+#   AIBOX_BRANCH  (default main)        branch to install from
+#   AIBOX_BIN_DIR (default ~/.local/bin) main CLI install dir
+#   AIBOX_SHA256  (optional)           verify the downloaded bin/aibox against this checksum
+#   AIBOX_VERIFY  (default 0)          if 1, fetch+check the release SHA256SUMS sidecar (graceful if absent)
+# Idempotent: safe to re-run; also used by `aibox self update`.
 set -euo pipefail
 
 REPO="lichengwu/aibox"
@@ -21,12 +23,13 @@ die() {
   exit 1
 }
 
-log "从 ${REPO}@${BRANCH} 安装 aibox ..."
+log "Installing aibox from ${REPO}@${BRANCH} ..."
 
-command -v curl >/dev/null 2>&1 || die "需要 curl（macOS 自带）"
+command -v curl >/dev/null 2>&1 || die "curl is required (ships with macOS)"
 
-# 代理：读已有配置，让 bootstrap 这一公里也能走代理（首次安装时配置还不存在，
-# 此时只能直连，属预期）。若环境里已显式指定代理则不覆盖。
+# Proxy: read the existing config so the bootstrap's first mile can go through the proxy
+# (on first install the config doesn't exist yet, so direct-only — expected). If the env
+# already specifies a proxy, don't override it.
 CONFIG="$HOME_DIR/config"
 if [ -f "$CONFIG" ]; then
   # shellcheck disable=SC1090
@@ -41,19 +44,81 @@ if [ "${AIBOX_PROXY_ENABLED:-1}" = "1" ] && [ -n "${AIBOX_PROXY_URL:-}" ]; then
     _np="${AIBOX_NO_PROXY:-localhost,127.0.0.1,::1}"
     export no_proxy="$_np" NO_PROXY="$_np"
     _pd=$(printf '%s' "$AIBOX_PROXY_URL" | sed -E 's#(://[^:/@]+):[^@]*@#\1:***@#')
-    log "使用代理 ${_pd}"
+    log "Using proxy ${_pd}"
   fi
 fi
 
 mkdir -p "$BIN_DIR" "$HOME_DIR"
 
-log "下载 bin/aibox -> $BIN_DIR/aibox"
+log "Downloading bin/aibox -> $BIN_DIR/aibox"
 curl -fsSL "$RAW/bin/aibox" -o "$BIN_DIR/aibox"
+
+# ---------- checksum verification (defense in depth) ----------
+# Two modes, both optional and graceful:
+#   AIBOX_SHA256=<hex> — pin: the downloaded file MUST match exactly.
+#   AIBOX_VERIFY=1     — best-effort: fetch the release SHA256SUMS sidecar and check it;
+#                        older releases without the sidecar just warn and proceed.
+# NOTE: this verifies the payload bin/aibox, NOT install.sh itself — a curl|bash MITM
+# can serve a malicious install.sh that skips the check. Inherent to curl|bash; for
+# full assurance pin AIBOX_SHA256 from a trusted channel or use AIBOX_RAW=file://.
+# Verified BEFORE chmod; on failure the file is removed so no tampered executable is left on PATH.
+# When AIBOX_VERIFY=1 fetches from releases/latest but AIBOX_RAW points at raw `main`
+# (ahead of the latest release), a mismatch may occur — reliable right after a release.
+verify_sha256() {
+  local file="$1" want="${2:-}" got
+  if ! command -v shasum >/dev/null 2>&1 && ! command -v sha256sum >/dev/null 2>&1; then
+    warn "shasum/sha256sum not available; cannot verify checksum"
+    return 1
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    got=$(shasum -a 256 "$file" | awk '{print $1}')
+  else
+    got=$(sha256sum "$file" | awk '{print $1}')
+  fi
+  [ -n "$got" ] || {
+    warn "checksum computation failed"
+    return 1
+  }
+  if [ -n "$want" ]; then
+    if [ "$got" = "$want" ]; then
+      log "Checksum OK (pinned, ${got})"
+      return 0
+    fi
+    die "Checksum mismatch: expected ${want}, got ${got}"
+  fi
+  printf '%s' "$got"
+}
+
+if [ -n "${AIBOX_SHA256:-}" ]; then
+  verify_sha256 "$BIN_DIR/aibox" "$AIBOX_SHA256" || {
+    rm -f "$BIN_DIR/aibox"
+    die "Checksum verification failed"
+  }
+elif [ "${AIBOX_VERIFY:-0}" = "1" ]; then
+  # Best-effort: fetch the release's SHA256SUMS sidecar and check bin/aibox against it.
+  _sums_url="https://github.com/${REPO}/releases/latest/download/SHA256SUMS"
+  _sums_tmp="$(mktemp 2>/dev/null || echo "/tmp/aibox-sums.$$")"
+  if curl -fsSL "$_sums_url" -o "$_sums_tmp" 2>/dev/null; then
+    _want=$(awk '$2=="bin/aibox"{print $1}' "$_sums_tmp" 2>/dev/null)
+    if [ -n "$_want" ]; then
+      verify_sha256 "$BIN_DIR/aibox" "$_want" || {
+        rm -f "$_sums_tmp" "$BIN_DIR/aibox"
+        die "Checksum verification failed"
+      }
+    else
+      warn "SHA256SUMS found but no bin/aibox entry; skipping verification"
+    fi
+  else
+    warn "No SHA256SUMS sidecar at latest release; skipping verification (set AIBOX_SHA256 to pin)"
+  fi
+  rm -f "$_sums_tmp"
+fi
+
 chmod 0755 "$BIN_DIR/aibox"
 
-# PATH 检查 & 自动写入
+# PATH check & auto-write
 if ! echo ":$PATH:" | grep -q ":$BIN_DIR:"; then
-  warn "$BIN_DIR 不在当前 PATH"
+  warn "$BIN_DIR is not in your PATH"
   shell_rc=
   case "${SHELL##*/}" in
   zsh) shell_rc="$HOME/.zshrc" ;;
@@ -61,12 +126,12 @@ if ! echo ":$PATH:" | grep -q ":$BIN_DIR:"; then
   *) shell_rc="$HOME/.profile" ;;
   esac
   if [ -f "$shell_rc" ] && grep -qF "$BIN_DIR" "$shell_rc"; then
-    log "$shell_rc 已含 ${BIN_DIR}，重开 shell 或 source 后生效"
+    log "$shell_rc already contains ${BIN_DIR}; reopen the shell or source it"
   else
     printf '\n# aibox\nexport PATH="%s:$PATH"\n' "$BIN_DIR" >>"$shell_rc"
-    log "已追加 PATH 到 ${shell_rc}，执行: source $shell_rc 或重开终端"
+    log "Appended PATH to ${shell_rc}; run: source $shell_rc or reopen the terminal"
   fi
 fi
 
-log "完成。现在可执行: aibox help"
-log "装首个模块: aibox install pi-web"
+log "Done. Now run: aibox help"
+log "Install your first module: aibox install pi-web"

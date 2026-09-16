@@ -1,165 +1,190 @@
 # aibox
 
-> AI coding 工具集 —— 一个轻量模块管理器 + 若干独立工具，`curl|bash` 一行装好，按需安装 / 更新 / 卸载各模块。
+> AI coding toolkit — a lightweight module manager plus a set of independent tools. One-line `curl|bash` install; install / update / uninstall each module on demand.
 
-`aibox` 是一个纯 bash 的模块管理器（零运行时依赖，兼容 macOS 自带 bash 3.2）。每个「模块」是仓库 `tools/<name>/` 下的一个目录，自带 `install / uninstall / update / svc` 钩子，由 `aibox` 统一调度。
+`aibox` is a pure-bash module manager (zero runtime dependencies, compatible with the bash 3.2 that ships with macOS). Each "module" is a directory under `tools/<name>/` in the repo, shipping its own `install / uninstall / update / svc` hooks and dispatched uniformly by `aibox`.
 
-## 安装
+> **Scope note:** the `windmill` and `openmaic` modules bundle full self-host ops CLIs (a few thousand lines each) inside this repo — they are the source of truth for those ops tools, not vendored copies. The core manager itself is `bin/aibox` (~1.3k lines). See [Bundled ops CLIs](#bundled-ops-clis).
+
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main/install.sh | bash
 ```
 
-装好 `aibox` 主 CLI 到 `~/.local/bin/aibox`（自动处理 PATH）。然后装首个模块：
+This installs the `aibox` main CLI to `~/.local/bin/aibox` (PATH is handled automatically). Then install your first module:
 
 ```bash
 aibox install pi-web
 ```
 
-## 命令一览
-
-```
-aibox install <module>           安装模块
-aibox uninstall <module>         卸载模块
-aibox update <module> [--restart|--no-restart] [--all] | --all   更新模块；带 --all 则一并更新 aibox 自身
-aibox list                       已安装模块
-aibox list-available             可用模块
-aibox <module> <action> [args]   调用模块服务动作（如 aibox pi-web start）
-aibox self update                 更新 aibox 主程序（幂等重装）
-aibox self uninstall             卸载 aibox
-aibox self version | version | help
-
-aibox proxy                       查看代理配置与状态
-aibox proxy set <url> [--no-test|--no-check]
-                                  设置代理：测试 → 保存 → 校验站点连通性
-aibox proxy check [url]           校验常用开发站点连通性
-aibox proxy test [url]            单点测试（含"直连对照"）
-aibox proxy on | off              启用 / 停用（配置保留）
-aibox proxy unset                 清除配置
-aibox proxy env [--remote]        输出 export 语句 / 远端下发格式
-aibox --no-proxy <命令>           本次调用绕过代理
-
-aibox clash set <订阅URL>          存订阅 + 生成 config（mihomo 内核，自动测速/切换）
-aibox clash on | off               启停（on 后 aibox 出口自动切到本地 mihomo）
-aibox clash status | refresh       状态/当前节点 | 强制刷新订阅（超 1 周自动）
-aibox clash select <节点>          手动切节点
-aibox clash test | logs | doctor   探测/日志/自检
-```
-
-## 代理
-
-aibox 有两种代理出口：
-
-- **静态代理**（`aibox proxy set`）：手动指定一个 http/https/socks5 代理，见下。
-- **clash 订阅池**（`aibox install clash` + `aibox clash set <订阅URL>`）：编排本地 mihomo 内核，订阅节点自动测速选最快、失败切换，详见 [clash 模块](tools/clash/README.md)。clash 开启时优先于静态代理。
-
-有些环境下（比如国内直连 GitHub）`aibox` 拉不到模块，或模块钩子里的 git / npm 出不去。配置一次静态代理，`aibox` 自身与它派生的模块钩子都走它：
+Optional checksum verification (defense in depth for the `curl|bash` bootstrap):
 
 ```bash
-aibox proxy set http://10.0.0.2:7897           # 设置 → 测试 → 保存 → 校验站点
-aibox proxy check                              # 随时复检站点连通性
-aibox --no-proxy list-available                # 单次绕过
+# Pin a specific SHA256 of bin/aibox:
+AIBOX_SHA256=<hex> curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main/install.sh | bash
+
+# Or verify against the release SHA256SUMS sidecar (graceful if absent):
+AIBOX_VERIFY=1 curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main/install.sh | bash
 ```
 
-配置存在 `~/.aibox/config`（权限 600），**不写入你的 shell 配置** —— 想让终端里的 git / brew 也走代理，用 `eval "$(aibox proxy env)"` 自己决定。
-
-### 设置完会立刻校验站点连通性
-
-单点探针只证明"这个 url 能出去"，证明不了"你要用的站点都能出去" —— 代理常常是**部分可用**的（能到 GitHub 但到不了 Docker Hub）。所以 `set` 保存后会自动过一次站点清单：
+## Commands
 
 ```
-  连通性检查（经代理 http://10.0.0.2:7897）
-  能拿到应答即算通 —— 401/404/405 都只说明链路到了对端
-  开发依赖
+aibox install <module>            install a module
+aibox uninstall <module>          uninstall a module
+aibox update <module> [--restart|--no-restart] [--all] | --all   update modules; with --all also updates aibox itself
+aibox list                        list installed modules
+aibox list-available              list available modules
+aibox ports                       show port assignments (declared + live)
+aibox dashboard [module]          overview table, or single-module detail + health
+aibox <module> <action> [args]    invoke a module action (e.g. aibox pi-web start)
+aibox self update                 update aibox itself (idempotent re-bootstrap)
+aibox self uninstall [--yes]      uninstall aibox (needs --yes if apps/ has deploy instances)
+aibox self version | version | help
+
+aibox proxy                       show proxy config and state
+aibox proxy set <url> [--no-test|--no-check]
+                                  set proxy: test -> save -> verify site connectivity
+aibox proxy check [url]           verify dev-site connectivity
+aibox proxy test [url]            single-target reachability (includes a direct-connection control)
+aibox proxy on | off              enable / disable (config retained)
+aibox proxy unset                 clear the config
+aibox proxy env [--remote]        print export statements / remote-ship format
+aibox --no-proxy <command>        bypass the proxy for this invocation
+
+aibox clash set <sub-url>          store the subscription + generate config (mihomo kernel, auto speed-test/switch)
+aibox clash on | off               start/stop (on switches aibox egress to local mihomo)
+aibox clash status | refresh       status/current node | force-refresh the subscription (auto after 1 week)
+aibox clash select <node>          switch node manually
+aibox clash test | logs | doctor   probe / logs / self-check
+```
+
+## Proxy
+
+aibox has two proxy egress paths:
+
+- **Static proxy** (`aibox proxy set`): manually specify an http/https/socks5 proxy (below).
+- **clash subscription pool** (`aibox install clash` + `aibox clash set <sub-url>`): orchestrates the local mihomo kernel; subscription nodes are auto speed-tested (pick fastest) and failed over. See the [clash module](tools/clash/README.md). Clash takes priority over the static proxy when on.
+
+In some environments (e.g. direct-to-GitHub from CN) `aibox` can't pull modules, or git/npm inside module hooks can't reach out. Configure a static proxy once and both `aibox` itself and the module hooks it spawns use it:
+
+```bash
+aibox proxy set http://10.0.0.2:7897           # set -> test -> save -> verify sites
+aibox proxy check                              # recheck site connectivity anytime
+aibox --no-proxy list-available                # bypass once
+```
+
+The config lives at `~/.aibox/config` (mode 600) and **does not touch your shell config** — to make terminal git/brew use the proxy too, decide for yourself with `eval "$(aibox proxy env)"`.
+
+### Site connectivity is verified right after `set`
+
+A single-point probe only proves "this url can reach out"; it doesn't prove "the sites you need are reachable" — proxies are often **partially available** (reach GitHub but not Docker Hub). So `set` automatically runs the site list after saving:
+
+```
+  Connectivity check (via proxy http://10.0.0.2:7897)
+  Any HTTP answer counts as reachable — 401/404/405 just mean the link reached the peer
+  Dev deps
   ✔ github.com                   200   0.65s
   ✔ docker hub                   401   1.45s
   ✔ ghcr.io                      405   0.86s
-  ✘ google                       000   8.00s  连接失败或超时
-  国内镜像
+  ✘ google                       000   8.00s  connection failed or timed out
+  CN mirrors
   ✔ npmmirror                    200   0.09s
   ✔ tuna                         200   0.18s
 
-  14 项：13 通过 · 1 失败
-  流量已确认全部经代理（curl %{proxy_used}）
-  不通：
+  14 items: 13 ok · 1 failed
+  All traffic confirmed via proxy (curl %{proxy_used})
+  unreachable:
     google
-       排查：aibox proxy test 看直连对照；或换一个代理再试
+       Troubleshoot: `aibox proxy test` for the direct-connection control; or try another proxy
 ```
 
-**有不通的会问你是否撤销**，撤销会原样退回设置前的状态（原本没配就回到未配置，原本有别的代理就退回那个）。不想被问：
+**If any fail it asks whether to revert**, restoring the pre-set state exactly (back to unconfigured if there was none, or back to the previous proxy if there was one). To skip the prompt:
 
 ```bash
-aibox proxy set <url> --no-check    # 只做单点测试，不跑站点校验
-aibox proxy set <url> --no-test     # 什么都不测，直接存
+aibox proxy set <url> --no-check    # single-point test only, no site verification
+aibox proxy set <url> --no-test     # test nothing, just save
 ```
 
-判定规则是**能拿到 HTTP 响应就算通**：`401`（私有 registry 要认证）、`404`（根路径无内容）、`405`（不支持 HEAD）都只说明对端在正常应答。只有连接层失败（`000`）才算不通，`5xx` 记为可疑。
+Verdict rule: **any HTTP response counts as reachable** — `401` (private registry needs auth), `404` (no content at root), `405` (no HEAD) all just mean the peer answered normally. Only connection-layer failure (`000`) counts as unreachable; `5xx` is recorded as suspicious.
 
-默认清单 14 项：GitHub（主页 / API / raw）、Docker Hub、GHCR、npm、PyPI、Go proxy、Google、Hugging Face、Maven Central，外加 npmmirror / 清华源 / dashscope 三个国内对照。换成你自己的：
+The default list has 14 entries: GitHub (home / API / raw), Docker Hub, GHCR, npm, PyPI, Go proxy, Google, Hugging Face, Maven Central, plus npmmirror / TUNA / dashscope as CN mirror controls. Override with your own:
 
 ```bash
-export AIBOX_PROBE_SITES='我的源|https://example.com|自定分组
-另一个|https://example.org|自定分组'
+export AIBOX_PROBE_SITES='my source|https://example.com|custom group
+another|https://example.org|custom group'
 aibox proxy check
 ```
 
-标签建议用 ASCII —— 对齐按字节数算，中文标签会错位。超时默认 8 秒，`AIBOX_PROBE_TIMEOUT` 可调。
+Prefer ASCII labels — alignment is byte-based, so multibyte labels misalign. Default timeout is 8s, adjustable via `AIBOX_PROBE_TIMEOUT`.
 
-生效分三层，其中前两层自动：
+Effect is layered; the first two layers are automatic:
 
-| 层 | 覆盖什么 | 怎么生效 |
+| Layer | What it covers | How it takes effect |
 | --- | --- | --- |
-| 1. 主进程 | `aibox` 自己拉 registry / 模块 / self update | 启动时导出环境变量 |
-| 2. 子进程 | 模块钩子（`install.sh` 等）里的 curl / git / npm | 环境变量被子进程继承 |
-| 3. 持久化 | 模块在**别的机器、别的时间**执行时的联网 | 模块把代理写进自己的配置文件，需模块主动配合 |
+| 1. Main process | `aibox`'s own registry / module / self-update fetches | env vars exported at startup |
+| 2. Child process | curl / git / npm inside module hooks (`install.sh` etc.) | env vars inherited by children |
+| 3. Persistent | networking when a module runs on **another machine, another time** | the module writes the proxy into its own config file; needs module cooperation |
 
-第 3 层为什么必要：`openmaic` 模块分发的 CLI 会在部署主机上、`aibox` 完全不在场时执行 `openmaic upgrade` 去拉 GitHub 源码，环境变量跨不了这个边界。所以 `aibox install openmaic` 会顺带把代理写进 `/etc/openmaic/openmaic.conf`。
+Why layer 3 is necessary: the `openmaic` module's dispatched CLI runs `openmaic upgrade` on the deploy host when `aibox` isn't present at all, and env vars don't cross that boundary. So `aibox install openmaic` also writes the proxy into `/etc/openmaic/openmaic.conf`.
 
-### 代理失效时会怎样
+### What happens when the proxy is down
 
-**配了就强制**：代理不通即报错，不会静默回退直连（否则表现为每次都先等超时再回退，慢且查不出原因）。四个出口：
+**Configured is enforced**: if the proxy is down, it errors; it does not silently fall back to direct (otherwise it'd表现为 wait-for-timeout-then-fallback every time — slow and untraceable). Four escape hatches:
 
 ```bash
-aibox proxy check     # 站点级连通性（默认 14 项）
-aibox proxy test      # 单点可达性 + 直连对照
-aibox proxy off       # 全局停用（配置保留）
-aibox --no-proxy ...  # 单次绕过
+aibox proxy check     # site-level connectivity (14 by default)
+aibox proxy test      # single-target reachability + direct-connection control
+aibox proxy off       # disable globally (config retained)
+aibox --no-proxy ...  # bypass once
 ```
 
-`set` 时若检查有失败项，会直接问你要不要撤销这次配置 —— 不必自己记住原来填的是什么。
+If `set` finds failures it asks whether to revert — you don't have to remember what you had before.
 
-`proxy test` 会额外跑一次"直连对照"并明确告诉你当前网络下代理是否必需 —— 因为**只看"能不能访问"会骗人**，详见 [`AGENTS.md`](AGENTS.md) 踩坑记录 #3。
+`proxy test` additionally runs a "direct-connection control" and tells you plainly whether the proxy is required on the current network — because **"can I reach it" is misleading**; see [AGENTS.md](AGENTS.md) pitfall #3.
 
-### 不覆盖什么
+### What is NOT overridden
 
-代理是**进程级环境变量**，只影响遵循 `*_proxy` 的工具（curl / git / wget / npm / pip / apt）。**Docker daemon 的 pull 走 `/etc/docker/daemon.json`，不受影响**；已在运行的常驻服务也改不了，需重启。
+The proxy is **process-level env vars**, affecting only tools that honor `*_proxy` (curl / git / wget / npm / pip / apt). **Docker daemon pulls go through `/etc/docker/daemon.json` and are unaffected**; already-running daemons can't be changed either — restart them.
 
-## 模块
+## Modules
 
-| 模块 | 说明 |
+| Module | Description |
 | --- | --- |
-| [`pi-web`](tools/pi-web/README.md) | 把 `@agegr/pi-web` 部署为 macOS launchd 常驻服务（HTTP Basic Auth + 自动重启） |
-| [`openmaic`](tools/openmaic/README.md) | [OpenMAIC](https://github.com/THU-MAIC/OpenMAIC) 统一运维 CLI，分发到 Linux 部署主机（安装 / 升级 / 备份 / 自检） |
-| [`windmill`](tools/windmill/README.md) | [Windmill](https://www.windmill.dev) 自托管运维 CLI，docker compose 部署（初始化 / 升级 / 备份 / 演练 / 自检） |
-| [`clash`](tools/clash/README.md) | Clash 订阅代理池，编排本地 mihomo 内核（自动测速选最快 / 失败切换 / 超 1 周自动刷新） |
+| [`pi-web`](tools/pi-web/README.md) | Deploys `@agegr/pi-web` as a macOS launchd service (HTTP Basic Auth + auto-restart) |
+| [`openmaic`](tools/openmaic/README.md) | [OpenMAIC](https://github.com/THU-MAIC/OpenMAIC) ops CLI, dispatched to Linux deploy hosts (install / upgrade / backup / doctor) |
+| [`windmill`](tools/windmill/README.md) | [Windmill](https://www.windmill.dev) self-host ops CLI, docker compose deploy (init / upgrade / backup / drill / doctor) |
+| [`clash`](tools/clash/README.md) | Clash subscription proxy pool, orchestrates local mihomo (auto speed-test / failover / auto-refresh after 1 week) |
+| [`base`](tools/base/README.md) | Shared base components (PostgreSQL 18 + Redis 7); each module gets its own DB |
 
-## 开发新模块
+### Bundled ops CLIs
 
-模块 = `tools/<name>/` 目录 + 在 `registry.sh` 登记。钩子契约见 [`docs/module-spec.md`](docs/module-spec.md)。最小模块只需一个 `install.sh`。
+The `tools/windmill/windmill` and `tools/openmaic/openmaic` files are full single-file ops CLIs (3.6k and 1.7k lines respectively) authored for this repo — they are the source of truth for operating Windmill/OpenMAIC deployments, not vendored third-party copies. They're large because they own the entire lifecycle (init/upgrade/rollback/backup/restore/migrate/drill/doctor, incl. Docker image-source blackhole detection and pull-stall handling). The core `aibox` manager is unaffected by their size.
 
-## 设计取舍
+## Developing a new module
 
-- **registry 用 shell 可 source 格式而非 JSON**：零运行时依赖、兼容 macOS 自带 bash 3.2，主 CLI 直接 source 即可，无需 `jq` / `python`。
-- **模块脚本落地缓存**：`aibox` 把模块脚本下载到 `~/.aibox/modules/<name>/` 再执行，钩子可复用 `lib.sh`，`svc.sh` 透传不每次联网。
-- **自更新 = 幂等重装**：`aibox self update` 重新 `curl|bash install.sh` 覆盖主 CLI，无 git / Releases 依赖。
-- **平台由模块自报**：`platform=darwin` 的模块在非 macOS 仅警告，实际限制由模块钩子自身报错。
-- **`AIBOX_RAW` 可覆盖**：支持本地源 / 镜像（如 `AIBOX_RAW=file:///path/to/aibox aibox list-available`）。
-- **模块不一定带常驻服务**：`pi-web` 管 launchd 服务，而 `openmaic` 只分发一个 CLI 并把 `aibox openmaic <action>` 透传给它 —— 模块契约里 `svc.sh` 是「动作入口」，不是「必须是守护进程」。
-- **模块运行环境自报**：安装落点跨平台的模块（如 `openmaic`）不设 `platform`，由 CLI 在执行时拒绝不支持的平台并给出提示，比安装期硬拦截更清楚（安装本身在任何系统都无副作用）。
-- **代理配置与运行时分离**：配置写 `~/.aibox/config`（600），启动时导出为环境变量。因此它既覆盖 `aibox` 自身，也覆盖它派生的模块钩子（子进程继承），无需改任何现有模块代码。跨机器 / 跨时间那一层（模块在别处自己联网）必须由模块把值写进自己的配置文件 —— 环境变量本来就跨不过去，这不是取巧，是边界。
-- **代理失效选确定性，不做静默回退**：代理不通就报错。静默回退会让"代理已坏"表现成"每次都慢一点"，比直接失败更难查。配套给了 `test` / `off` / `--no-proxy` 三个出口，不至于走投无路。
-- **不碰用户的 shell 配置**：`aibox proxy set` 只写自己的配置，不往 `~/.zshrc` 注入 —— 全局代理会影响本不该走代理的服务，超出 aibox 的职责。要全局生效用 `eval "$(aibox proxy env)"`。
-- **clash 池不自解析订阅 yaml**：`aibox clash` 把订阅 URL 写进 mihomo 的 `proxy-providers`，拉取/解析/测速/切换全交给内核——纯 bash 不写 yaml 解析（脆弱），订阅格式变化由 mihomo 适配。
+A module = a `tools/<name>/` directory + a `module.yaml` declaration (the source of truth; the registry is discovered from `tools/*/module.yaml`). The hook contract is in [`docs/module-spec.md`](docs/module-spec.md). A minimal module needs only an `install.sh`.
+
+```bash
+# local trial against your working tree, no network:
+AIBOX_RAW=file:///path/to/aibox aibox list-available
+AIBOX_RAW=file:///path/to/aibox aibox install <your-module>
+```
+
+## Design tradeoffs
+
+- **Registry uses a shell-sourceable format, not JSON**: zero runtime dependencies, compatible with macOS bash 3.2; the main CLI sources it directly, no `jq` / `python`.
+- **Module scripts are cached on disk**: `aibox` downloads module scripts to `~/.aibox/modules/<name>/` before executing; hooks can reuse `lib.sh`, and `svc.sh` pass-through doesn't re-fetch every time.
+- **Self-update = idempotent re-bootstrap**: `aibox self update` re-runs `curl|bash install.sh` to overwrite the main CLI, with no git / Releases dependency. Optional `AIBOX_SHA256` / `AIBOX_VERIFY=1` add checksum defense in depth.
+- **Platform is self-reported by the module**: a `platform=darwin` module only warns on non-macOS; the real constraint is reported by the module hook at runtime.
+- **`AIBOX_RAW` is overridable**: supports local sources / mirrors (e.g. `AIBOX_RAW=file:///path/to/aibox aibox list-available`). Remote registry results are cached with a TTL to dodge the unauthenticated GitHub API rate limit.
+- **A module need not ship a daemon**: `pi-web` manages a launchd service, while `openmaic` only dispatches a CLI and passes `aibox openmaic <action>` through to it — in the contract, `svc.sh` is an "action entry point", not "must be a daemon".
+- **Module runtime environment is self-reported**: cross-platform install modules (like `openmaic`) don't set `platform`; the CLI refuses unsupported platforms at execution with a clear message, which is less false-positive-prone than hard-blocking at install time (install itself is side-effect-free on any OS).
+- **Proxy config is separated from runtime**: config is written to `~/.aibox/config` (600) and exported as env vars at startup. So it covers both `aibox` itself and the module hooks it spawns (child inheritance), with no changes to existing module code. The cross-machine / cross-time layer (a module networking elsewhere on its own) must be handled by the module writing the value into its own config file — env vars don't cross that boundary by nature; this isn't a trick, it's the boundary.
+- **Proxy failure is deterministic, no silent fallback**: if the proxy is down, it errors. Silent fallback would make "proxy broken" look like "a bit slow every time", which is harder to diagnose. `test` / `off` / `--no-proxy` are three escape hatches so you're never stuck.
+- **Doesn't touch your shell config**: `aibox proxy set` only writes its own config, never injects into `~/.zshrc` — a global proxy would affect services that shouldn't go through it, out of scope for aibox. For global effect use `eval "$(aibox proxy env)"`.
+- **clash pool doesn't parse the subscription yaml itself**: `aibox clash` writes the subscription URL into mihomo's `proxy-providers`; fetch/parse/speed-test/switch are all delegated to the kernel — pure bash shouldn't write a yaml parser (fragile), and subscription format changes are adapted by mihomo.
 
 ## License
 

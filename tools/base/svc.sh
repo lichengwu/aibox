@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# base 模块 — 服务动作钩子
-# aibox base <action> 透传到这里。
+# base module — service action hook.
+# `aibox base <action>` is forwarded here.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
@@ -17,8 +17,8 @@ restart)
   ;;
 status) cmd_status ;;
 createdb)
-  [ $# -ge 1 ] || die "用法: aibox base createdb <module> [用途]"
+  [ $# -ge 1 ] || die "Usage: aibox base createdb <module> [usage]"
   cmd_createdb "$@"
   ;;
-*) die "用法: aibox base {start|stop|restart|status|createdb <module> [用途]}" ;;
+*) die "Usage: aibox base {start|stop|restart|status|createdb <module> [usage]}" ;;
 esac

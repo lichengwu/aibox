@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# pi-web 模块 — 服务运维钩子（等价于原 pi-web-ctl start|stop|restart|status|logs|diagnose）
-# 用法: aibox pi-web <action>
+# pi-web module — service ops hook (equivalent to the original pi-web-ctl start|stop|restart|status|logs|diagnose)
+# Usage: aibox pi-web <action>
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
@@ -10,10 +10,10 @@ action="${1:-status}"
 case "$action" in
 start)
   if [ "$OS_KIND" = "Darwin" ]; then
-    [ ! -f "$PLIST" ] && die "$PLIST 不存在，请先 aibox install pi-web"
+    [ ! -f "$PLIST" ] && die "$PLIST does not exist; run: aibox install pi-web"
     launchctl bootstrap "gui/${UID_}" "$PLIST" 2>/dev/null || launchctl kickstart -k "gui/${UID_}/${LABEL}"
   else
-    [ ! -f "$UNIT_FILE" ] && die "${UNIT_FILE} 不存在，请先 aibox install pi-web"
+    [ ! -f "$UNIT_FILE" ] && die "${UNIT_FILE} does not exist; run: aibox install pi-web"
     loginctl enable-linger "${UID_}" 2>/dev/null || true
     systemctl --user start "$LABEL"
   fi
@@ -33,14 +33,14 @@ restart)
     if launchctl print "gui/${UID_}/${LABEL}" >/dev/null 2>&1; then
       launchctl kickstart -k "gui/${UID_}/${LABEL}"
     else
-      [ -f "$PLIST" ] || die "$PLIST 不存在，请先 aibox install pi-web"
+      [ -f "$PLIST" ] || die "$PLIST does not exist; run: aibox install pi-web"
       launchctl bootstrap "gui/${UID_}" "$PLIST"
     fi
   else
     if systemctl --user is-active --quiet "$LABEL" 2>/dev/null; then
       systemctl --user restart "$LABEL"
     else
-      [ -f "$UNIT_FILE" ] || die "${UNIT_FILE} 不存在，请先 aibox install pi-web"
+      [ -f "$UNIT_FILE" ] || die "${UNIT_FILE} does not exist; run: aibox install pi-web"
       systemctl --user start "$LABEL"
     fi
   fi
@@ -73,6 +73,6 @@ diagnose)
   lsof -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || echo "not listening"
   ;;
 *)
-  die "用法: aibox pi-web {start|stop|restart|status|logs|diagnose}"
+  die "Usage: aibox pi-web {start|stop|restart|status|logs|diagnose}"
   ;;
 esac

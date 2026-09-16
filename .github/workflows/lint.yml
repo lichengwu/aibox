@@ -1,9 +1,10 @@
 name: lint
 
-# 质量门：bash 语法 + shellcheck + 踩坑扫描 + module.yaml 规范 + 端口冲突。
-# - bash -n / shellcheck / gotchas：脚本质量（见 AGENTS.md 踩坑 #1 #2 #6 #8）
-# - module-lint：module.yaml 必填字段 + §2.2 子集合规（yq 权威校验，保证 awk 可解析）
-# - port-conflict：模块间端口冲突检测（静态声明 + CI 挡提交，见 spec §3）
+# Quality gate: bash syntax + shellcheck + gotcha scans + module.yaml rules + port conflicts + tests.
+# - bash -n / shellcheck / gotchas: script quality (see AGENTS.md pitfalls #1 #2 #6 #8)
+# - module-lint: module.yaml required fields + §2.2 subset (yq authoritative, keeps the awk parser safe)
+# - port-conflict: cross-module port conflicts (static declaration + CI gate, spec §3)
+# - tests: bats behavioral tests (proxy/installed/registry)
 
 on:
   push:
@@ -26,7 +27,7 @@ jobs:
           fail=0
           while IFS= read -r f; do
             if ! bash -n "$f"; then
-              echo "::error file=${f}::bash -n 语法错误"
+              echo "::error file=${f}::bash -n syntax error"
               fail=1
             fi
           done < <(git ls-files | grep -E '\.sh$|^(bin/aibox|tools/[^/]+/(openmaic|windmill))$')
@@ -43,7 +44,7 @@ jobs:
         run: |
           set -e
           mapfile -t files < <(git ls-files | grep -E '\.sh$|^(bin/aibox|tools/[^/]+/(openmaic|windmill))$')
-          # --shell=bash：lib.sh/registry.sh 是被 source 的库（无 shebang），显式指定 shell 避免 SC2148
+          # --shell=bash: lib.sh is a sourced library (no shebang); specify the shell explicitly to avoid SC2148.
           shellcheck --severity=error --external-sources --shell=bash "${files[@]}"
 
   bash32-gotchas:
@@ -59,12 +60,12 @@ jobs:
           for f in "${files[@]}"; do
             m1="$(grep -nP '\$[A-Za-z_][A-Za-z0-9_]*[，。、；：！？（）「」]' "$f" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
             if [ -n "$m1" ]; then
-              echo "::error file=${f}::踩坑 #1: 全角标点紧跟裸 \$VAR，改用 \${VAR}"
+              echo "::error file=${f}::gotcha #1: full-width punctuation right after a bare \$VAR; use \${VAR}"
               echo "$m1"; fail=1
             fi
             m8="$(grep -nP 'local\s+([A-Za-z_]\w*)\s*=\s*"[^"]*"\s+[A-Za-z_]\w*\s*=\s*"\$\{?\1' "$f" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
             if [ -n "$m8" ]; then
-              echo "::error file=${f}::踩坑 #8: local 同行引用前一个变量，拆成两行"
+              echo "::error file=${f}::gotcha #8: local references a prior var on the same line; split into two lines"
               echo "$m8"; fail=1
             fi
           done
@@ -79,52 +80,53 @@ jobs:
         run: |
           sudo wget -qO/usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
-      - name: 校验 module.yaml（必填 + §2.2 子集 + ports + files + lifecycle + dashboard + 全名）
+      - name: validate module.yaml (required + §2.2 subset + ports + files + lifecycle + dashboard + full names)
         run: |
           set -e
           fail=0
           for f in tools/*/module.yaml; do
             [ -f "$f" ] || continue
             name="$(yq '.name' "$f")"
-            # 必填字段
+            # required fields
             for key in name version description dir; do
-              yq -e ".$key" "$f" >/dev/null 2>&1 || { echo "::error file=$f::缺必填字段 $key"; fail=1; }
+              yq -e ".$key" "$f" >/dev/null 2>&1 || { echo "::error file=$f::missing required field $key"; fail=1; }
             done
-            yq -e '.hooks.install' "$f" >/dev/null 2>&1 || { echo "::error file=$f::缺 hooks.install"; fail=1; }
-            # §2.2 子集合规：锚点/引用(&name/*name)、块标量(key:|/>),  流式(key:{/[]/-{/-[)；注：引号串里的 ${...} / <...> 是标量值，不算
+            yq -e '.hooks.install' "$f" >/dev/null 2>&1 || { echo "::error file=$f::missing hooks.install"; fail=1; }
+            # §2.2 subset compliance: anchors/refs (&name/*name), block scalars (key:|/>), flow (key:{/[]/-{/-[);
+            # note: ${...} / <...> inside quoted strings are scalar values, not flagged.
             if grep -nE '[&*][A-Za-z_]|:[[:space:]]*[|>]|:[[:space:]]*[[{]|^[[:space:]]*-[[:space:]]*[[{]' "$f" | grep -vE '^[0-9]+:[[:space:]]*#'; then
-              echo "::error file=$f::含 §2.2 禁止的 YAML 语法（锚点/块标量/流式），awk 解析器不支持"; fail=1
+              echo "::error file=$f::contains §2.2-forbidden YAML syntax (anchors/block scalars/flow); awk parser unsupported"; fail=1
             fi
-            # ports 格式：端口/协议:用途
+            # ports format: port/proto:usage
             for p in $(yq -o=ts '.ports[]' "$f" 2>/dev/null || true); do
-              echo "$p" | grep -qE '^[0-9]+/(tcp|udp):' || { echo "::error file=$f::ports 格式错（应为 端口/协议:用途）: $p"; fail=1; }
+              echo "$p" | grep -qE '^[0-9]+/(tcp|udp):' || { echo "::error file=$f::ports format wrong (expected port/proto:usage): $p"; fail=1; }
             done
-            # files：列出的额外文件必须存在于 tools/<name>/
+            # files: listed extra files must exist under tools/<name>/
             for ff in $(yq -o=ts '.files[]' "$f" 2>/dev/null || true); do
-              [ -f "tools/$name/$ff" ] || { echo "::error file=$f::files 列出但仓库不存在: $ff"; fail=1; }
+              [ -f "tools/$name/$ff" ] || { echo "::error file=$f::files lists but not in repo: $ff"; fail=1; }
             done
-            # lifecycle：含 start 的模块须含全 lifecycle 集（start/stop/restart/status/logs）
+            # lifecycle: a module with start must have the full lifecycle set (start/stop/restart/status/logs)
             if yq -o=ts '.actions[]' "$f" 2>/dev/null | grep -qx start; then
               for a in start stop restart status logs; do
-                yq -o=ts '.actions[]' "$f" 2>/dev/null | grep -qx "$a" || { echo "::error file=$f::服务型模块（含 start）缺 lifecycle 动作: $a"; fail=1; }
+                yq -o=ts '.actions[]' "$f" 2>/dev/null | grep -qx "$a" || { echo "::error file=$f::service-type module (has start) missing lifecycle action: $a"; fail=1; }
               done
             fi
-            # dashboard：只允许 endpoints + hint 子字段
+            # dashboard: only endpoints + hint subfields allowed
             while IFS= read -r k; do
               [ -z "$k" ] && continue
-              case "$k" in endpoints|hint) ;; *) echo "::error file=$f::dashboard 只允许 endpoints/hint，出现: $k"; fail=1;; esac
+              case "$k" in endpoints|hint) ;; *) echo "::error file=$f::dashboard allows only endpoints/hint; got: $k"; fail=1;; esac
             done < <(yq '.dashboard' "$f" 2>/dev/null | grep -E '^[a-z_-]+:' | sed -E 's/^([a-z_-]+):.*/\1/')
-            # services/provides：component 名须全名白名单
+            # services/provides: component name must be a full-name whitelist entry
             for c in $(yq -o=ts '.services[]' "$f" 2>/dev/null | sed -E 's/^[^:]*://; s/#.*//' || true) \
                      $(yq -o=ts '.provides[]' "$f" 2>/dev/null || true); do
-              case "$c" in postgres|redis) ;; *) echo "::error file=$f::component 须全名白名单 (postgres|redis)，出现: $c"; fail=1;; esac
+              case "$c" in postgres|redis) ;; *) echo "::error file=$f::component must be a full-name whitelist entry (postgres|redis); got: $c"; fail=1;; esac
             done
             echo "  ok: $f"
           done
           exit $fail
 
   deps-lint:
-    name: deps-lint (services/provides + 禁硬编码凭据)
+    name: deps-lint (services/provides + no hardcoded creds)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -132,16 +134,16 @@ jobs:
         run: |
           sudo wget -qO/usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
-      - name: services/provides 校验 + 禁硬编码凭据
+      - name: services/provides validation + no hardcoded creds
         run: |
           set -e
           fail=0
-          # 1. 禁硬编码凭据：tools/*/docker-compose*.yml（base 除外）不得出现 aibox:aibox@ / postgres://aibox:
+          # 1. No hardcoded credentials: tools/*/docker-compose*.yml (except base) must not contain aibox:aibox@ / postgres://aibox:
           while IFS= read -r line; do
-            echo "::error file=${line%%:*}::compose 禁硬编码凭据（须用 \${AIBOX_POSTGRES_*} 经 base.env 注入）: ${line}"
+            echo "::error file=${line%%:*}::compose must not hardcode credentials (use \${AIBOX_POSTGRES_*} via base.env): ${line}"
             fail=1
           done < <(grep -rnE 'aibox:aibox@|postgres://aibox:' tools/*/docker-compose*.yml 2>/dev/null | grep -v 'tools/base/' || true)
-          # 2. services provider/component 必须命中某 provider 的 provides；dbname 须为 <module> 或 <module>_<用途>
+          # 2. services provider/component must match some provider's provides; dbname must be <module> or <module>_<usage>
           declare -A provides
           for f in tools/*/module.yaml; do
             [ -f "$f" ] || continue
@@ -158,16 +160,16 @@ jobs:
               rest="${svc#*:}"
               component="${rest%%#*}"
               case "$svc" in *'#'*) db="${rest#*#}";; *) db="";; esac
-              [ -n "${provides["${provider}:${component}"]:-}" ] || { echo "::error file=$f::services ${svc} 未命中 provider ${provider} 的 provides ${component}"; fail=1; }
+              [ -n "${provides["${provider}:${component}"]:-}" ] || { echo "::error file=$f::services ${svc} doesn't match provider ${provider}'s provides ${component}"; fail=1; }
               if [ -n "$db" ]; then
                 case "$db" in
                   "$m"|"$m"_*) ;;
-                  *) echo "::error file=$f::services dbname 须为 ${m} 或 ${m}_<用途>，实际: $db"; fail=1;;
+                  *) echo "::error file=$f::services dbname must be ${m} or ${m}_<usage>; got: $db"; fail=1;;
                 esac
               fi
             done
           done
-          [ $fail -eq 0 ] && echo "✅ deps-lint 通过"
+          [ $fail -eq 0 ] && echo "✅ deps-lint passed"
           exit $fail
 
   port-conflict:
@@ -179,7 +181,7 @@ jobs:
         run: |
           sudo wget -qO/usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
-      - name: 检测模块间端口冲突（端口+协议唯一）
+      - name: detect cross-module port conflicts (port+proto must be unique)
         run: |
           set -e
           declare -A owner
@@ -188,16 +190,29 @@ jobs:
             [ -f "$f" ] || continue
             m=$(yq '.name' "$f")
             for p in $(yq -o=ts '.ports[]' "$f" 2>/dev/null || true); do
-              pp="${p%%/*}"   # 端口
+              pp="${p%%/*}"   # port
               proto=$(echo "$p" | sed -E 's#^[0-9]+/([a-z]+):.*#\1#')
               key="${pp}/${proto}"
               if [ -n "${owner[$key]:-}" ]; then
-                echo "::error::端口 $key 冲突：${owner[$key]} 与 $m 都声明了"
+                echo "::error::port $key conflict: ${owner[$key]} and $m both declare it"
                 dup=1
               else
                 owner[$key]="$m"
               fi
             done
           done
-          [ $dup -eq 0 ] && echo "✅ 端口无冲突"
+          [ $dup -eq 0 ] && echo "✅ no port conflicts"
           exit $dup
+
+  tests:
+    name: bats tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: install bats
+        run: npm install -g bats
+      - name: run tests
+        run: bats tests/*.bats

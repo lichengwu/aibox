@@ -54,4 +54,4 @@ upstream:
 dashboard:
   endpoints:
     - "http://127.0.0.1:${PORT}"
-  hint: "凭据见 .env.local；DATABASE_URL 由 shared.yml 用 ${AIBOX_POSTGRES_*} 构造（base.env 注入）"
+  hint: "Credentials in .env.local; DATABASE_URL built by shared.yml from ${AIBOX_POSTGRES_*} (injected via base.env)"

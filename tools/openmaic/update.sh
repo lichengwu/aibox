@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# openmaic 模块 — 更新钩子
-# 逻辑：把模块内随附的 CLI 与已安装副本比对，内容一致即跳过（幂等）；
-#       有新版本或内容有差异则覆盖安装。
-# 参数：aibox 会透传 --restart / --no-restart —— 本模块无服务可重启，
-#       服务重启由部署主机上的 `openmaic restart` 负责，故忽略这两个参数。
+# openmaic module — update hook
+# Logic: compare the CLI shipped in the module with the installed copy; skip if identical (idempotent);
+#       if a newer version or content differs, overwrite-install.
+# Args: aibox passes through --restart / --no-restart — this module has no service to restart,
+#       service restart is handled by `openmaic restart` on the deploy host, so these two args are ignored.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 . "${DIR}/lib.sh"
 
 if [ ! -f "${CLI_SRC}" ]; then
-  die "模块内找不到 CLI：${CLI_SRC}（可执行 aibox update openmaic 重新拉取）"
+  die "CLI not found in module: ${CLI_SRC} (run 'aibox update openmaic' to fetch again)"
 fi
 
 if [ ! -f "${CLI_DEST}" ]; then
-  log "本机未安装 openmaic，改为安装"
+  log "openmaic not installed locally, installing instead"
   do_install
   ensure_path
   host_notice
@@ -25,15 +25,15 @@ old="$(installed_version || true)"
 new="$(cli_version)"
 
 if [ "${old}" = "${new}" ] && cmp -s "${CLI_SRC}" "${CLI_DEST}"; then
-  log "openmaic 已是最新（${new}），无需更新"
-  # CLI 没变，但 aibox 的代理配置可能刚变过 —— 仍同步一次（幂等）
+  log "openmaic is up to date (${new}), no update needed"
+  # CLI unchanged, but aibox's proxy config may have just changed — sync once more (idempotent)
   sync_proxy_to_conf
   exit 0
 fi
 
-log "更新 openmaic CLI ${old:-未知} -> ${new} ..."
+log "updating openmaic CLI ${old:-unknown} -> ${new} ..."
 do_install
 ensure_path
 echo
-log "落点 : ${CLI_DEST}"
-log "若在部署主机上，服务本身用: openmaic restart / openmaic upgrade"
+log "dest    : ${CLI_DEST}"
+log "if on the deploy host, manage the service itself with: openmaic restart / openmaic upgrade"

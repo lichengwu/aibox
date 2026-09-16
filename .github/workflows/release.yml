@@ -1,8 +1,10 @@
 name: release
 
-# push 到 main 时自动发布 release：读取 bin/aibox 的 AIBOX_VERSION，
-# 若远程无对应 v<version> tag，则自动建 tag + 发 release（notes 从上一 tag 自动生成）。
-# 版本号未变则跳过（幂等，可重复 push）。详见 AGENTS.md「版本号与发布流程」。
+# Auto-publish a release on push to main: reads AIBOX_VERSION from bin/aibox.
+# If the remote has no matching v<version> tag, it creates the tag + release (notes auto-generated
+# from the previous tag). If the version is unchanged it skips (idempotent, safe to re-push).
+# A SHA256SUMS sidecar is attached so `AIBOX_VERIFY=1` can verify the bootstrap.
+# See AGENTS.md "Versioning & release flow".
 
 on:
   push:
@@ -40,6 +42,12 @@ jobs:
             echo "::notice::creating release for ${RELEASE_TAG}"
           fi
 
+      - name: create SHA256SUMS sidecar
+        if: steps.t.outputs.exists != 'true'
+        run: |
+          sha256sum bin/aibox install.sh > SHA256SUMS
+          cat SHA256SUMS
+
       - name: create release
         if: steps.t.outputs.exists != 'true'
         env:
@@ -49,4 +57,5 @@ jobs:
           gh release create "${RELEASE_TAG}" \
             --target main \
             --title "aibox ${RELEASE_TAG}" \
-            --generate-notes
+            --generate-notes \
+            SHA256SUMS

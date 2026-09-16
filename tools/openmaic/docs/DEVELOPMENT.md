@@ -1,76 +1,76 @@
-# openmaic 开发指南
+# openmaic Development Guide
 
-> AI 据此升级本模块。
+> AI uses this guide to upgrade this module.
 
 ## upstream
 
-- 主页: <https://github.com/THU-MAIC/OpenMAIC>
-- 文档: <https://github.com/THU-MAIC/OpenMAIC#readme>
+- Homepage: <https://github.com/THU-MAIC/OpenMAIC>
+- Docs: <https://github.com/THU-MAIC/OpenMAIC#readme>
 
-## 安装手册
+## Installation
 
-- aibox 模块: `aibox install openmaic`（装 CLI 到 `~/.local/bin`，跨平台拷文件）
-- upstream 部署: `openmaic install`（在 Linux 部署主机，docker compose 起 OpenMAIC 本体）
+- aibox module: `aibox install openmaic` (installs the CLI to `~/.local/bin`, copies files cross-platform)
+- upstream deployment: `openmaic install` (on the Linux deployment host, brings up OpenMAIC itself via docker compose)
 
-## 测试手册
+## Testing
 
-- 自检: `openmaic doctor`
-- 状态: `openmaic status`
-- 健康: `openmaic health`
+- Self-check: `openmaic doctor`
+- Status: `openmaic status`
+- Health: `openmaic health`
 
-## 本模块配置情况
+## Module Configuration
 
-- 端口: 3000/tcp:app（OpenMAIC http）+ 5432/tcp:pg
-- 凭据: `.env.local`（API Key、访问密码）
-- 落点: 部署根 `$AIBOX_HOME/apps/openmaic`；配置 `/etc/openmaic/openmaic.conf`（代理下发 `OPENMAIC_PROXY_URL`）
-- 自启动: 无常驻（svc 透传 CLI）
-- 依赖: docker + docker-compose + git（不限 OS，`require_docker` 检查；macOS Docker Desktop / Linux docker）
-- 定制点: CLI 是仓库内 `tools/openmaic/openmaic`（单文件 bash，兼容 3.2 用固定 fd 9 而非 bash4 `exec {fd}>`）
+- Ports: 3000/tcp:app (OpenMAIC http) + 5432/tcp:pg
+- Credentials: `.env.local` (API Key, access password)
+- Deployment target: app root `$AIBOX_HOME/apps/openmaic`; config `/etc/openmaic/openmaic.conf` (delivers `OPENMAIC_PROXY_URL` via proxy)
+- Autostart: none resident (svc passes through to the CLI)
+- Dependencies: docker + docker-compose + git (OS-agnostic, checked by `require_docker`; macOS Docker Desktop / Linux docker)
+- Customization points: the CLI is the in-repo `tools/openmaic/openmaic` (single-file bash, 3.2-compatible using fixed fd 9 instead of bash4 `exec {fd}>`)
 
-## 升级流程
+## Upgrade Procedure
 
-1. 查 upstream 新版: `openmaic upgrade --check`
-2. `aibox update openmaic`（更新 CLI 副本）+ `openmaic upgrade`（部署主机升级 OpenMAIC 本体）
-3. 验证: `openmaic status` + `openmaic health`
+1. Check upstream latest version: `openmaic upgrade --check`
+2. `aibox update openmaic` (updates the CLI copy) + `openmaic upgrade` (upgrades OpenMAIC itself on the deployment host)
+3. Verify: `openmaic status` + `openmaic health`
 
-## 连共享 base PG（省资源，多模块共享）
+## Connecting to the shared base PG (resource-saving, shared across modules)
 
-openmaic 的 DB 连接在 `.env.local`（`DATABASE_URL=postgres://openmaic:...`）。连共享 base PG
-**已由 CLI 驱动**（`OPENMAIC_SHARED_PG=1` 开启），不再需手工改上游 compose：
+openmaic's DB connection lives in `.env.local` (`DATABASE_URL=postgres://openmaic:...`). Connecting to the shared base PG
+is **CLI-driven** (enabled by `OPENMAIC_SHARED_PG=1`); no manual edits to the upstream compose are needed anymore:
 
-1. 启共享 base：`aibox base start`（PG 35432，容器名 `aibox-base-postgres`）
-2. 开启共享模式：`/etc/openmaic/openmaic.conf` 写 `OPENMAIC_SHARED_PG=1`
-   （或临时 `OPENMAIC_SHARED_PG=1 openmaic install`）
-3. `openmaic install` —— CLI 自动：
-   - 落 `docker-compose.shared.yml` 到 `$APP_DIR`（`apply_local_patches` 内幂等生成）
-   - `compose()` 调用自动 `-f` 追加该 override（up/install/upgrade/backup 等全生效）
-   - 若 `aibox-base-postgres` 在跑，`CREATE DATABASE openmaic`（幂等；未跑则提示不阻断）
-   - override 用 `environment: DATABASE_URL=postgres://aibox:aibox@aibox-base-postgres:5432/openmaic`
-     覆盖 `.env.local` 的 `DATABASE_URL`（environment 优先级高于 env_file），并给 `openmaic`
-     service 加 `aibox-base` network；`postgres` service `replicas: 0` 不起本地 PG
-4. `.env.local` 仍需存在（放 `PERSISTENCE_DEV_TOKEN`、`QWEN_API_KEY`、`ACCESS_CODE` 等），
-   只是其中的 `DATABASE_URL` 会被 override 覆盖 —— 不必改它。
+1. Start the shared base: `aibox base start` (PG 35432, container name `aibox-base-postgres`)
+2. Enable shared mode: write `OPENMAIC_SHARED_PG=1` to `/etc/openmaic/openmaic.conf`
+   (or temporarily `OPENMAIC_SHARED_PG=1 openmaic install`)
+3. `openmaic install` — the CLI automatically:
+   - Writes `docker-compose.shared.yml` to `$APP_DIR` (generated idempotently inside `apply_local_patches`)
+   - `compose()` calls automatically append this override via `-f` (applies to up/install/upgrade/backup, etc.)
+   - If `aibox-base-postgres` is running, runs `CREATE DATABASE openmaic` (idempotent; if not running, prompts but does not block)
+   - The override uses `environment: DATABASE_URL=postgres://aibox:aibox@aibox-base-postgres:5432/openmaic`
+     to override `DATABASE_URL` from `.env.local` (environment takes precedence over env_file), and adds the `aibox-base`
+     network to the `openmaic` service; the `postgres` service sets `replicas: 0` so the local PG does not start
+4. `.env.local` still must exist (holds `PERSISTENCE_DEV_TOKEN`, `QWEN_API_KEY`, `ACCESS_CODE`, etc.); its `DATABASE_URL`
+   is simply overridden by the override — no need to change it.
 
-**手动激活**（不经 conf）：把 `tools/openmaic/docker-compose.shared.yml` cp 到
-`$APP_DIR/docker-compose.shared.yml`，CLI 检测到文件即激活（`shared_pg_active` 以文件在位为准）。
+**Manual activation** (without conf): copy `tools/openmaic/docker-compose.shared.yml` to
+`$APP_DIR/docker-compose.shared.yml`; the CLI detects the file and activates it (`shared_pg_active` is determined by the file's presence).
 
-**降级**（回独立 PG）：`OPENMAIC_SHARED_PG=0` 后 `openmaic up`（CLI 会删 override），
-或手工删 `$APP_DIR/docker-compose.shared.yml`。
+**Downgrade** (back to a standalone PG): set `OPENMAIC_SHARED_PG=0` then `openmaic up` (the CLI deletes the override),
+or manually delete `$APP_DIR/docker-compose.shared.yml`.
 
-`openmaic doctor` 在共享模式下改查 `aibox-base-postgres` 容器在跑 + override 在位；
-`openmaic backup/restore/db` 在共享模式下走 `docker exec aibox-base-postgres pg_dump/psql`（不再找本地 postgres）。
+`openmaic doctor` checks, under shared mode, that the `aibox-base-postgres` container is running + the override is in place;
+`openmaic backup/restore/db`, under shared mode, go through `docker exec aibox-base-postgres pg_dump/psql` (no longer looks up the local postgres).
 
-### 存量数据迁移（独立 PG → 共享 PG）
+### Existing Data Migration (standalone PG → shared PG)
 
-1. `openmaic backup`（pg_dump 独立 PG）
-2. `aibox base start` + `aibox base createdb openmaic`（或 `OPENMAIC_SHARED_PG=1 openmaic install` 自动建）
-3. 恢复：`gunzip -c <备份> | docker exec -i aibox-base-postgres psql -U aibox -d openmaic`
-   （等价于切到共享模式后 `openmaic restore <备份>`）
-4. `OPENMAIC_SHARED_PG=1 openmaic up` + 验证数据
+1. `openmaic backup` (pg_dump the standalone PG)
+2. `aibox base start` + `aibox base createdb openmaic` (or `OPENMAIC_SHARED_PG=1 openmaic install` creates it automatically)
+3. Restore: `gunzip -c <backup> | docker exec -i aibox-base-postgres psql -U aibox -d openmaic`
+   (equivalent to `openmaic restore <backup>` after switching to shared mode)
+4. `OPENMAIC_SHARED_PG=1 openmaic up` + verify data
 
-**降级**：`OPENMAIC_SHARED_PG=0` + 删 override + `openmaic up` 起独立 PG。
+**Downgrade**: `OPENMAIC_SHARED_PG=0` + delete the override + `openmaic up` to bring up the standalone PG.
 
-> 注：上游 compose 是 OpenMAIC 源码自带（git clone），本模块**不修改上游文件** —— 共享 PG
-> 完全靠 CLI 生成的 override 叠加（`docker compose -f docker-compose.yml -f docker-compose.shared.yml`），
-> 降级只需删 override，干净可逆。override 文件 `tools/openmaic/docker-compose.shared.yml` 是
-> 仓库内参考副本，与 CLI `_shared_override_write` heredoc 内容一致（改一处同步另一处）。
+> Note: the upstream compose is bundled with the OpenMAIC source (git clone); this module **does not modify upstream files** — the shared PG
+> relies entirely on the CLI-generated override layered on top (`docker compose -f docker-compose.yml -f docker-compose.shared.yml`);
+> downgrading is as simple as deleting the override, clean and reversible. The override file `tools/openmaic/docker-compose.shared.yml` is
+> an in-repo reference copy whose content matches the CLI `_shared_override_write` heredoc (change one and sync the other).

@@ -1,139 +1,139 @@
-# module.yaml 重构与公共组件依赖传播设计
+# module.yaml Refactor and Shared-Component Dependency Propagation Design
 
-> 状态：设计稿（spec-only，本轮不改任何 `.sh` / `module.yaml` / `docker-compose*.yml` 实际内容）
-> 日期：2026-09-16
-> 范围：① module.yaml 字段去冗余（actions / files / dashboard）；② 公共组件（PG/Redis）依赖声明 + 连接信息传播规范
-> 关联：本设计是对 [`docs/module-system-spec.md`](module-system-spec.md) 的增量修订，落地后 spec 相应章节同步更新
-> 原则：**尽量简单、有扩展性**。公共组件传播不引入 codegen —— 一份共享 env 文件 + compose `--env-file` live 读 + 模块引用变量。
+> Status: Design draft (spec-only; this round does not modify any actual `.sh` / `module.yaml` / `docker-compose*.yml` content)
+> Date: 2026-09-16
+> Scope: ① Remove redundancy from module.yaml fields (actions / files / dashboard); ② Shared-component (PG/Redis) dependency declaration + connection-info propagation spec
+> Related: This design is an incremental revision of [`docs/module-system-spec.md`](module-system-spec.md); after landing, the corresponding spec sections will be updated accordingly
+> Principle: **Keep it simple and extensible.** Shared-component propagation introduces no codegen — one shared env file + compose `--env-file` live read + module-referenced variables.
 
 ---
 
 ## 0. TL;DR
 
-- **files**：标准 5 文件（`lib.sh install.sh uninstall.sh update.sh svc.sh`）隐式默认，module.yaml 只列**额外**文件。awk 解析器取「标准集 ∪ files」做 union。
-- **actions**：保留全列，新增《公共动作契约》定义 lifecycle 集语义；服务型 = 派生自 `actions` 含 `start`（无额外字段）；CLI 在 `aibox <module>`（无动作）时把声明的 actions 列出来当 help，不做每次调用校验。
-- **dashboard**：yaml 只留 `endpoints[]` + `hint`（pre-install fallback），运行时一律走 `lib.sh` 的 `dashboard_info()`（已装覆盖 yaml）。
-- **公共组件**：`base` 作为 **provider**，`base start` 写一份 `$AIBOX_HOME/base.env`（`AIBOX_POSTGRES_*` / `AIBOX_REDIS_*`，单一源）。消费模块 module.yaml 声明 `services: [base:postgres#windmill]`。
-- **传播（无生成器）**：aibox 调度 compose 时，为声明了 `services` 的模块自动追加 `--env-file $AIBOX_HOME/base.env`；模块**手写一份稳定**的 `docker-compose.shared.yml`（网络 join + `replicas:0` + `environment` 里用 `${AIBOX_POSTGRES_*}` 构造 `DATABASE_URL`，**零硬编码凭据**）；模块自己 `.env` 写 `AIBOX_POSTGRES_DB=<module>`。改 base 凭据/端口 → `base restart` 重写 base.env → 下一次 `aibox <module> restart`（compose up）插值取新值。**一处改，零模块文件改动。**
-- **组件名一律全名**：`postgres`、`redis`，不用 `pg` 这类简称（env 变量、component key、compose service/container 命名全程一致）。
+- **files**: The standard 5 files (`lib.sh install.sh uninstall.sh update.sh svc.sh`) are implicit defaults; module.yaml lists only **extra** files. The awk parser takes the union of "standard set ∪ files".
+- **actions**: Keep the full list; add a new "Common Action Contract" defining the semantics of the lifecycle set; service-type = derived from `actions` containing `start` (no extra field); when the CLI runs `aibox <module>` (no action), it lists the declared actions as help, without validating on every invocation.
+- **dashboard**: yaml keeps only `endpoints[]` + `hint` (pre-install fallback); at runtime everything goes through `lib.sh`'s `dashboard_info()` (installed overrides yaml).
+- **Shared components**: `base` acts as the **provider**; `base start` writes a `$AIBOX_HOME/base.env` (`AIBOX_POSTGRES_*` / `AIBOX_REDIS_*`, single source). Consumer modules declare `services: [base:postgres#windmill]` in module.yaml.
+- **Propagation (no generator)**: When aibox schedules compose, for modules that declare `services` it automatically appends `--env-file $AIBOX_HOME/base.env`; the module **hand-writes one stable** `docker-compose.shared.yml` (network join + `replicas:0` + constructs `DATABASE_URL` in `environment` using `${AIBOX_POSTGRES_*}`, **zero hardcoded credentials**); the module's own `.env` sets `AIBOX_POSTGRES_DB=<module>`. Changing base credentials/port → `base restart` rewrites base.env → the next `aibox <module> restart` (compose up) interpolates the new values. **Change once, zero module-file edits.**
+- **Component names are always full names**: `postgres`, `redis`; no abbreviations like `pg` (env variables, component keys, and compose service/container naming stay consistent throughout).
 
 ---
 
-## 1. 背景：当前的冗余与脆弱点
+## 1. Background: Current Redundancy and Fragility
 
-### 1.1 actions 纯声明、从不被读
+### 1.1 actions is purely declarative, never read
 
-`bin/aibox` 的 `cmd_module_action` 把动作直接转发给 `svc.sh`，**从不读 module.yaml 的 `actions` 字段**（grep `_actions` / `module_field … action` 在 CLI 中零命中）。后果：
+`bin/aibox`'s `cmd_module_action` forwards actions directly to `svc.sh` and **never reads the `actions` field of module.yaml** (grep for `_actions` / `module_field … action` yields zero hits in the CLI). Consequences:
 
-- 每个模块重复列近似的动作表，但表本身没有约束力；
-- `start/stop/restart/status/logs` 在 5 个模块里语义不统一（`status` 各写各的）；
-- 写错动作名不会被任何环节挡住；
-- `aibox <module>`（无动作）只打印「用法」，不告诉用户该模块支持哪些动作。
+- Every module repeats a near-identical action list, but the list itself has no binding force;
+- `start/stop/restart/status/logs` have inconsistent semantics across 5 modules (each `status` is implemented ad hoc);
+- A misspelled action name is not caught anywhere;
+- `aibox <module>` (no action) only prints "usage" and doesn't tell the user which actions the module supports.
 
-5 个模块的动作分布（2026-09-16 现状）：
+Action distribution across the 5 modules (status as of 2026-09-16):
 
-| 模块 | 公共 core | 专有 |
+| Module | Common core | Module-specific |
 | --- | --- | --- |
 | base | start/stop/restart/status | createdb |
 | clash | start/stop/restart/status/logs | refresh/set/select/test/doctor |
 | pi-web | start/stop/restart/status/logs | diagnose |
-| openmaic | status/logs | up/down/restart/upgrade/rollback/backup/restore/db/config/models/install/clean/health/doctor/version/render/powerlog/url（透传 CLI，**不含 start**） |
+| openmaic | status/logs | up/down/restart/upgrade/rollback/backup/restore/db/config/models/install/clean/health/doctor/version/render/powerlog/url (pass-through CLI, **does not include start**) |
 | windmill | status/logs | up/down/restart/shell/credentials/systemd/destroy/backup/upgrade/rollback/check/deploy/restore/drill/snapshots/init/version/doctor |
 
-**结论**：`start/stop/restart/status/logs` 是近乎通用的 lifecycle core；其余真正模块专有。所以「公共层定义」的对象是**这套 lifecycle 契约**，不是把动作清单上提到全局（清单仍须模块自治、可变）。
+**Conclusion**: `start/stop/restart/status/logs` are nearly universal lifecycle core; the rest are truly module-specific. So the object of "common-layer definition" is **this lifecycle contract**, not hoisting the action list to global scope (the list remains module-autonomous and mutable).
 
-### 1.2 files 重复列标准集
+### 1.2 files duplicates the standard set
 
-5 个模块的 `files:` 都含同一份 `lib.sh install.sh uninstall.sh update.sh svc.sh`，外加零星额外项（`openmaic`/`windmill` 各自的 CLI、`base/docker-compose.yml`、`openmaic|windmill/docker-compose.shared.yml`）。标准集是 spec §2.3 既定默认，却被复制粘贴。
+All 5 modules' `files:` contain the same `lib.sh install.sh uninstall.sh update.sh svc.sh`, plus a few extra items (`openmaic`/`windmill` own CLIs, `base/docker-compose.yml`, `openmaic|windmill/docker-compose.shared.yml`). The standard set is the established default in spec §2.3, yet it is copy-pasted.
 
-### 1.3 dashboard 的 hint 与 runtime 重复
+### 1.3 dashboard's hint and runtime overlap
 
-spec §4.4 已规定运行时信息来自 `lib.sh` 的 `dashboard_info()`。module.yaml 的 `dashboard` 段原本定位是「未装时的静态 fallback」，但 `hint` 字符串常常把 `dashboard_info()` 会算出的凭据/端口再抄一遍。两处真值 → 漂移。
+spec §4.4 already specifies that runtime info comes from `lib.sh`'s `dashboard_info()`. The `dashboard` section of module.yaml was originally positioned as a "static fallback when not installed", but the `hint` string often re-copies the credentials/port that `dashboard_info()` would compute. Two sources of truth → drift.
 
-### 1.4 公共组件连接信息散落硬编码（最严重）
+### 1.4 Shared-component connection info is scattered and hardcoded (most severe)
 
-`tools/base/docker-compose.yml` 是 PG/Redis 实例的真实定义（`aibox:aibox@…:35432`），但 `openmaic/docker-compose.shared.yml` 与 `windmill/docker-compose.shared.yml` **逐字重抄**了连接串：
+`tools/base/docker-compose.yml` is the real definition of the PG/Redis instance (`aibox:aibox@…:35432`), but `openmaic/docker-compose.shared.yml` and `windmill/docker-compose.shared.yml` **copy the connection string verbatim**:
 
 ```yaml
-# tools/openmaic/docker-compose.shared.yml（现状，硬编码）
+# tools/openmaic/docker-compose.shared.yml (current, hardcoded)
 - DATABASE_URL=postgres://aibox:aibox@aibox-base-pg:5432/openmaic
 ```
 
-改 base 的端口（35432→35000）、用户、密码、镜像版本 → 依赖模块静默坏掉，无任何环节报警。且 **没有任何 module.yaml 字段**声明「我依赖 base 的 postgres，库名叫 X」——spec §5 只写了意图，把传播甩给人工维护 compose override。
+Changing base's port (35432→35000), user, password, or image version → dependent modules silently break, with no warning anywhere. And **there is no module.yaml field** declaring "I depend on base's postgres, with database name X" — spec §5 only describes the intent, leaving propagation to manually maintained compose overrides.
 
-> **本设计的解法不是再造一个生成器去替人工写 override**，而是：保留模块已有的手写 `docker-compose.shared.yml`（稳定结构：网络 join + `replicas:0`），**只把里面的硬编码凭据换成 `${AIBOX_POSTGRES_*}` 变量**，变量值由 base 写一份共享 env 文件、aibox 调 compose 时 live 注入。零生成、零额外文件。
+> **This design's solution is not to build yet another generator to replace hand-written overrides**, but rather: keep the module's existing hand-written `docker-compose.shared.yml` (stable structure: network join + `replicas:0`), **only replace the hardcoded credentials inside with `${AIBOX_POSTGRES_*}` variables**, whose values are written by base into a shared env file and injected live by aibox when invoking compose. Zero generation, zero extra files.
 
 ---
 
-## 2. 取舍：为何选这些方案
+## 2. Trade-offs: Why These Approaches
 
-| 决策点 | 选定 | 为何不选另一条 |
+| Decision point | Chosen | Why not the alternative |
 | --- | --- | --- |
-| **actions** | spec 定义公共 lifecycle 契约，模块仍列全部；服务型派生自含 `start` | ❌「只列额外动作、标准集隐式注入」：actions 不再自描述，看 yaml 看不全；help/CI 都要补注入逻辑。❌ 加 `lifecycle: passthrough` 字段：和「actions 里有没有 start」重复，多一处漂移。 |
-| **actions 读取** | CLI 只在无动作时列 actions 当 help；不做每次调用校验 | ❌「转发前校验声明 ∈ actions、提示不拦」：不挡就没约束力，还每次调用打噪音——最差两头。 |
-| **files** | 标准集隐式，只列额外 | ❌「显式全列 + lint 强制标准集存在」：仍重复列 5 行，新增标准文件要改所有模块。隐式 union 向后兼容（旧 yaml 列全也能跑）。 |
-| **dashboard** | yaml 只留 endpoints+hint（pre-install） | ❌「完全移除 yaml 字段」：未装时主 CLI 无 endpoint 提示，UX 退化。 |
-| **公共组件传播** | base 写一份 `base.env` + compose `--env-file` live 注入 + 模块手写稳定 override 用变量 | ❌「sync-deps 生成器模板化 override + `.env.aibox` + `base_conn_info`」：生成器要理解每个模块的 service 拓扑（哪个 join 网络、哪个 `replicas:0`）——这本就模块专有、手写最清楚；生成器等于重造模板引擎，产物要 .gitignore、要管重新生成触发、和手写文件冲突。模块已有手写 shared.yml，只需把凭据换成变量。 ❌「只写规范不建机制」：靠人工同步，治标不治本。 |
-| **组件命名** | 全名 `postgres`/`redis` | ❌ 简称 `pg`：可读性差、与 env 变量/compose service 命名割裂。 |
+| **actions** | Spec defines a common lifecycle contract; modules still list all actions; service-type derived from containing `start` | ❌ "List only extra actions, inject the standard set implicitly": actions are no longer self-describing; you can't see the full picture from the yaml; both help and CI need injection logic. ❌ Add a `lifecycle: passthrough` field: duplicates "whether actions contains start", adding another drift point. |
+| **actions reading** | CLI lists actions as help only when no action is given; no per-invocation validation | ❌ "Validate declared ∈ actions before forwarding, warn if not blocked": if it doesn't block it has no binding force, and it adds noise on every call — the worst of both worlds. |
+| **files** | Standard set implicit; list only extras | ❌ "Explicitly list all + lint to enforce the standard set exists": still duplicates 5 lines; adding a new standard file requires editing all modules. Implicit union is backward-compatible (old yaml that lists everything still works). |
+| **dashboard** | yaml keeps only endpoints+hint (pre-install) | ❌ "Remove the yaml field entirely": when not installed, the main CLI has no endpoint hint, degrading UX. |
+| **Shared-component propagation** | base writes a `base.env` + compose `--env-file` live injection + module hand-writes a stable override using variables | ❌ "sync-deps generator templating overrides + `.env.aibox` + `base_conn_info`": the generator must understand each module's service topology (which joins the network, which has `replicas:0`) — this is inherently module-specific and clearest when hand-written; the generator amounts to reinventing a template engine, its output needs .gitignore, regeneration triggers, and conflicts with hand-written files. The module already has a hand-written shared.yml; only the credentials need to become variables. ❌ "Only write a spec without building a mechanism": relies on manual sync, treating symptoms not causes. |
+| **Component naming** | Full names `postgres`/`redis` | ❌ Abbreviation `pg`: poor readability, decoupled from env-variable/compose-service naming. |
 
 ---
 
-## 3. module.yaml 新字段表（schema 增量）
+## 3. module.yaml New Field Table (schema increment)
 
-### 3.1 字段一览（★=本轮变更/新增）
+### 3.1 Field overview (★ = changed/new this round)
 
 ```yaml
-# tools/<name>/module.yaml —— 模块声明 source of truth
+# tools/<name>/module.yaml — module declaration source of truth
 name: windmill
 version: 1.1.0
 description: "..."
-platform: ""                      # 空=跨平台
+platform: ""                      # empty = cross-platform
 dir: tools/windmill
 
-deps:                             # 运行依赖（命令@平台:版本），不变
+deps:                             # runtime dependencies (command@platform:version), unchanged
   - docker
   - docker-compose
   - python3
 
-ports:                            # 端口/协议:用途，不变
+ports:                            # port/protocol:purpose, unchanged
   - 8080/tcp:http
 
-files:                            # ★ 改：只列「额外」文件；标准 5 文件隐式
-  - windmill                      #   模块自带 CLI
+files:                            # ★ changed: list only "extra" files; the standard 5 files are implicit
+  - windmill                      #   module's own CLI
 
-services:                         # ★ 新增：公共组件依赖（provider:component#dbname，全名）
-  - base:postgres#windmill        #   声明 → CI 校验 + auto-createdb + compose 自动 --env-file base.env
+services:                         # ★ new: shared-component dependencies (provider:component#dbname, full names)
+  - base:postgres#windmill        #   declaration → CI validation + auto-createdb + compose auto --env-file base.env
   - base:redis
 
-hooks:                            # 不变（install/uninstall/update/svc）
+hooks:                            # unchanged (install/uninstall/update/svc)
   install: install.sh
   uninstall: uninstall.sh
   update: update.sh
   svc: svc.sh
 
-actions:                          # ★ 改：仍列全部；含 start → 服务型，须满足 lifecycle 契约（见 §4）
+actions:                          # ★ changed: still lists all; containing start → service-type, must satisfy the lifecycle contract (see §4)
   - start
   - stop
   - restart
   - status
   - logs
-  - ...模块专有动作
+  - ...module-specific actions
 
-upstream:                         # 不变
+upstream:                         # unchanged
   homepage: ...
   docs: ...
 
-dashboard:                        # ★ 改：瘦身，只留两子字段
+dashboard:                        # ★ changed: slimmed down, only two subfields
   endpoints:
-    - "http://127.0.0.1:${PORT}"  #   静态模板（可用 ${PORT} 占位）
-  hint: "凭据见 CREDENTIALS.txt + .env"  #   一行 pre-install fallback
+    - "http://127.0.0.1:${PORT}"  #   static template (may use ${PORT} placeholder)
+  hint: "credentials in CREDENTIALS.txt + .env"  #   one-line pre-install fallback
 ```
 
-### 3.2 `provides`（仅 provider 模块，如 base）
+### 3.2 `provides` (provider modules only, e.g. base)
 
 ```yaml
 # tools/base/module.yaml
-provides:                         # ★ 新增：声明对外提供的组件（全名）
+provides:                         # ★ new: declares components exposed externally (full names)
   - postgres
   - redis
 ports:
@@ -141,77 +141,77 @@ ports:
   - 36379/tcp:redis
 ```
 
-### 3.3 字段语义
+### 3.3 Field semantics
 
-| 字段 | 必填 | 说明 |
+| Field | Required | Description |
 | --- | --- | --- |
-| `name` `version` `description` `dir` `hooks` | 是 | 不变 |
-| `deps` `ports` `platform` | 否 | 不变 |
-| `files` | 否 | **只列额外文件**。标准集（`lib.sh install.sh uninstall.sh update.sh svc.sh`）由解析器自动补。列出的项必须存在于仓库目录。 |
-| `actions` | 否 | **列全部动作**。含 `start` 的模块即服务型，须满足 lifecycle 契约（§4）；不含 `start`（如透传下发 CLI）即分布型，不强制。CLI 在 `aibox <module>`（无动作）时把 actions 列出来当 help。 |
-| `services` | 否 | **公共组件依赖**，紧凑串 `provider:component[#dbname]`。`component` 用全名（`postgres`/`redis`）。`postgres` 应给 `#dbname`（建模块独立库）；`redis` 通常省略 `#dbname`。多 DB 用途：`base:postgres#windmill_jobs`。声明驱动：CI 校验 provider/component、`install` 自动 `base createdb`、compose 调度自动 `--env-file base.env`。 |
-| `provides` | 否 | 仅 provider 模块填。列出对外提供的组件全名。消费模块的 `services` 引用必须命中某 provider 的 `provides`。 |
-| `upstream` | 否 | 不变 |
-| `dashboard` | 否 | **仅 `endpoints[]` + `hint`**。其他子字段废弃。`endpoints` 可用 `${PORT}` 等占位（解析时按模块 env 展开）。 |
+| `name` `version` `description` `dir` `hooks` | Yes | Unchanged |
+| `deps` `ports` `platform` | No | Unchanged |
+| `files` | No | **List only extra files.** The standard set (`lib.sh install.sh uninstall.sh update.sh svc.sh`) is auto-filled by the parser. Listed items must exist in the repo directory. |
+| `actions` | No | **List all actions.** A module containing `start` is service-type and must satisfy the lifecycle contract (§4); one without `start` (e.g. a pass-through downstream CLI) is distribution-type and is not enforced. The CLI lists actions as help when running `aibox <module>` (no action). |
+| `services` | No | **Shared-component dependencies**, compact string `provider:component[#dbname]`. `component` uses full names (`postgres`/`redis`). `postgres` should provide `#dbname` (creates an independent database for the module); `redis` usually omits `#dbname`. Multi-DB use: `base:postgres#windmill_jobs`. Declaration drives: CI validation of provider/component, `install` auto-runs `base createdb`, compose scheduling auto-adds `--env-file base.env`. |
+| `provides` | No | Provider modules only. Lists exposed component full names. A consumer module's `services` references must match some provider's `provides`. |
+| `upstream` | No | Unchanged |
+| `dashboard` | No | **Only `endpoints[]` + `hint`.** Other subfields are deprecated. `endpoints` may use placeholders like `${PORT}` (expanded against the module's env at parse time). |
 
-### 3.4 紧凑串格式 `provider:component[#dbname]`
+### 3.4 Compact string format `provider:component[#dbname]`
 
-- 三段冒号/井号分隔，**全是标量**，落在 awk 可解析子集内（spec §2.2）。
-- `dbname` 可省（`redis` 通常不分库，省略）；`postgres` 应给 `#dbname`（建模块独立库 `<module>`），省略则落到 provider 默认库（多模块混用，不推荐）。提供则按 `<module>` 或 `<module>_<用途>` 命名（spec §5.4 约定保留）。
-- 例：`base:postgres#windmill`、`base:redis`、`base:postgres#windmill_jobs`。
+- Three segments separated by colon/hash, **all scalars**, falling within the awk-parseable subset (spec §2.2).
+- `dbname` may be omitted (`redis` usually has no separate DB, so omitted); `postgres` should provide `#dbname` (creates an independent database `<module>` for the module); omission falls back to the provider's default DB (shared across modules, not recommended). When provided, name it `<module>` or `<module>_<purpose>` (the spec §5.4 convention is preserved).
+- Examples: `base:postgres#windmill`, `base:redis`, `base:postgres#windmill_jobs`.
 
 ---
 
-## 4. 公共动作契约（lifecycle 集）
+## 4. Common Action Contract (lifecycle set)
 
-spec 新增一节《公共动作契约》。定义以下动作的**统一语义**，服务型模块（`actions` 含 `start`）必须实现：
+The spec adds a new section "Common Action Contract". It defines the **unified semantics** of the following actions, which service-type modules (whose `actions` contain `start`) must implement:
 
-| 动作 | 契约语义（必须满足） |
+| Action | Contract semantics (must be satisfied) |
 | --- | --- |
-| `start` | 启动实例（幂等：已运行则 no-op + 提示）。返回 0=成功。 |
-| `stop` | 优雅停止实例（幂等：已停则 no-op）。不删数据。 |
-| `restart` | 等价 `stop` + `start`，或原生重启。 |
-| `status` | 输出：运行/未运行 + 关键标识（PID/容器名/端口）。退出码 0=运行中。 |
-| `logs` | 输出最近日志，支持 `-f` 跟随。 |
+| `start` | Start the instance (idempotent: no-op + notice if already running). Returns 0 on success. |
+| `stop` | Gracefully stop the instance (idempotent: no-op if already stopped). Does not delete data. |
+| `restart` | Equivalent to `stop` + `start`, or a native restart. |
+| `status` | Output: running/not-running + key identifiers (PID/container name/port). Exit code 0 = running. |
+| `logs` | Output recent logs, supporting `-f` follow. |
 
-### 4.1 服务型 vs 分布型（派生，无额外字段）
+### 4.1 Service-type vs distribution-type (derived, no extra field)
 
-- **服务型** = `actions` 含 `start`（base/clash/pi-web/windmill）：强制实现 lifecycle 集。CI 校验 `actions` 含全 lifecycle 集 且 `svc.sh` 实现之。
-- **分布型** = `actions` 不含 `start`（openmaic 透传下发 CLI）：不强制 lifecycle，CI 只校验 `actions` 自洽（声明的动作在 `svc.sh` 有对应 case）。
-- **无需 `lifecycle: passthrough` 字段** —— 是否含 `start` 已自描述，多一个字段是多一处漂移。
+- **Service-type** = `actions` contains `start` (base/clash/pi-web/windmill): must implement the lifecycle set. CI validates that `actions` contains the full lifecycle set and that `svc.sh` implements it.
+- **Distribution-type** = `actions` does not contain `start` (openmaic pass-through downstream CLI): lifecycle not enforced; CI only validates that `actions` is self-consistent (declared actions have corresponding cases in `svc.sh`).
+- **No `lifecycle: passthrough` field needed** — whether `start` is present is already self-describing; an extra field is an extra drift point.
 
-### 4.2 CLI 消费 actions（只读一处，不做每次校验）
+### 4.2 CLI consuming actions (read in one place, no per-call validation)
 
-`cmd_module_action`：
+`cmd_module_action`:
 
-- **无动作**（`aibox <module>`）→ 打印「用法: aibox $name <action>」+ 把声明的 `actions` 列出来（让用户知道能干啥）。这是 `actions` 字段唯一真正有用的消费点。
-- **有动作** → 直接转发 `svc.sh`，**不校验**声明 ∈ actions（透传模块动作多变，硬拦/提示都碍事）。
+- **No action** (`aibox <module>`) → prints "usage: aibox $name <action>" + lists the declared `actions` (so the user knows what they can do). This is the only truly useful consumption point of the `actions` field.
+- **With action** → forwards directly to `svc.sh`, **without validating** that the declaration ∈ actions (pass-through modules have variable actions; hard-blocking or warning is just friction).
 
-这让 `actions` 从死字段变活，且零运行期校验逻辑。
+This turns `actions` from a dead field into a live one, with zero runtime validation logic.
 
 ---
 
-## 5. 公共组件 provider 模型（base + base.env）
+## 5. Shared-Component Provider Model (base + base.env)
 
-### 5.1 角色与单一信息源
+### 5.1 Roles and the Single Source of Truth
 
 ```
 provider = base
-   ├─ tools/base/docker-compose.yml   ← 实例真实定义（镜像/端口映射/默认凭据/卷/网络）
-   └─ tools/base/lib.sh               ← 持连接常量；base start 时写 $AIBOX_HOME/base.env
-                                          base.env = 各模块共享的连接信息出口（单一源）
+   ├─ tools/base/docker-compose.yml   ← real instance definition (image/port mapping/default credentials/volumes/network)
+   └─ tools/base/lib.sh               ← holds connection constants; writes $AIBOX_HOME/base.env on base start
+                                          base.env = the shared connection-info outlet (single source)
 ```
 
-**单一信息源原则**：消费模块**绝不**直接读 base 的 compose，也**绝不**硬编码 `aibox:aibox@`。唯一合法路径 = `$AIBOX_HOME/base.env`（由 base 写、aibox compose 调度时 `--env-file` 注入）。
+**Single-source-of-truth principle**: consumer modules **never** read base's compose directly, and **never** hardcode `aibox:aibox@`. The only legitimate path = `$AIBOX_HOME/base.env` (written by base, injected via `--env-file` when aibox schedules compose).
 
-`base.env` 的内容必须与 `docker-compose.yml` 的端口映射 + 默认 env 一致 —— base/lib.sh 持常量、同时喂给 compose 的 `${...:-默认}` 与 base.env，CI deps-lint 守护一致（见 §7.3）。
+The contents of `base.env` must be consistent with `docker-compose.yml`'s port mapping + default env — base/lib.sh holds the constants and feeds both compose's `${...:-default}` and base.env; CI deps-lint guards consistency (see §7.3).
 
-### 5.2 `base.env` 内容规范
+### 5.2 `base.env` content spec
 
-`base start`（及 `base restart`）写 `$AIBOX_HOME/base.env`，内容形如：
+`base start` (and `base restart`) writes `$AIBOX_HOME/base.env`, with contents like:
 
 ```dotenv
-# 由 aibox base start 生成 —— 勿手改；改 base 后 base restart 重写
+# Generated by aibox base start — do not edit by hand; after changing base, run base restart to rewrite
 AIBOX_POSTGRES_HOST=aibox-base-postgres
 AIBOX_POSTGRES_PORT=35432
 AIBOX_POSTGRES_USER=aibox
@@ -220,144 +220,144 @@ AIBOX_REDIS_HOST=aibox-base-redis
 AIBOX_REDIS_PORT=36379
 ```
 
-- 只放**实例级共享**信息（host/port/user/password）—— 不放库名（库名 `<module>` 是各模块自己的，由模块 `.env` 的 `AIBOX_POSTGRES_DB` 给）。
-- env 变量、容器名、service 名、port 用途标签全程**全名**（见 §5.3）。
-- base/lib.sh 用同样的常量构造 compose 的 `${AIBOX_BASE_POSTGRES_USER:-aibox}` 默认值，保证 base.env 与 compose 一致。
+- Only **instance-level shared** info (host/port/user/password) — not the database name (the DB name `<module>` is each module's own, provided by the module's `.env` `AIBOX_POSTGRES_DB`).
+- Env variables, container names, service names, and port purpose labels use **full names** throughout (see §5.3).
+- base/lib.sh uses the same constants to construct compose's `${AIBOX_BASE_POSTGRES_USER:-aibox}` default, ensuring base.env and compose are consistent.
 
-> 不引入 `base_conn_info()` 函数 —— 之前为生成器设计的接口，现在没有生成器，base.env 文件本身就是出口，`aibox base status` 直接 `cat` 或显示即可。
+> No `base_conn_info()` function is introduced — it was an interface designed for the generator; with no generator now, the base.env file itself is the outlet, and `aibox base status` can simply `cat` or display it.
 
-### 5.3 全名一致性约定（全程）
+### 5.3 Full-name consistency convention (throughout)
 
-| 位置 | 旧（简称） | 新（全名） |
+| Location | Old (abbreviation) | New (full name) |
 | --- | --- | --- |
 | module.yaml `services`/`provides` component | `pg` | `postgres` |
-| env 变量 | `AIBOX_PG_*` | `AIBOX_POSTGRES_*` |
-| compose service 名 | `pg:` | `postgres:` |
-| 容器名 | `aibox-base-pg` | `aibox-base-postgres` |
-| port 用途标签 | `35432/tcp:pg` | `35432/tcp:postgres` |
+| env variable | `AIBOX_PG_*` | `AIBOX_POSTGRES_*` |
+| compose service name | `pg:` | `postgres:` |
+| container name | `aibox-base-pg` | `aibox-base-postgres` |
+| port purpose label | `35432/tcp:pg` | `35432/tcp:postgres` |
 
-`redis` 本即全名，不变。`aibox-base-postgres`（docker service 名 / 容器名）是 base 对外的**稳定契约**，模块 override 里用它做 host —— 它不是凭据，改名是契约破坏（rare，lint 守）。
-
----
-
-## 6. 连接信息传播：base.env + compose `--env-file`（无生成器）
-
-### 6.1 机制
-
-1. **base 写一份** `$AIBOX_HOME/base.env`（§5.2），`base start`/`restart` 重写。
-2. **aibox 调度 compose 时**，对声明了 `services` 的模块，自动追加 `--env-file "$AIBOX_HOME/base.env"`（与模块项目 `.env` 并列，compose v2 多 `--env-file` 合并）。于是 `${AIBOX_POSTGRES_*}` 在 compose 文件里可插值取到。
-3. **模块手写一份稳定的** `docker-compose.shared.yml`（仓库内，随模块走）：
-   - `db: replicas: 0`（不起本地 PG）
-   - app service `networks: [default, aibox-base]`（join 共享网络，经 service 名 `aibox-base-postgres` 连）
-   - `environment: DATABASE_URL=postgres://${AIBOX_POSTGRES_USER}:${AIBOX_POSTGRES_PASSWORD}@aibox-base-postgres:${AIBOX_POSTGRES_PORT}/${AIBOX_POSTGRES_DB}` —— **零硬编码凭据**，host 用稳定 service 名，其余变量插值。
-4. **模块自己 `.env`** 写 `AIBOX_POSTGRES_DB=windmill`（库名是模块的）+ 模块自有变量。
-5. **install**：`aibox <module> install` 见 `services` → 确保 `base` 已起（否则提示先 `aibox base start`）+ `base createdb <module>` 建库。**无 sync-deps 命令** —— 不需要。
-
-### 6.2 一处改 → 多处自动（核心）
-
-改 base 凭据/端口/镜像：
-
-1. 改 `tools/base/docker-compose.yml` + `base/lib.sh` 常量；
-2. `aibox base restart` → 重写 `base.env`；
-3. 各消费模块 `aibox <module> restart`（compose up）→ compose 读 `--env-file base.env` 重新插值 → app 用新连接串重连。
-
-**不再有人工抄写，不再生成文件，不再静默坏。** 模块侧唯一要维护的是那份稳定 shared.yml（网络 join + 结构），凭据/端口永远从 base.env live 读。
-
-### 6.3 降级（回独立实例）
-
-某模块需独占版本/配置不兼容共享 → module.yaml **不**在 `services` 声明该组件（aibox 即不加 `--env-file`、模块自带 compose 起本地实例）；如需锁版本，用既有 `deps` 机制声明 `postgres:14`（全名）。spec §5.7 降级约定保留，不引入额外 `@standalone` 语法。
+`redis` is already a full name, unchanged. `aibox-base-postgres` (docker service name / container name) is base's **stable contract** to the outside; module overrides use it as the host — it is not a credential, and renaming it breaks the contract (rare, guarded by lint).
 
 ---
 
-## 7. CI lint 规则
+## 6. Connection-Info Propagation: base.env + compose `--env-file` (no generator)
 
-### 7.1 module-lint（扩充）
+### 6.1 Mechanism
 
-- `files` 列出的每项必须存在于 `tools/<name>/`。
-- **服务型判定派生**：`actions` 含 `start` 的模块，须含全 lifecycle 集（start/stop/restart/status/logs）且 `svc.sh` 实现（grep 动作名 case 分支）。不含 `start` 的模块不强制。
-- `dashboard` 只允许 `endpoints` + `hint` 两子字段（多余报错）。
-- `services`/`provides` 的 component 名必须是全名（白名单 `{postgres, redis, ...}`）。
+1. **base writes** `$AIBOX_HOME/base.env` (§5.2), rewritten on `base start`/`restart`.
+2. **When aibox schedules compose**, for modules that declare `services`, it automatically appends `--env-file "$AIBOX_HOME/base.env"` (alongside the module project's `.env`; compose v2 merges multiple `--env-file`). Thus `${AIBOX_POSTGRES_*}` can be interpolated in the compose file.
+3. **The module hand-writes a stable** `docker-compose.shared.yml` (in-repo, travels with the module):
+   - `db: replicas: 0` (does not start a local PG)
+   - app service `networks: [default, aibox-base]` (joins the shared network, connecting via the service name `aibox-base-postgres`)
+   - `environment: DATABASE_URL=postgres://${AIBOX_POSTGRES_USER}:${AIBOX_POSTGRES_PASSWORD}@aibox-base-postgres:${AIBOX_POSTGRES_PORT}/${AIBOX_POSTGRES_DB}` — **zero hardcoded credentials**; host uses the stable service name, the rest are interpolated variables.
+4. **The module's own `.env`** sets `AIBOX_POSTGRES_DB=windmill` (the DB name belongs to the module) + the module's own variables.
+5. **install**: `aibox <module> install` sees `services` → ensures `base` is running (otherwise prompts to run `aibox base start` first) + `base createdb <module>` creates the DB. **No sync-deps command** — not needed.
 
-### 7.2 port-conflict（已有，保留）
+### 6.2 Change once → auto-propagate everywhere (core)
 
-含 base 的 35432/36379。用途标签同步全名（`35432/tcp:postgres`）。
+Changing base credentials/port/image:
 
-### 7.3 deps-lint（新增）
+1. Edit `tools/base/docker-compose.yml` + `base/lib.sh` constants;
+2. `aibox base restart` → rewrites `base.env`;
+3. Each consumer module's `aibox <module> restart` (compose up) → compose reads `--env-file base.env` and re-interpolates → the app reconnects with the new connection string.
 
-- 消费模块 `services` 里每条 `provider:component[#db]`：
-  - `provider` 必须是已注册模块；
-  - 该 provider 的 `provides` 必须含该 `component`；
-  - `dbname` 若给，符合 `<module>` / `<module>_<用途>` 命名。
-- **禁止硬编码凭据/host**：`tools/*/docker-compose*.yml`（`tools/base/` 除外）不得出现正则命中 `aibox:aibox@`、`postgres://aibox:`、`:5432/aibox` 等字面量。模块必须经 `${AIBOX_POSTGRES_*}` 引用。（service 名 `aibox-base-postgres` 作为稳定 host 允许出现，不算凭据。）
-- **base.env 一致性**：`base/lib.sh` 写 `base.env` 用的常量（host/port/user/password），必须与 `base/docker-compose.yml` 的端口映射 + 默认 env（`${AIBOX_BASE_POSTGRES_*:-...}`）一致，防 provider 内部两处漂移。
+**No more manual transcription, no more generated files, no more silent breakage.** The only thing the module side maintains is that stable shared.yml (network join + structure); credentials/port are always read live from base.env.
 
-### 7.4 awk 子集合规（已有，保留）
+### 6.3 Degradation (back to standalone instance)
 
-`services`/`provides` 是标量列表，落在 §2.2 子集内，无需放宽。
-
----
-
-## 8. awk 解析器改动
-
-`parse_yaml_module_stdin`（`bin/aibox`）：
-
-1. `files` 的 union 在 `download_module` 做（标准集 ∪ files 去重，标准集在前），不在解析器里 —— 局部、最小侵入。向后兼容旧 yaml（列全 → union 后仍是全集，不重复下载）。
-2. `services` / `provides` 作为新列表字段照常解析（`AIBOX_MODULE_<name>_services` / `_provides`，空格分隔标量），供 CI 校验、`install` 判定 createdb、compose wrapper 判定是否加 `--env-file`。
-3. `dashboard.endpoints`（已有列表）保留；`dashboard.hint`（已有标量）保留；废弃其他子字段（CI 报错即可）。
-4. **`esc()` 在 `printvar` 转义值里的 `$` / `"` / `` ` `` / `\`**，使值里的 `${...}`（如 `${PORT}`、`${AIBOX_POSTGRES_*}`）保持字面、不被 `eval` 展开 —— 修原解析器把值里 `$VAR`/`${VAR}` 在 `eval` 注入时展开的漏洞（`set -u` 下会炸成 unbound）。dashboard endpoints 的 `${PORT}` 占位因此可用。
-5. `module_field` 读取 `services`/`provides` 时仍返回空格分隔串，由调用方再 split。
-
-零结构破坏，最小改动。
+If a module needs an exclusive version/config incompatible with the shared one → module.yaml does **not** declare that component in `services` (aibox then does not add `--env-file`; the module's own compose starts a local instance); if a version pin is needed, use the existing `deps` mechanism to declare `postgres:14` (full name). The spec §5.7 degradation convention is preserved; no extra `@standalone` syntax is introduced.
 
 ---
 
-## 9. 迁移路径（分阶段，实现期执行，本轮仅规划）
+## 7. CI lint Rules
 
-### 阶段 A：module.yaml 字段去冗余（低风险）
+### 7.1 module-lint (expanded)
 
-1. awk 解析器加 files union + 解析 services/provides。
-2. 各 module.yaml：删 `files` 标准行、`dashboard` 瘦身、`ports` 用途标签改全名。
-3. CI module-lint 加新校验（含服务型派生判定）。
-4. 旧手写 `docker-compose.shared.yml` 暂留（下一阶段才重构成用变量）。
+- Every item listed in `files` must exist in `tools/<name>/`.
+- **Service-type judgment is derived**: a module whose `actions` contains `start` must contain the full lifecycle set (start/stop/restart/status/logs) and `svc.sh` must implement them (grep the action-name case branches). Modules without `start` are not enforced.
+- `dashboard` allows only the `endpoints` + `hint` subfields (extras error out).
+- Component names in `services`/`provides` must be full names (whitelist `{postgres, redis, ...}`).
 
-### 阶段 B：公共组件 base.env + compose 注入
+### 7.2 port-conflict (existing, retained)
 
-1. base：`lib.sh` 持连接常量 + `base start`/`restart` 写 `$AIBOX_HOME/base.env`；`docker-compose.yml` service/container/env 改全名；`module.yaml` 加 `provides`。
-2. aibox compose wrapper：声明 `services` 的模块自动追加 `--env-file "$AIBOX_HOME/base.env"`（检测 compose v2.24+ 多 `--env-file` 支持，过旧则报错提示升级）。
-3. `aibox <module> install`：见 `services` → 确保 base 起 + `base createdb <module>`。
-4. CI deps-lint 上线（先 warn 后 fail）。
-5. 一个新模块先用共享（无存量包袱）。
+Includes base's 35432/36379. Purpose labels synced to full names (`35432/tcp:postgres`).
 
-### 阶段 C：存量模块迁移（有数据风险，单独迭代）
+### 7.3 deps-lint (new)
 
-1. openmaic/windmill：把现有手写 `docker-compose.shared.yml` 的**硬编码凭据改成 `${AIBOX_POSTGRES_*}` 变量**（结构不动），`.env` 加 `AIBOX_POSTGRES_DB=<module>`，module.yaml 加 `services`。
-2. 数据迁移：`pg_dump` 旧独立 PG → 导入共享 PG 的 `<module>` 库。
-3. 全程 lint fail → 兜底。
+- For each `provider:component[#db]` in a consumer module's `services`:
+  - `provider` must be a registered module;
+  - that provider's `provides` must contain the `component`;
+  - if `dbname` is given, it must follow the `<module>` / `<module>_<purpose>` naming.
+- **Hardcoded credentials/hosts are forbidden**: `tools/*/docker-compose*.yml` (except `tools/base/`) must not match regexes like `aibox:aibox@`, `postgres://aibox:`, `:5432/aibox`. Modules must reference via `${AIBOX_POSTGRES_*}`. (The service name `aibox-base-postgres` as a stable host is allowed and does not count as a credential.)
+- **base.env consistency**: the constants (host/port/user/password) used by `base/lib.sh` to write `base.env` must be consistent with `base/docker-compose.yml`'s port mapping + default env (`${AIBOX_BASE_POSTGRES_*:-...}`), preventing internal drift within the provider.
+
+### 7.4 awk subset compliance (existing, retained)
+
+`services`/`provides` are scalar lists, falling within the §2.2 subset; no relaxation needed.
 
 ---
 
-## 10. 风险与缓解
+## 8. awk Parser Changes
 
-| 风险 | 缓解 |
+`parse_yaml_module_stdin` (`bin/aibox`):
+
+1. The `files` union is done in `download_module` (standard set ∪ files deduplicated, standard set first), not in the parser — local, minimal intrusion. Backward-compatible with old yaml (listing all → after union still the full set, no duplicate downloads).
+2. `services` / `provides` are parsed as new list fields as usual (`AIBOX_MODULE_<name>_services` / `_provides`, space-separated scalars), for CI validation, `install` createdb decisions, and the compose wrapper's decision to add `--env-file`.
+3. `dashboard.endpoints` (existing list) retained; `dashboard.hint` (existing scalar) retained; other subfields deprecated (CI error is enough).
+4. **`esc()` escapes `$` / `"` / `` ` `` / `\` in `printvar` values**, so that `${...}` in values (e.g. `${PORT}`, `${AIBOX_POSTGRES_*}`) stays literal and is not expanded by `eval` — fixing the original parser's bug where `$VAR`/`${VAR}` in values were expanded during `eval` injection (which under `set -u` would blow up as unbound). The `${PORT}` placeholder in dashboard endpoints is therefore usable.
+5. `module_field` still returns space-separated strings for `services`/`provides`; the caller splits them further.
+
+Zero structural breakage, minimal changes.
+
+---
+
+## 9. Migration Path (phased; executed during implementation; this round only plans)
+
+### Phase A: Remove module.yaml field redundancy (low risk)
+
+1. awk parser adds files union + parses services/provides.
+2. Each module.yaml: remove `files` standard lines, slim down `dashboard`, change `ports` purpose labels to full names.
+3. CI module-lint adds new validations (including service-type derived judgment).
+4. Existing hand-written `docker-compose.shared.yml` stays for now (refactored to use variables in the next phase).
+
+### Phase B: Shared-component base.env + compose injection
+
+1. base: `lib.sh` holds connection constants + `base start`/`restart` writes `$AIBOX_HOME/base.env`; `docker-compose.yml` service/container/env renamed to full names; `module.yaml` adds `provides`.
+2. aibox compose wrapper: modules declaring `services` auto-append `--env-file "$AIBOX_HOME/base.env"` (detect compose v2.24+ multiple `--env-file` support; if too old, error and prompt to upgrade).
+3. `aibox <module> install`: sees `services` → ensures base is running + `base createdb <module>`.
+4. CI deps-lint goes live (warn first, then fail).
+5. One new module uses the shared setup first (no legacy baggage).
+
+### Phase C: Migrate existing modules (data risk; separate iteration)
+
+1. openmaic/windmill: replace **hardcoded credentials in existing hand-written `docker-compose.shared.yml` with `${AIBOX_POSTGRES_*}` variables** (structure unchanged); `.env` adds `AIBOX_POSTGRES_DB=<module>`; module.yaml adds `services`.
+2. Data migration: `pg_dump` the old standalone PG → import into the shared PG's `<module>` database.
+3. Throughout, lint fail → fallback.
+
+---
+
+## 10. Risks and Mitigations
+
+| Risk | Mitigation |
 | --- | --- |
-| compose 不支持多 `--env-file` | 要求 compose v2.24+（Docker Desktop 自带 ≥2.29）；aibox wrapper 检测版本，过旧报错提示升级，不静默降级。 |
-| `base.env` 缺失/过期 → 模块插值得到空值，连不上 | aibox compose wrapper 在加 `--env-file` 前检查 `$AIBOX_HOME/base.env` 存在；不存在则提示「先 `aibox base start`」并中止。`aibox <module> status` 检测 base.env 与 base 当前运行态不一致时提示重跑 `base restart`。 |
-| 模块忘在 `.env` 写 `AIBOX_POSTGRES_DB` | CI deps-lint：声明 `base:postgres#<db>` 的模块，其 `.env`（或 compose env）须含 `AIBOX_POSTGRES_DB` 且值 = `<db>`。 |
-| base.env 与 compose 默认值漂移 | CI deps-lint 校验一致（§7.3）。 |
-| 全名重命名波及存量 compose | 阶段 B 一次性改 base；消费模块在阶段 C 迁移时同步改。lint 在阶段 B 上线后即拦新简称。 |
-| service 名 `aibox-base-postgres` 被当凭据误拦 | deps-lint 只拦凭据字面量（`aibox:aibox@` / `postgres://aibox:`），service 名作 host 允许（§7.3）。 |
+| compose does not support multiple `--env-file` | Require compose v2.24+ (Docker Desktop ships ≥2.29); the aibox wrapper detects the version and errors with an upgrade prompt if too old, without silently degrading. |
+| `base.env` missing/stale → module interpolates empty values, can't connect | The aibox compose wrapper checks that `$AIBOX_HOME/base.env` exists before adding `--env-file`; if missing, it prompts "run `aibox base start` first" and aborts. `aibox <module> status` detects when base.env is inconsistent with base's current running state and prompts to rerun `base restart`. |
+| Module forgets to set `AIBOX_POSTGRES_DB` in `.env` | CI deps-lint: a module declaring `base:postgres#<db>` must have `AIBOX_POSTGRES_DB` in its `.env` (or compose env) with value = `<db>`. |
+| Drift between base.env and compose defaults | CI deps-lint validates consistency (§7.3). |
+| Full-name rename affects existing compose | Phase B renames base in one pass; consumer modules sync during Phase C migration. Lint blocks new abbreviations once Phase B goes live. |
+| Service name `aibox-base-postgres` mistakenly blocked as a credential | deps-lint only blocks credential literals (`aibox:aibox@` / `postgres://aibox:`); the service name as host is allowed (§7.3). |
 
 ---
 
-## 附录 A：完整 module.yaml 示例
+## Appendix A: Full module.yaml Examples
 
-### A.1 provider 模块（base）
+### A.1 Provider module (base)
 
 ```yaml
 # tools/base/module.yaml
 name: base
 version: 1.0.0
-description: "共享基础组件（PostgreSQL 18 + Redis 7），各模块独立数据库"
+description: "Shared base components (PostgreSQL 18 + Redis 7), each module with an independent database"
 platform: ""
 dir: tools/base
 
@@ -374,7 +374,7 @@ ports:
   - 36379/tcp:redis
 
 files:
-  - docker-compose.yml          # 额外（标准 5 文件隐式）
+  - docker-compose.yml          # extra (standard 5 files implicit)
 
 hooks:
   install: install.sh
@@ -396,10 +396,10 @@ upstream:
 dashboard:
   endpoints:
     - "postgres: postgres://127.0.0.1:35432  redis: redis://127.0.0.1:36379"
-  hint: "aibox base createdb <module> 建库；连接信息见 $AIBOX_HOME/base.env"
+  hint: "aibox base createdb <module> to create a DB; connection info in $AIBOX_HOME/base.env"
 ```
 
-### A.2 消费模块（windmill，服务型）
+### A.2 Consumer module (windmill, service-type)
 
 ```yaml
 # tools/windmill/module.yaml
@@ -418,7 +418,7 @@ ports:
   - 8080/tcp:http
 
 files:
-  - windmill                   # 额外 CLI
+  - windmill                   # extra CLI
 
 services:
   - base:postgres#windmill
@@ -430,7 +430,7 @@ hooks:
   update: update.sh
   svc: svc.sh
 
-actions:                       # 含 start → 服务型，须满足 lifecycle 契约
+actions:                       # contains start → service-type, must satisfy the lifecycle contract
   - start
   - stop
   - restart
@@ -457,10 +457,10 @@ upstream:
 dashboard:
   endpoints:
     - "http://127.0.0.1:${PORT}"
-  hint: "凭据见 CREDENTIALS.txt + .env；DB 经 ${AIBOX_POSTGRES_HOST} 连共享 PG（值由 base.env 注入）"
+  hint: "credentials in CREDENTIALS.txt + .env; DB connects to shared PG via ${AIBOX_POSTGRES_HOST} (value injected from base.env)"
 ```
 
-### A.3 分布型模块（openmaic，不含 start → 自动分布型，无额外字段）
+### A.3 Distribution-type module (openmaic, no start → auto distribution-type, no extra field)
 
 ```yaml
 # tools/openmaic/module.yaml
@@ -479,7 +479,7 @@ ports:
   - 3000/tcp:app
 
 files:
-  - openmaic                   # 额外 CLI
+  - openmaic                   # extra CLI
 
 services:
   - base:postgres#openmaic
@@ -490,7 +490,7 @@ hooks:
   update: update.sh
   svc: svc.sh
 
-actions:                       # 不含 start → 分布型，不强制 lifecycle
+actions:                       # does not contain start → distribution-type, lifecycle not enforced
   - status
   - health
   - doctor
@@ -519,17 +519,17 @@ upstream:
 dashboard:
   endpoints:
     - "http://127.0.0.1:${PORT}"
-  hint: "凭据见 .env.local；DATABASE_URL 由 shared.yml 用 ${AIBOX_POSTGRES_*} 构造（base.env 注入）"
+  hint: "credentials in .env.local; DATABASE_URL constructed by shared.yml using ${AIBOX_POSTGRES_*} (injected from base.env)"
 ```
 
 ---
 
-## 附录 B：base.env + 手写稳定 shared.yml 示例（windmill）
+## Appendix B: base.env + hand-written stable shared.yml example (windmill)
 
-### `$AIBOX_HOME/base.env`（由 `aibox base start` 生成）
+### `$AIBOX_HOME/base.env` (generated by `aibox base start`)
 
 ```dotenv
-# 由 aibox base start 生成 —— 勿手改；改 base 后 base restart 重写
+# Generated by aibox base start — do not edit by hand; after changing base, run base restart to rewrite
 AIBOX_POSTGRES_HOST=aibox-base-postgres
 AIBOX_POSTGRES_PORT=35432
 AIBOX_POSTGRES_USER=aibox
@@ -538,21 +538,21 @@ AIBOX_REDIS_HOST=aibox-base-redis
 AIBOX_REDIS_PORT=36379
 ```
 
-### 模块 `.env`（windmill 自己，仓库内或部署目录）
+### Module `.env` (windmill's own, in-repo or in the deploy directory)
 
 ```dotenv
-AIBOX_POSTGRES_DB=windmill      # 库名是模块的；host/port/user/password 由 base.env 注入
-# ...windmill 自有变量
+AIBOX_POSTGRES_DB=windmill      # DB name belongs to the module; host/port/user/password injected from base.env
+# ...windmill's own variables
 ```
 
-### `tools/windmill/docker-compose.shared.yml`（手写，稳定，零硬编码凭据）
+### `tools/windmill/docker-compose.shared.yml` (hand-written, stable, zero hardcoded credentials)
 
 ```yaml
-# 网络结构稳定；凭据/端口一律 ${AIBOX_POSTGRES_*}（aibox 调 compose 时 --env-file base.env 注入）
+# Network structure stable; credentials/port always ${AIBOX_POSTGRES_*} (injected via --env-file base.env when aibox invokes compose)
 services:
   db:
     deploy:
-      replicas: 0              # 不起本地 PG
+      replicas: 0              # does not start a local PG
   windmill_server:
     depends_on: []
     networks: [default, aibox-base]
@@ -566,41 +566,41 @@ networks:
     external: true
 ```
 
-aibox 调度该模块的 compose 时实际执行（示意）：
+What aibox actually executes when scheduling this module's compose (illustrative):
 
 ```bash
 docker compose --env-file .env --env-file "$AIBOX_HOME/base.env" \
   -f docker-compose.yml -f docker-compose.shared.yml up -d
 ```
 
-`DATABASE_URL` 在 compose 解析时由 `${AIBOX_POSTGRES_*}` 插值得出 —— `.env` 给 `AIBOX_POSTGRES_DB`，`base.env` 给其余。改 base 凭据 → `base restart` 重写 base.env → 下次 `aibox windmill restart` 自动用新值。
+`DATABASE_URL` is interpolated from `${AIBOX_POSTGRES_*}` at compose parse time — `.env` provides `AIBOX_POSTGRES_DB`, `base.env` provides the rest. Change base credentials → `base restart` rewrites base.env → the next `aibox windmill restart` automatically uses the new values.
 
 ---
 
-## 11. 实现状态（2026-09-16）
+## 11. Implementation Status (2026-09-16)
 
-**已实现并验证（commit `1b3369a`）：**
+**Implemented and verified (commit `1b3369a`):**
 
-- **Phase A**：awk `esc()` + `download_module` files union + `cmd_module_action` 无动作列 help + 5 个 module.yaml 全部更新（files 瘦身 / dashboard 瘦身 / ports 全名 / services·provides）。
-- **Phase B**：`base/lib.sh` `write_base_env()` + `base start` 写 `$AIBOX_HOME/base.env`；`base/docker-compose.yml` service `pg`→`postgres`、container `aibox-base-pg`→`aibox-base-postgres`、env `AIBOX_BASE_PG_*`→`AIBOX_BASE_POSTGRES_*`（`pg_data` 卷保留旧数据）；`bin/aibox` `ensure_services`（install 时见 services → base start + createdb）。
-- **Phase C（openmaic）**：`docker-compose.shared.yml` + heredoc `DATABASE_URL` 改 `${AIBOX_POSTGRES_*}`；`compose()`/`compose_timed()` 共享模式追加 `--env-file base.env`。
-- **Phase C（windmill）**：机械重命名 `aibox-base-pg`→`aibox-base-postgres` / `AIBOX_BASE_PG_*`→`AIBOX_BASE_POSTGRES_*`（CLI + shared.yml + DEVELOPMENT.md）。
-- **CI**：`module-lint` 扩充（files 存在 / lifecycle / dashboard 两子字段 / 全名白名单）+ §2.2 grep 排除 `${...}`；新增 `deps-lint` job。
+- **Phase A**: awk `esc()` + `download_module` files union + `cmd_module_action` lists help when no action + all 5 module.yaml updated (files slimmed / dashboard slimmed / ports full names / services·provides).
+- **Phase B**: `base/lib.sh` `write_base_env()` + `base start` writes `$AIBOX_HOME/base.env`; `base/docker-compose.yml` service `pg`→`postgres`, container `aibox-base-pg`→`aibox-base-postgres`, env `AIBOX_BASE_PG_*`→`AIBOX_BASE_POSTGRES_*` (the `pg_data` volume retains old data); `bin/aibox` `ensure_services` (on install, seeing services → base start + createdb).
+- **Phase C (openmaic)**: `docker-compose.shared.yml` + heredoc `DATABASE_URL` changed to `${AIBOX_POSTGRES_*}`; `compose()`/`compose_timed()` shared-mode append `--env-file base.env`.
+- **Phase C (windmill)**: mechanical rename `aibox-base-pg`→`aibox-base-postgres` / `AIBOX_BASE_PG_*`→`AIBOX_BASE_POSTGRES_*` (CLI + shared.yml + DEVELOPMENT.md).
+- **CI**: `module-lint` expanded (files exist / lifecycle / dashboard two subfields / full-name whitelist) + §2.2 grep excludes `${...}`; new `deps-lint` job added.
 
-**实测（docker）**：
+**Verified (docker):**
 
-- `aibox base start` → `aibox-base-postgres` 起 + `$AIBOX_HOME/base.env` 写；旧 DB（`testdb`/`windmill`）经 `pg_data` 卷保留。
-- `docker compose --env-file base.env -f … config` → `${AIBOX_POSTGRES_*}` 插值为 `postgres://aibox:aibox@aibox-base-postgres:5432/<db>`；不带 `--env-file` 则空 —— 证明 base.env 是唯一源。
-- openmaic 真实 shared.yml + base.env → `config` 渲染 `DATABASE_URL` 正确解析、`replicas:0`、join `aibox-base`。
-- `bash -n` 全过；bash 3.2 gotcha #1 #8 扫描净；`aibox list/ports/dashboard/dev-guide` 回归正常。
+- `aibox base start` → `aibox-base-postgres` starts + `$AIBOX_HOME/base.env` written; old DBs (`testdb`/`windmill`) retained via the `pg_data` volume.
+- `docker compose --env-file base.env -f … config` → `${AIBOX_POSTGRES_*}` interpolated to `postgres://aibox:aibox@aibox-base-postgres:5432/<db>`; without `--env-file` they are empty — proving base.env is the single source.
+- openmaic's real shared.yml + base.env → `config` renders `DATABASE_URL` correctly parsed, `replicas:0`, joins `aibox-base`.
+- `bash -n` all pass; bash 3.2 gotchas #1 #8 scan clean; `aibox list/ports/dashboard/dev-guide` regress normally.
 
-**遗留（design §9 标注的「单独迭代」，本轮不在范围）**：
+**Remaining (the "separate iteration" noted in design §9; not in scope this round):**
 
-- **windmill deep var-conversion**：当前 windmill 的 `DATABASE_URL` 在 `init` 渲染的 `.env` 里（unquoted heredoc 烘焙），用 `${AIBOX_BASE_POSTGRES_*:-aibox}` 默认值；非 live 读 base.env。匹配 base 默认凭据可用；若自定义 base 凭据，需 `windmill init` 重渲染，或后续把 `DATABASE_URL` 移到 shared.yml `environment:` + `_compose()` 加 `--env-file base.env`（同 openmaic —— 即附录 B windmill 示例所示的 target 形态，当前尚未落地）。
-- **数据迁移 `pg_dump`**：存量独立 PG → 共享 PG 的灌库，属运行时 ops，需在部署主机执行（design §9 阶段 C 步骤 2）。
+- **windmill deep var-conversion**: currently windmill's `DATABASE_URL` is in the `.env` rendered by `init` (unquoted heredoc baked-in), using the `${AIBOX_BASE_POSTGRES_*:-aibox}` default; not a live read of base.env. Works with base's default credentials; if base credentials are customized, `windmill init` must re-render, or later move `DATABASE_URL` into shared.yml `environment:` + `_compose()` adds `--env-file base.env` (same as openmaic — i.e. the target form shown in Appendix B's windmill example, not yet landed).
+- **Data migration `pg_dump`**: loading existing standalone PG → shared PG is a runtime ops task, to be executed on the deploy host (design §9 Phase C step 2).
 
 ---
 
 ## License
 
-MIT。
+MIT.

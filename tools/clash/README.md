@@ -1,98 +1,98 @@
 # clash
 
-> Clash 订阅代理池 —— 编排本地 mihomo 内核，订阅节点自动测速选最快、失败自动切换。
+> Clash subscription proxy pool — orchestrates the local mihomo core; auto-tests subscription nodes for the fastest, auto-fails over on failure.
 
-`aibox clash` 把一个 clash 订阅 URL 变成 aibox 的出口：aibox 下发 mihomo 二进制，生成 config 把订阅交给 mihomo 的 `proxy-providers`，mihomo 自动拉取/解析/测速/切换，aibox 把出口指向本地混合端口。
+`aibox clash` turns a clash subscription URL into aibox's egress: aibox ships the mihomo binary, generates a config that hands the subscription to mihomo's `proxy-providers`, mihomo automatically pulls/parses/tests/switches, and aibox points the egress at the local mixed port.
 
-## 工作原理
+## How it works
 
 ```
-订阅URL ──clash set──> apps/clash/config.yaml（proxy-providers + url-test 组）
+Subscription URL ──clash set──> apps/clash/config.yaml (proxy-providers + url-test group)
                               │
-        mihomo 常驻 ──> 本地混合端口 127.0.0.1:7890（socks5+http）
-            ├─ 自动拉订阅（24h）/ 测延迟（5min）/ 选最快 / 失败切换
-            └─ external-controller 127.0.0.1:9090（aibox 调它 reload/select/status）
+        mihomo daemon ──> local mixed port 127.0.0.1:7890 (socks5+http)
+            ├─ auto-pull subscription (24h) / test latency (5min) / pick fastest / fail over
+            └─ external-controller 127.0.0.1:9090 (aibox calls it reload/select/status)
                               │
-        aibox 出口 ──> socks5://127.0.0.1:7890（clash 开启时覆盖静态代理）
+        aibox egress ──> socks5://127.0.0.1:7890 (overrides static proxy when clash is on)
 ```
 
-测速、选最快、失败切换**全部交给 mihomo 的 `url-test`/`fallback` 策略组**，aibox 不实现任何切换逻辑——只编排（下载内核、生成 config、启停进程、刷新兜底）。
+Latency testing, picking the fastest, and fail-over are **all delegated to mihomo's `url-test`/`fallback` strategy groups** — aibox implements no switching logic of its own; it only orchestrates (download the core, generate config, start/stop the process, refresh the fallback).
 
-## 命令
+## Commands
 
 ```
-aibox install clash               安装 mihomo 内核（aibox 自动下载二进制）
-aibox clash set <订阅URL>          存订阅 + 生成 config + 拉一次订阅缓存
-aibox clash on | off               启停 mihomo（on 后 aibox 出口自动切到本地端口）
-aibox clash restart                重启
-aibox clash status                 mihomo 状态 + 当前节点 + 订阅/刷新时间
-aibox clash refresh                强制刷新订阅（覆盖 1 周兜底）
-aibox clash select <节点名>        手动切到某节点（调 API）
-aibox clash test [url]             经本地 7890 端口探测
-aibox clash logs                   看 mihomo 日志
-aibox clash doctor                 自检（二进制/进程/config/订阅缓存）
-aibox clash set/refresh 时若订阅缓存超 1 周，自动重拉
+aibox install clash               Install the mihomo core (aibox auto-downloads the binary)
+aibox clash set <subscription URL>  Save the subscription + generate config + pull a subscription cache once
+aibox clash on | off               Start/stop mihomo (after `on`, aibox egress auto-switches to the local port)
+aibox clash restart                Restart
+aibox clash status                 mihomo status + current node + subscription/refresh time
+aibox clash refresh                Force-refresh the subscription (overrides the 1-week fallback)
+aibox clash select <node name>     Manually switch to a node (via the API)
+aibox clash test [url]             Probe through the local 7890 port
+aibox clash logs                   View mihomo logs
+aibox clash doctor                 Self-check (binary/process/config/subscription cache)
+aibox clash set/refresh auto re-pulls the subscription if the cache is older than 1 week
 ```
 
-## 与静态代理的关系
+## Relationship with the static proxy
 
-优先级：**clash 开启 > 静态代理（`aibox proxy set`）> 直连**。
+Priority: **clash on > static proxy (`aibox proxy set`) > direct**.
 
-- `aibox clash on` → aibox 出口 = `socks5://127.0.0.1:7890`（本地 mihomo）
-- `aibox clash off` → 回退到 `aibox proxy set` 配的静态代理，或直连
+- `aibox clash on` → aibox egress = `socks5://127.0.0.1:7890` (local mihomo)
+- `aibox clash off` → falls back to the static proxy set via `aibox proxy set`, or direct
 
-两者可并存：静态代理做兜底，clash 池做主力。
+The two coexist: the static proxy acts as a fallback, the clash pool as the primary.
 
-## 冷启动（订阅站被墙时）
+## Cold start (when the subscription site is blocked)
 
-clash 池要订阅才能起来，但**拉订阅本身需要能访问订阅站**——若订阅站国内被干扰（连接 EOF），aibox/mihomo 直连拉不到，节点为空。
+The clash pool needs a subscription to come up, but **pulling the subscription itself requires access to the subscription site** — if the subscription site is interfered with domestically (connection EOF), aibox/mihomo cannot fetch it directly and the node list is empty.
 
-这时先用静态代理把订阅拉到手：
+In that case, first use a static proxy to pull the subscription by hand:
 
 ```bash
-aibox proxy set http://<能访问订阅站的代理>   # 临时静态代理
-aibox clash refresh                          # aibox 走静态代理拉订阅到 pool.yaml 缓存
-aibox clash on                               # mihomo 用缓存节点起来
-aibox proxy off                              # 可选：停静态代理，出口改走 clash 池
+aibox proxy set http://<proxy that can reach the subscription site>   # temporary static proxy
+aibox clash refresh                          # aibox fetches the subscription through the static proxy into the pool.yaml cache
+aibox clash on                               # mihomo comes up using the cached nodes
+aibox proxy off                              # optional: stop the static proxy, egress now goes through the clash pool
 ```
 
-mihomo 是 nohup 子进程，启动时继承 aibox 的 `http_proxy`——若启动时环境有代理，mihomo 自己后续刷新订阅也会走它。日常 mihomo `interval:86400` 自动刷新；aibox 兜底：`clash status`/`on` 时检查 `state.LAST_REFRESH`，超 1 周重拉。
+mihomo is a nohup child process that inherits aibox's `http_proxy` at startup — if a proxy is present in the environment at startup, mihomo's own subsequent subscription refreshes will also go through it. Day-to-day, mihomo `interval:86400` auto-refreshes; aibox fallback: on `clash status`/`on` it checks `state.LAST_REFRESH` and re-pulls if older than 1 week.
 
-## 刷新策略
+## Refresh strategy
 
-双层互补：
+Two complementary layers:
 
-1. **mihomo 内部**：`proxy-providers.interval: 86400`（24h 自动拉订阅）
-2. **aibox 兜底**：`clash status`/`clash on` 时检查 `state.LAST_REFRESH`，超过 1 周（或从未刷新）则 aibox 自己 `curl` 重下载订阅覆盖 `pool.yaml` + 触发 mihomo reload。手动 `clash refresh` 立即触发。
+1. **Inside mihomo**: `proxy-providers.interval: 86400` (auto-pull subscription every 24h)
+2. **aibox fallback**: on `clash status`/`clash on` it checks `state.LAST_REFRESH`; if older than 1 week (or never refreshed), aibox itself `curl`s the subscription again, overwrites `pool.yaml`, and triggers a mihomo reload. A manual `clash refresh` triggers this immediately.
 
-## 失败切换
+## Fail-over
 
-- `AUTO`（url-test）组：每 5 分钟 probe 各节点延迟，选最低；节点挂了延迟=∞ 自动跳过
-- `FALLBACK` 组：按序，当前不可用自动切下一个
-- aibox 不参与切换，`clash status` 调 `/proxies/AUTO` 报告当前节点
+- `AUTO` (url-test) group: probes each node's latency every 5 minutes and picks the lowest; a dead node has latency=∞ and is skipped automatically
+- `FALLBACK` group: ordered; if the current one is unavailable it auto-switches to the next
+- aibox does not participate in switching; `clash status` calls `/proxies/AUTO` to report the current node
 
-## 落点（module-spec 部署型约定）
+## Layout (module-spec deployment conventions)
 
-| 路径 | 内容 | 权限 |
+| Path | Content | Permission |
 | --- | --- | --- |
-| `${AIBOX_BIN_DIR}/mihomo` | mihomo 二进制（aibox 下发） | 0755 |
-| `$AIBOX_HOME/apps/clash/config.yaml` | 生成的 mihomo 配置 | 600 |
-| `$AIBOX_HOME/apps/clash/providers/pool.yaml` | 订阅缓存 | 600 |
-| `$AIBOX_HOME/apps/clash/state` | 订阅 URL/secret/端口/刷新时间 | 600 |
-| `$AIBOX_HOME/apps/clash/logs/mihomo.log` | 日志 | — |
+| `${AIBOX_BIN_DIR}/mihomo` | mihomo binary (shipped by aibox) | 0755 |
+| `$AIBOX_HOME/apps/clash/config.yaml` | generated mihomo config | 600 |
+| `$AIBOX_HOME/apps/clash/providers/pool.yaml` | subscription cache | 600 |
+| `$AIBOX_HOME/apps/clash/state` | subscription URL/secret/port/refresh time | 600 |
+| `$AIBOX_HOME/apps/clash/logs/mihomo.log` | logs | — |
 
-## 环境变量覆盖
+## Environment variable overrides
 
-| 变量 | 默认 | 说明 |
+| Variable | Default | Description |
 | --- | --- | --- |
-| `CLASH_BIN_DIR` | `AIBOX_BIN_DIR` → `~/.local/bin` | mihomo 二进制落点 |
-| `CLASH_BASE_DIR` | `$AIBOX_HOME/apps/clash` | 部署根覆盖 |
-| `CLASH_PORT` | `7890` | 混合端口 |
-| `CLASH_API_PORT` | `9090` | 外部控制器端口 |
+| `CLASH_BIN_DIR` | `AIBOX_BIN_DIR` → `~/.local/bin` | mihomo binary location |
+| `CLASH_BASE_DIR` | `$AIBOX_HOME/apps/clash` | deployment root override |
+| `CLASH_PORT` | `7890` | mixed port |
+| `CLASH_API_PORT` | `9090` | external controller port |
 
-## 设计取舍
+## Design trade-offs
 
-- **不自解析订阅 yaml**：mihomo 原生吃订阅 URL，aibox 不写 yaml 解析（纯 bash 解析 clash yaml 脆弱；格式变化由 mihomo 适配）。
-- **测速/切换交给 mihomo**：`url-test`/`fallback` 策略组成熟，aibox 只调 API 报告/触发。
-- **nohup+pid 简单常驻**：跨平台（macOS/Linux）立即可用，不依赖 launchd/systemd 单元文件。mihomo 挂了 aibox 检测到 `CLASH_ENABLED` 但端口无响应时回退静态代理（不静默失败）。开机自启的 systemd/launchd 单元作为后续可选增强。
-- **mihomo 由 aibox 下发**：用户无需手动安装；install 钩子从 GitHub release 下载对应平台二进制。
+- **Does not parse the subscription yaml itself**: mihomo natively consumes the subscription URL; aibox does not write a yaml parser (parsing clash yaml in pure bash is fragile; format changes are handled by mihomo).
+- **Latency testing/switching delegated to mihomo**: the `url-test`/`fallback` strategy groups are mature; aibox only calls the API to report/trigger.
+- **nohup+pid for a simple daemon**: works immediately cross-platform (macOS/Linux) without depending on launchd/systemd unit files. If mihomo dies, aibox detects `CLASH_ENABLED` but no port response and falls back to the static proxy (no silent failure). A systemd/launchd unit for boot-time auto-start is a future optional enhancement.
+- **mihomo is shipped by aibox**: users need not install it manually; the install hook downloads the matching-platform binary from the GitHub release.

@@ -1,148 +1,147 @@
-# openmaic 模块
+# openmaic module
 
-把 [OpenMAIC](../..) 的统一运维 CLI（`openmaic`）通过 aibox 分发到目标主机。
+Distributes the unified ops CLI for [OpenMAIC](../..) (`openmaic`) to target hosts via aibox.
 
-CLI 本体是仓库里的 `tools/openmaic/openmaic`（单文件 bash），**本仓库即它的唯一源头**：改这里、`aibox update openmaic`，各处同步。
+The CLI itself is `tools/openmaic/openmaic` in the repo (a single-file bash script), and **this repo is its sole source of truth**: change it here, run `aibox update openmaic`, and everything stays in sync.
 
-## 它管的是什么
+## What it manages
 
-OpenMAIC 是一套 Docker Compose 部署（应用 + PostgreSQL + 视频渲染服务）。这个 CLI 把它的日常运维收敛成一个入口：安装、升级回滚、备份恢复、配置管理、环境自检。
+OpenMAIC is a Docker Compose deployment (app + PostgreSQL + video rendering service). This CLI collapses its day-to-day ops into a single entry point: install, upgrade/rollback, backup/restore, configuration management, environment self-check.
 
-## 运行位置
+## Where it runs
 
-CLI 需 **docker + compose**（不限 OS：Linux 部署主机、macOS Docker Desktop 都行），默认部署目录 `$AIBOX_HOME/apps/openmaic`。
+The CLI requires **docker + compose** (any OS: a Linux deployment host or macOS Docker Desktop both work); the default deployment directory is `$AIBOX_HOME/apps/openmaic`.
 
-- 有 docker：`up/install/upgrade/backup` 等服务命令全可用
-- 无 docker：只 `help / version / doctor` 等只读命令可用，服务命令明确拒绝（退出码 `3`）而非抛 docker 报错
+- With docker: service commands such as `up/install/upgrade/backup` are all available
+- Without docker: only read-only commands like `help / version / doctor` are available; service commands explicitly refuse (exit code `3`) rather than throwing a docker error
 
-`aibox install openmaic` 会自动检查 docker 依赖（缺则提示装）。
+`aibox install openmaic` auto-checks the docker dependency (and prompts to install it if missing).
 
 ```bash
 OPENMAIC_BIN_DIR=/usr/local/bin aibox install openmaic
 ```
 
-## 安装 / 更新 / 卸载
+## Install / Update / Uninstall
 
 ```bash
-aibox install openmaic      # 安装（幂等）
-aibox update openmaic       # 内容有变化才覆盖，一致则跳过
-aibox uninstall openmaic    # 只删 CLI 本体
+aibox install openmaic      # install (idempotent)
+aibox update openmaic       # overwrites only if content changed; skips if identical
+aibox uninstall openmaic    # deletes only the CLI itself
 ```
 
-`aibox uninstall openmaic` **不会**删 `/etc/openmaic`（密钥、访问密码）与部署根 `$AIBOX_HOME/apps/openmaic`（部署目录）—— 那些属于「这套部署」而非「这个命令」。要清部署请用 `openmaic clean`。
+`aibox uninstall openmaic` does **not** delete `/etc/openmaic` (secrets, access passwords) or the deployment root `$AIBOX_HOME/apps/openmaic` (deployment directory) — those belong to "this deployment" rather than "this command". To clean the deployment use `openmaic clean`.
 
-## 动作透传
+## Action pass-through
 
-模块没有自己的常驻服务，`aibox openmaic <action>` 直接透传给本机的 `openmaic`：
+The module has no resident service of its own; `aibox openmaic <action>` passes straight through to the local `openmaic`:
 
 ```bash
-aibox openmaic status           # 等价于 openmaic status
+aibox openmaic status           # equivalent to openmaic status
 aibox openmaic doctor
 aibox openmaic upgrade --check
 aibox openmaic backup list
 ```
 
-> ⚠️ 命名撞车：`aibox install openmaic` 是**装这个模块**；`aibox openmaic install` 是**部署 OpenMAIC 本体**（从源码 clone + 构建 + 起容器）。差一个词序，语义完全不同。
+> ⚠️ Naming collision: `aibox install openmaic` means **install this module**; `aibox openmaic install` means **deploy OpenMAIC itself** (clone from source + build + start containers). One word order apart, completely different semantics.
 
-## 环境变量
+## Environment variables
 
-安装落点：
+Install location:
 
-| 变量 | 默认 | 说明 |
+| Variable | Default | Description |
 | --- | --- | --- |
-| `OPENMAIC_BIN_DIR` | `$AIBOX_BIN_DIR` 或 `~/.local/bin` | CLI 安装目录；部署主机上常用 `/usr/local/bin` |
+| `OPENMAIC_BIN_DIR` | `$AIBOX_BIN_DIR` or `~/.local/bin` | CLI install directory; commonly `/usr/local/bin` on deployment hosts |
 
-CLI 运行时（也可写进 `/etc/openmaic/openmaic.conf`，环境变量优先级更高）：
+CLI runtime (also writable into `/etc/openmaic/openmaic.conf`; environment variables take higher priority):
 
-| 变量 | 默认 | 说明 |
+| Variable | Default | Description |
 | --- | --- | --- |
-| `OPENMAIC_CONF_DIR` | `/etc/openmaic` | 配置与密钥目录 |
-| `OPENMAIC_BASE_DIR` | `$AIBOX_HOME/apps/openmaic` | 部署根目录（见下方《落点》） |
-| `OPENMAIC_PROXY_URL` | 空 | 拉取源码用的代理，接受完整 URL（`http://host:port` / `socks5://host:port`）。**优先于下面的旧键** |
-| `OPENMAIC_PROXY_HOST` | 空 | 同上（旧键，兼容保留）。值可写裸 `host:port`，会自动补 `http://` |
-| `OPENMAIC_HEALTH_URL` | `http://127.0.0.1:3000/api/health` | 健康检查地址 |
-| `OPENMAIC_HEALTH_TIMEOUT` | `300` | 健康检查等待上限（秒） |
-| `OPENMAIC_BACKUP_KEEP` | `14` | 备份保留份数 |
-| `OPENMAIC_RENDER_ENABLED` | `1` | 是否启用视频渲染容器 profile |
-| `OPENMAIC_SHARED_PG` | `0` | 连共享 aibox base PG（`1` 启用：CLI 自动落 override + 建 openmaic 库；详见 docs/DEVELOPMENT.md） |
-| `OPENMAIC_BUILD_TIMEOUT_MAIN` | `3600` | 主镜像构建超时（秒） |
-| `OPENMAIC_BUILD_TIMEOUT_RENDER` | `2400` | 渲染镜像构建超时（秒） |
+| `OPENMAIC_CONF_DIR` | `/etc/openmaic` | config and secrets directory |
+| `OPENMAIC_BASE_DIR` | `$AIBOX_HOME/apps/openmaic` | deployment root directory (see "Layout" below) |
+| `OPENMAIC_PROXY_URL` | empty | proxy for pulling source code; accepts a full URL (`http://host:port` / `socks5://host:port`). **Takes precedence over the legacy key below** |
+| `OPENMAIC_PROXY_HOST` | empty | same as above (legacy key, kept for compatibility). The value may be a bare `host:port`; `http://` is auto-prepended |
+| `OPENMAIC_HEALTH_URL` | `http://127.0.0.1:3000/api/health` | health check URL |
+| `OPENMAIC_HEALTH_TIMEOUT` | `300` | health check wait limit (seconds) |
+| `OPENMAIC_BACKUP_KEEP` | `14` | number of backups to retain |
+| `OPENMAIC_RENDER_ENABLED` | `1` | whether to enable the video rendering container profile |
+| `OPENMAIC_SHARED_PG` | `0` | connect to the shared aibox base PG (`1` enables: the CLI auto-writes an override + creates the openmaic database; see docs/DEVELOPMENT.md) |
+| `OPENMAIC_BUILD_TIMEOUT_MAIN` | `3600` | main image build timeout (seconds) |
+| `OPENMAIC_BUILD_TIMEOUT_RENDER` | `2400` | render image build timeout (seconds) |
 
-仓库里不含任何站点地址；主机相关的值一律由此显式传入。
+The repo contains no site addresses; any host-specific values must be passed in explicitly this way.
 
-## 落点
+## Layout
 
-| 平台 | 身份 | 部署根 |
+| Platform | Identity | Deployment root |
 | --- | --- | --- |
 | Linux | root | `/root/.aibox/apps/openmaic` |
-| macOS | 普通用户 | `~/.aibox/apps/openmaic` |
+| macOS | normal user | `~/.aibox/apps/openmaic` |
 
-两平台同一表达式 `${AIBOX_APPS_ROOT:-${AIBOX_HOME:-$HOME/.aibox}/apps}/openmaic`，
-**不做平台分支** —— 约定见仓库 `docs/module-spec.md`《部署目录与配置落点约定》。
+Both platforms share the expression `${AIBOX_APPS_ROOT:-${AIBOX_HOME:-$HOME/.aibox}/apps}/openmaic`,
+**with no platform branching** — the convention is defined in the repo's `docs/module-spec.md` under "Deployment directory and config layout conventions".
 
-- 配置目录 `/etc/openmaic`（写一次、天天读）与部署根（**每条命令都写**）刻意分离：
-  后者必须落在「日常身份可写」且「容器运行时默认共享」的路径下 —— 否则 `status` 这类
-  只读命令也要提权，且 compose 里的相对挂载会 `Mounts denied`。
-- **不把部署根放 `/opt` 下**：macOS 上 Docker Desktop 默认不共享 `/opt`（这条与 sudo 无关）。
-- 解析不到 `HOME` 且未给显式值时，CLI **直接报错退出（`3`）**，不会拼出 `/.aibox/...`。
+- The config directory `/etc/openmaic` (written once, read daily) is deliberately separated from the deployment root (**written on every command**):
+  the latter must live on a path that is "writable by the daily identity" and "shared by the container runtime by default" — otherwise even read-only commands like `status` would require privilege escalation, and compose's relative mounts would hit `Mounts denied`.
+- **The deployment root is not placed under `/opt`**: on macOS, Docker Desktop does not share `/opt` by default (this is unrelated to sudo).
+- When `HOME` cannot be resolved and no explicit value is given, the CLI **errors out and exits (`3`)** rather than producing a `/.aibox/...` path.
 
-## 代理
+## Proxy
 
-部署主机常直连不了 GitHub，而「拉源码」这一步（`openmaic install` / `upgrade`）必须过网络。这个代理**一般不用手工配**：
+Deployment hosts often cannot reach GitHub directly, yet the "pull source code" step (`openmaic install` / `upgrade`) must go over the network. This proxy **usually needs no manual configuration**:
 
 ```bash
-# 在部署主机上（aibox 已装）
-aibox proxy set http://10.0.0.2:7897           # 配一次，aibox 自身与模块钩子都走它
+# On the deployment host (aibox already installed)
+aibox proxy set http://10.0.0.2:7897           # configure once; aibox itself and module hooks both go through it
 OPENMAIC_BIN_DIR=/usr/local/bin aibox install openmaic
-#   └─ 模块钩子会自动把代理写进 /etc/openmaic/openmaic.conf 的 OPENMAIC_PROXY_URL
+#   └─ the module hook automatically writes the proxy into OPENMAIC_PROXY_URL in /etc/openmaic/openmaic.conf
 ```
 
-**为什么必须落盘到 conf**：`openmaic upgrade` 是在部署主机上、**aibox 不在场**时执行的 —— 环境变量跨不过这个边界（跨主机、跨时间）。写进 conf 之后，此后每次升级拉源码都会自动用它。
+**Why it must be persisted to conf**: `openmaic upgrade` runs on the deployment host **without aibox present** — environment variables do not cross that boundary (across hosts, across time). Once written to conf, every subsequent source pull during upgrade uses it automatically.
 
-也可以不经 aibox，直接编辑 `/etc/openmaic/openmaic.conf`：
+You can also bypass aibox and edit `/etc/openmaic/openmaic.conf` directly:
 
 ```ini
 OPENMAIC_PROXY_URL="http://10.0.0.2:7897"
 ```
 
-拉源码是**多通道**的，代理只是第一条：
+Pulling source code is **multi-channel**; the proxy is only the first one:
 
-1. 经代理直连 GitHub（仅在配了代理时才尝试）
-2. 无代理直连
+1. Direct to GitHub via the proxy (attempted only when a proxy is configured)
+2. Direct connection with no proxy
 3. `ghproxy.net`
 4. `gh-proxy.com`
 
-所以代理不可达、或代理所在机器关机，都**不会让升级卡死** —— 还有公共镜像兜底。当前生效的代理可在 `openmaic doctor` 里看到（已脱敏）。
+So an unreachable proxy, or the proxy host being powered off, will **not stall an upgrade** — the public mirrors still back it up. The currently active proxy is visible in `openmaic doctor` (masked).
 
-## 常用命令
+## Common commands
 
 ```bash
-openmaic status / health / doctor       # 总览、健康检查、环境自检
-openmaic up / down / restart / logs     # 生命周期
-openmaic upgrade [--check] / rollback   # 升级与回滚
-openmaic backup [list|verify] / restore # 备份与恢复
-openmaic config show|get|set|diff       # 配置管理
-openmaic models                         # 模型连通性探测
-openmaic powerlog                       # 异常断电检测（journalctl）
-openmaic install [--tag <tag>] / clean  # 从零部署 / 清理部署
-openmaic completion bash                # 补全脚本
+openmaic status / health / doctor       # overview, health check, environment self-check
+openmaic up / down / restart / logs     # lifecycle
+openmaic upgrade [--check] / rollback   # upgrade and rollback
+openmaic backup [list|verify] / restore # backup and restore
+openmaic config show|get|set|diff       # configuration management
+openmaic models                         # model connectivity probing
+openmaic powerlog                       # abnormal power-loss detection (journalctl)
+openmaic install [--tag <tag>] / clean  # deploy from scratch / clean the deployment
+openmaic completion bash                # completion script
 ```
 
-全局选项：`--json` / `--yes` / `--dry-run` / `--quiet` / `--no-color`。
-退出码分级：`0` 成功、`1` 运行错误、`2` 用法错误、`3` 依赖缺失、`4` 前置校验失败、`10` 失败已回滚、`20` 需人工介入、`30` 未就绪、`40` 并发冲突、`50` 用户取消。
+Global options: `--json` / `--yes` / `--dry-run` / `--quiet` / `--no-color`.
+Exit code tiers: `0` success, `1` runtime error, `2` usage error, `3` missing dependency, `4` pre-check failed, `10` failed-and-rolled-back, `20` needs human intervention, `30` not ready, `40` concurrency conflict, `50` user cancelled.
 
-## 钩子结构
+## Hook structure
 
-| 文件 | 作用 |
+| File | Purpose |
 | --- | --- |
-| `openmaic` | CLI 本体（单文件 bash，约 1500 行） |
-| `lib.sh` | 共享：落点解析、版本读取、语法检查、`host_notice`、代理下发（`sync_proxy_to_conf`） |
-| `install.sh` | 安装 |
-| `uninstall.sh` | 卸载（只删本体） |
-| `update.sh` | 更新（内容比对，幂等） |
-| `svc.sh` | 动作透传 |
-| `docker-compose.shared.yml` | 连共享 aibox base PG 的 compose override（参考副本；`OPENMAIC_SHARED_PG=1` 时 CLI 自动落到 `$APP_DIR`） |
+| `openmaic` | CLI itself (single-file bash, ~1500 lines) |
+| `lib.sh` | shared: layout resolution, version reading, syntax check, `host_notice`, proxy dispatch (`sync_proxy_to_conf`) |
+| `install.sh` | install |
+| `uninstall.sh` | uninstall (deletes only the CLI itself) |
+| `update.sh` | update (content comparison, idempotent) |
+| `svc.sh` | action pass-through |
+| `docker-compose.shared.yml` | compose override for connecting to the shared aibox base PG (reference copy; when `OPENMAIC_SHARED_PG=1`, the CLI auto-writes it to `$APP_DIR`) |
 
-## 平台
+## Platform
 
-跨平台：安装是拷一个文件；CLI 兼容 bash 3.2（用固定 fd 而非 bash 4 的 `exec {fd}>`）。服务命令需 docker（macOS 用 Docker Desktop / Linux 用 docker），不限 OS —— 无 docker 时只读命令仍可用。
+Cross-platform: installation is copying a single file; the CLI is bash 3.2 compatible (uses fixed fds instead of bash 4's `exec {fd}>`). Service commands require docker (Docker Desktop on macOS / docker on Linux), with no OS restriction — read-only commands still work without docker.

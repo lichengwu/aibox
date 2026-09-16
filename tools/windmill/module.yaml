@@ -52,4 +52,4 @@ upstream:
 dashboard:
   endpoints:
     - "http://127.0.0.1:${PORT}"
-  hint: "凭据见 CREDENTIALS.txt + .env；DB 经 ${AIBOX_POSTGRES_HOST} 连共享 PG（base.env 注入）"
+  hint: "Credentials in CREDENTIALS.txt + .env; DB connects to shared PG via ${AIBOX_POSTGRES_HOST} (injected via base.env)"

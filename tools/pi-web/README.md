@@ -1,22 +1,22 @@
-# pi-web 模块
+# pi-web module
 
-把 [`@agegr/pi-web`](https://www.npmjs.com/package/@agegr/pi-web) 部署为 macOS 用户级 launchd 常驻服务（HTTP Basic Auth + 崩溃自动重启）。本模块由原 `pi-web-ctl` 单脚本拆解而来，功能等价。
+Deploys [`@agegr/pi-web`](https://www.npmjs.com/package/@agegr/pi-web) as a macOS user-level launchd persistent service (HTTP Basic Auth + crash auto-restart). This module was split out from the original `pi-web-ctl` single script and is functionally equivalent.
 
-## 安装 / 卸载 / 更新（经 aibox）
+## Install / Uninstall / Update (via aibox)
 
 ```bash
-aibox install pi-web              # 安装并启动服务
-aibox update pi-web               # 有更新则询问是否重启（无更新不重启）
-aibox update pi-web --restart     # 有更新则直接重启，不询问
-aibox update pi-web --no-restart  # 有更新也不重启
-aibox update --all                # 更新所有已装模块 + aibox 自身
-aibox update pi-web --all         # 更新 pi-web + aibox 自身
-aibox uninstall pi-web            # 停服 + 清理 plist
+aibox install pi-web              # install and start the service
+aibox update pi-web               # if an update exists, asks whether to restart (no restart when already up to date)
+aibox update pi-web --restart     # if an update exists, restart directly without prompting
+aibox update pi-web --no-restart  # even if an update exists, do not restart
+aibox update --all                # update all installed modules + aibox itself
+aibox update pi-web --all         # update pi-web + aibox itself
+aibox uninstall pi-web            # stop service + clean up plist
 ```
 
-`update` 先比对 `@agegr/pi-web` 已装版本与 npm latest：**无更新则一律不重启**（无论参数）；有更新则升级 npm 包并重写 plist，再按 `--restart`（直接重启）/ `--no-restart`（不重启）/ 无参数（交互询问 `[Y/n]`，非交互默认不重启）决定是否重启服务。
+`update` first compares the installed version of `@agegr/pi-web` with the npm latest: **if there is no update, it never restarts** (regardless of flags); if an update exists, it upgrades the npm package and rewrites the plist, then decides whether to restart the service based on `--restart` (restart directly) / `--no-restart` (do not restart) / no flag (interactive `[Y/n]` prompt, non-interactive defaults to no restart).
 
-## 服务运维
+## Service operations
 
 ```bash
 aibox pi-web start
@@ -27,40 +27,40 @@ aibox pi-web logs
 aibox pi-web diagnose
 ```
 
-## 环境变量
+## Environment variables
 
-| 变量 | 默认 | 说明 |
+| Variable | Default | Description |
 | --- | --- | --- |
-| `PI_WEB_PASSWORD` | 随机生成 | HTTP Basic Auth 密码（用户名固定 `pi`）；首次安装随机生成并写入 plist，重装/更新从 plist 读回（幂等不换）；设此变量则用它覆盖 |
-| `PI_WEB_BIND` | `0.0.0.0` | 监听地址；`127.0.0.1` 仅本机 |
-| `PI_WEB_PORT` | `30141` | 监听端口 |
+| `PI_WEB_PASSWORD` | randomly generated | HTTP Basic Auth password (username is fixed to `pi`); randomly generated on first install and written into the plist, read back from the plist on reinstall/update (idempotent, not rotated); setting this variable overrides it |
+| `PI_WEB_BIND` | `0.0.0.0` | listen address; `127.0.0.1` for localhost only |
+| `PI_WEB_PORT` | `30141` | listen port |
 
-在 `aibox install pi-web` 前导出即可，例如：
+Just export them before `aibox install pi-web`, for example:
 
 ```bash
 PI_WEB_PASSWORD=secret PI_WEB_BIND=127.0.0.1 aibox install pi-web
 ```
 
-## 与原 pi-web-ctl 的对照
+## Comparison with the original pi-web-ctl
 
-| 原 `pi-web-ctl` | 现在 |
+| Original `pi-web-ctl` | Now |
 | --- | --- |
 | `pi-web-ctl install` | `aibox install pi-web` |
 | `pi-web-ctl start` | `aibox pi-web start` |
 | `pi-web-ctl status` | `aibox pi-web status` |
 | `pi-web-ctl uninstall` | `aibox uninstall pi-web` |
-| `pi-web-ctl install-cli` | （删除，由 `aibox` 主 CLI 取代） |
+| `pi-web-ctl install-cli` | (removed, replaced by the `aibox` main CLI) |
 
-## 平台
+## Platform
 
-跨平台：macOS 用 launchd（`~/Library/LaunchAgents` plist + `KeepAlive`），Linux 用 systemd --user（`~/.config/systemd/user/pi-web.service` + `Restart=always` + `loginctl enable-linger` 保活）。两者都不需 root。Windows 未支持。
+Cross-platform: macOS uses launchd (`~/Library/LaunchAgents` plist + `KeepAlive`), Linux uses systemd --user (`~/.config/systemd/user/pi-web.service` + `Restart=always` + `loginctl enable-linger` for keep-alive). Neither requires root. Windows is not supported.
 
-## 钩子结构
+## Hook structure
 
-| 文件 | 作用 |
+| File | Purpose |
 | --- | --- |
-| `lib.sh` | 共享：配置变量、`resolve_node` / `cleanup_old` / `write_plist` / `show_status` |
-| `install.sh` | 安装 |
-| `uninstall.sh` | 卸载 |
-| `update.sh` | 更新 |
+| `lib.sh` | shared: config variables, `resolve_node` / `cleanup_old` / `write_plist` / `show_status` |
+| `install.sh` | install |
+| `uninstall.sh` | uninstall |
+| `update.sh` | update |
 | `svc.sh` | `start/stop/restart/status/logs/diagnose` |

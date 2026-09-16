@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# pi-web 模块 — 更新钩子
-# 逻辑:
-#   1. 检测 @agegr/pi-web 是否有新版本（已装 vs latest）
-#      - 无更新 -> 不做任何事，不重启（无论 --restart/--no-restart）
-#      - 有更新 -> 升级 + 重写 plist，再决定是否重启
-#   2. 重启决策（仅在有更新时）:
-#      --restart       直接重启，不询问
-#      --no-restart    有更新也不重启
-#      （空）          交互询问 [Y/n]；非交互环境默认不重启
-# 参数: $1 = --restart | --no-restart | （空）
+# pi-web module — update hook
+# Logic:
+#   1. Check whether @agegr/pi-web has a newer version (installed vs latest).
+#      - No update  -> do nothing, don't restart (regardless of --restart/--no-restart).
+#      - Update     -> upgrade + rewrite plist, then decide whether to restart.
+#   2. Restart decision (only when there's an update):
+#      --restart       restart directly, no prompt
+#      --no-restart    don't restart even if updated
+#      (empty)         interactive prompt [Y/n]; non-interactive defaults to no restart.
+# Args: $1 = --restart | --no-restart | (empty)
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
@@ -22,29 +22,29 @@ cur="$(npm ls -g @agegr/pi-web --depth=0 2>/dev/null | grep -oE '@agegr/pi-web@[
 latest="$(npm view @agegr/pi-web version 2>/dev/null | tr -d '[:space:]' || true)"
 
 if [ -n "$cur" ] && [ -n "$latest" ] && [ "$cur" = "$latest" ]; then
-  log "@agegr/pi-web 已是最新 ($latest)，无需更新，不重启"
+  log "@agegr/pi-web is already latest ($latest); no update, no restart"
   exit 0
 fi
 
-log "升级 @agegr/pi-web ${cur:-未安装} -> ${latest:-latest} ..."
+log "Upgrading @agegr/pi-web ${cur:-not installed} -> ${latest:-latest} ..."
 npm install -g @agegr/pi-web@latest --silent
 cleanup_old
 resolve_password
 write_service
 
-# ---------- 决定是否重启 ----------
+# ---------- decide whether to restart ----------
 do_restart=""
 case "$restart_arg" in
 --restart) do_restart=1 ;;
 --no-restart) do_restart=0 ;;
 "")
-  if ask_yn "更新完成，是否重启 pi-web 服务？" y; then
+  if ask_yn "Update done; restart the pi-web service?" y; then
     do_restart=1
   else
     do_restart=0
   fi
   ;;
-*) die "未知参数: ${restart_arg}（可用 --restart | --no-restart）" ;;
+*) die "Unknown arg: ${restart_arg} (available: --restart | --no-restart)" ;;
 esac
 
 if [ "$do_restart" = "1" ]; then
@@ -58,14 +58,14 @@ if [ "$do_restart" = "1" ]; then
     if systemctl --user is-active --quiet "$LABEL" 2>/dev/null; then
       systemctl --user restart "$LABEL"
     else
-      [ -f "$UNIT_FILE" ] || die "${UNIT_FILE} 不存在，请先 aibox install pi-web"
+      [ -f "$UNIT_FILE" ] || die "${UNIT_FILE} does not exist; run: aibox install pi-web"
       loginctl enable-linger "${UID_}" 2>/dev/null || true
       systemctl --user start "$LABEL"
     fi
   fi
   sleep 3
   show_status
-  log "pi-web 已更新并重启"
+  log "pi-web updated and restarted"
 else
-  log "已更新但未重启。稍后重启: aibox pi-web restart（或开机后自启）"
+  log "Updated but not restarted. Restart later: aibox pi-web restart (or auto-start on boot)"
 fi

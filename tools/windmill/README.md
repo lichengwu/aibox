@@ -1,52 +1,49 @@
 # windmill
 
-Windmill 自托管实例的**单文件运维 CLI** 分发模块（与 `openmaic` 同构）。
-CLI 本体是 `windmill`（自包含 bash 脚本，所有 compose/Caddyfile/systemd 模板内嵌），
-本模块负责把它装到目标机器并播种主机级配置。
+A **single-file ops CLI** distribution module for a Windmill self-hosted instance (isomorphic to `openmaic`).
+The CLI itself is `windmill` (a self-contained bash script with all compose/Caddyfile/systemd templates embedded);
+this module is responsible for installing it onto the target machine and seeding host-level configuration.
 
-## 适用场景
+## Applicable scenarios
 
-- Linux 部署主机（推荐：`WINDMILL_BIN_DIR=/usr/local/bin aibox install windmill`）
-- macOS 本机亦可安装（CLI 已做平台适配：锁/端口/IP/内存/备份抢救均有回退实现）；
-  唯一未适配项是 **launchd 定时任务**（每日备份/版本检查在 macOS 上暂不可用，`systemd` 子命令会明确报错）
+- Linux deployment host (recommended: `WINDMILL_BIN_DIR=/usr/local/bin aibox install windmill`)
+- macOS local install is also supported (the CLI has platform adaptations: lock/port/IP/memory/backup rescue all have fallback implementations);
+  the only unadapted item is the **launchd scheduled task** (daily backup/version check is currently unavailable on macOS; the `systemd` subcommand will explicitly error out)
 
-## 落点（module-spec《部署目录与配置落点约定》）
+## Landing points (module-spec "Deployment directory and config landing point convention")
 
-| 项 | 路径 | 说明 |
+| Item | Path | Description |
 | --- | --- | --- |
-| CLI 本体 | `${WINDMILL_BIN_DIR:-${AIBOX_BIN_DIR:-~/.local/bin}}/windmill` | 安装型落点 |
-| 部署根 | `$AIBOX_HOME/apps/windmill` | `.env`、compose、`backups/`、`logs/`、凭据；`destroy` 的删除边界 |
-| 主机级配置 | `/etc/windmill/windmill.conf` | 键白名单 `PROXY_URL` / `WM_GHCR_MIRROR` / `WM_HUB_MIRROR` / `HTTP_PORT`；install 播种、只补不覆盖、CLI 只读；**不放凭据** |
+| CLI itself | `${WINDMILL_BIN_DIR:-${AIBOX_BIN_DIR:-~/.local/bin}}/windmill` | install landing point |
+| Deployment root | `$AIBOX_HOME/apps/windmill` | `.env`, compose, `backups/`, `logs/`, credentials; the deletion boundary of `destroy` |
+| Host-level config | `/etc/windmill/windmill.conf` | key whitelist `PROXY_URL` / `WM_GHCR_MIRROR` / `WM_HUB_MIRROR` / `HTTP_PORT`; seeded on install, only fills in without overwriting, read-only to the CLI; **no credentials stored here** |
 
-部署根两平台同一表达式（Linux `/root/.aibox/apps/windmill`，macOS `~/.aibox/apps/windmill`）。
+The deployment root is the same expression on both platforms (Linux `/root/.aibox/apps/windmill`, macOS `~/.aibox/apps/windmill`).
 
-## 快速开始（部署主机上）
+## Quick start (on the deployment host)
 
 ```bash
-aibox install windmill                 # 或 WINDMILL_BIN_DIR=/usr/local/bin aibox install windmill
-windmill doctor                        # 环境自检
-windmill init --version 1.811.1        # 从零部署（国内网络建议先给 docker daemon 配代理）
-windmill systemd install               # 每日备份 + 每周版本检查 + 开机对齐
+aibox install windmill                 # or WINDMILL_BIN_DIR=/usr/local/bin aibox install windmill
+windmill doctor                        # environment self-check
+windmill init --version 1.811.1        # deploy from scratch (for domestic networks, configuring a proxy for the docker daemon first is recommended)
+windmill systemd install               # daily backup + weekly version check + boot alignment
 ```
 
-日常：`windmill status / doctor / backup --full / drill`；升级：`windmill check` → `windmill upgrade <ver>`。
+Day-to-day: `windmill status / doctor / backup --full / drill`; upgrades: `windmill check` → `windmill upgrade <ver>`.
 
-## 网络要点（实测）
+## Networking notes (empirically tested)
 
-- ghcr.io 直连国内约 0.5 MB/s，**首选给 docker daemon 配 HTTP 代理**（systemd drop-in，
-  实测 66 MB/s）；`--ghcr-mirror` / `--hub-mirror` 为备选
-- daemon 的 `registry-mirrors` 若混入黑洞源，`docker pull` 会静默挂死 —— CLI 的拉取
-  自带停滞检测与重试，也可用 `--hub-mirror` 绕开
+- ghcr.io direct connection from China is about 0.5 MB/s; **configuring an HTTP proxy for the docker daemon is the preferred approach** (systemd drop-in, measured 66 MB/s); `--ghcr-mirror` / `--hub-mirror` are fallback alternatives
+- If the daemon's `registry-mirrors` contains a black-hole source, `docker pull` will silently hang — the CLI's pull has built-in stall detection and retry, and you can also bypass it with `--hub-mirror`
 
-## 卸载语义
+## Uninstall semantics
 
-`aibox uninstall windmill` 只删 CLI 本体；`/etc/windmill/windmill.conf` 与
-`$AIBOX_HOME/apps/windmill`（数据库卷、备份）**保留** —— 它们属于「这套部署」。
-彻底清场用 `windmill --yes destroy --all`（先转移备份到 `$AIBOX_HOME/backups/`）。
+`aibox uninstall windmill` only deletes the CLI itself; `/etc/windmill/windmill.conf` and
+`$AIBOX_HOME/apps/windmill` (database volumes, backups) are **preserved** — they belong to "this deployment".
+For a complete teardown use `windmill --yes destroy --all` (it first relocates backups to `$AIBOX_HOME/backups/`).
 
-## 与 aibox 的关系
+## Relationship with aibox
 
-- 代理：aibox 全局代理（`aibox proxy set`）在 install/update 时播种进
-  `/etc/windmill/windmill.conf` 的 `PROXY_URL`，供部署主机上离线执行 `windmill check` 使用
-- `aibox windmill <action>` 透传给本机 `windmill` CLI
-- `aibox self uninstall` 对 `apps/` 有 fail-closed 保护，不会误删部署实例
+- Proxy: the aibox global proxy (`aibox proxy set`) is seeded into the `PROXY_URL` of `/etc/windmill/windmill.conf` during install/update, for running `windmill check` offline on the deployment host
+- `aibox windmill <action>` is passed through to the local `windmill` CLI
+- `aibox self uninstall` has fail-closed protection over `apps/` and will not accidentally delete deployment instances

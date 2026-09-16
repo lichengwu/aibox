@@ -1,272 +1,241 @@
-# 把 windmill 运维 CLI 适配为 aibox 模块 —— 方案
+# Adapting the windmill Ops CLI as an aibox Module — Plan
 
-> 状态：**已实施**（windmill v1.1.0，见 registry.sh；部署根/配置落点已按 docs/module-spec.md 约定对齐。本文档为历史设计记录）
-> 目标：在 aibox 仓库新增 `tools/windmill/` 模块，把 Windmill 自托管运维 CLI 纳管
+> Status: **Implemented** (windmill v1.1.0, see registry.sh; deploy-root/config placement aligned with the docs/module-spec.md conventions. This document is a historical design record.)
+> Goal: Add a `tools/windmill/` module to the aibox repo to bring the Windmill self-hosted ops CLI under management.
 
-## 修订说明
+## Revision Notes
 
 ### v1 → v2
 
-按反馈修订了三处前提：
+Revised three premises based on feedback:
 
-| 项 | v1 假设 | v2 修订 |
+| Item | v1 assumption | v2 revision |
 | --- | --- | --- |
-| 运行位置 | Mac 上的 aibox 远程管 Linux 主机 | **都是本机**，模块只做「安装到本机」，不涉及 scp / ssh |
-| 平台 | 仅 Linux 部署主机 | **需同时适配 macOS 与 Linux**（为后续工作预留，本期先打通 Linux） |
-| 代理 | 新增 `windmill proxy` 子命令管 daemon 代理 | **不新增**，代理统一走 aibox 全局配置（论证见 §4.4） |
+| Where it runs | aibox on Mac remotely manages a Linux host | **All local**; the module only does "install to this machine", no scp / ssh involved |
+| Platform | Linux deploy host only | **Must adapt to both macOS and Linux** (reserved for future work; this round gets Linux working first) |
+| Proxy | Add a new `windmill proxy` subcommand to manage the daemon proxy | **Not added**; proxy uniformly goes through aibox's global config (rationale in §4.4) |
 
 ### v2 → v3
 
-| 项 | v2 方案 | v3 修订 |
+| Item | v2 plan | v3 revision |
 | --- | --- | --- |
-| 配置落点 | 按平台分两处（Linux `/etc/`、macOS XDG `~/.config/`） | **统一 `/etc/windmill/windmill.conf`**，macOS 允许安装期提权一次 → 平台分支取消（见 §3.3） |
-| 部署目录 | 只说了「macOS 要挪走」，没给够理由 | 补上硬理由：**必须在 `/Users` 下**（`~/windmill`）—— Docker Desktop 默认不共享 `/opt`，`./Caddyfile` 的相对挂载会 `Mounts denied`（见 §3.3） |
+| Config placement | Two locations split by platform (Linux `/etc/`, macOS XDG `~/.config/`) | **Unified to `/etc/windmill/windmill.conf`**; macOS allows one-time privilege escalation during install → the platform branch is eliminated (see §3.3) |
+| Deploy directory | Only said "macOS needs to move away", without enough reason | Added hard reasons: **must be under `/Users`** (`~/windmill`) — Docker Desktop does not share `/opt` by default, and the relative mount in `./Caddyfile` would hit `Mounts denied` (see §3.3) |
 
 ### v3 → v4
 
-| 项 | v3 方案 | v4 修订 |
+| Item | v3 plan | v4 revision |
 | --- | --- | --- |
-| 部署目录 | Linux `/opt/windmill`、macOS `~/windmill` —— 仍留**一处平台分支** | **两平台统一 `$AIBOX_HOME/apps/windmill`**（= Linux `/root/.aibox/apps/windmill`、macOS `~/.aibox/apps/windmill`），平台分支彻底消失；备份抢救目录一并统一到 `$AIBOX_HOME/backups/` |
-| 前提 | 未提 | 新增两个**前置条件**（不做就是事故）：① `aibox self uninstall` 改 fail-closed（现在裸 `rm -rf "$AIBOX_HOME"`，会连坐删库）；② systemd 单元必须显式 `Environment=`（**实测系统服务里没有 `HOME`**） |
-| 规范范围 | 只写本模块 | 部署根作为**跨模块约定**写进 `docs/module-spec.md` |
+| Deploy directory | Linux `/opt/windmill`, macOS `~/windmill` — still leaves **one platform branch** | **Both platforms unified to `$AIBOX_HOME/apps/windmill`** (= Linux `/root/.aibox/apps/windmill`, macOS `~/.aibox/apps/windmill`); the platform branch is gone entirely; the backup evacuation directory is likewise unified to `$AIBOX_HOME/backups/` |
+| Premise | Not mentioned | Added two **prerequisites** (skipping them is an incident): ① `aibox self uninstall` changed to fail-closed (currently a bare `rm -rf "$AIBOX_HOME"`, which would take the databases down with it); ② the systemd unit must explicitly set `Environment=` (**verified: there is no `HOME` in the system service**) |
+| Spec scope | Only this module | The deploy root is written into `docs/module-spec.md` as a **cross-module convention** |
 
 ### v4 → v5
 
-| 项 | v4 方案 | v5 修订 |
+| Item | v4 plan | v5 revision |
 | --- | --- | --- |
-| 存量实例 | 阶段 7 做显式**迁移**（`/opt/windmill` → 新落点） | **不迁移，直接重装** —— 存量还少，清空重来的成本低于长期维护一条一次性迁移路径（见 §六 阶段 7） |
-| 存量模块对齐 | openmaic 的 `/opt/openmaic` 列为「后续对齐项」 | **已对齐**：openmaic 部署根改为 `$AIBOX_HOME/apps/openmaic`；`pi-web` 确认为安装型、**不引入部署根** |
-| 前置条件 | 只写在风险表里 | `cmd_self_uninstall` 的 fail-closed **已实现并测试通过**（阶段 0 完成） |
+| Existing instance | Phase 7 does an explicit **migration** (`/opt/windmill` → new location) | **No migration, just reinstall** — the existing footprint is still small; the cost of wiping and reinstalling is lower than long-term maintenance of a one-time migration path (see §6 Phase 7) |
+| Existing module alignment | openmaic's `/opt/openmaic` listed as "to be aligned later" | **Already aligned**: openmaic's deploy root changed to `$AIBOX_HOME/apps/openmaic`; `pi-web` confirmed as install-type, **does not introduce a deploy root** |
+| Prerequisites | Only listed in the risk table | The fail-closed `cmd_self_uninstall` **is implemented and tested** (Phase 0 complete) |
 
-## 一、结论
+## 1. Conclusion
 
-有现成模板：**`tools/openmaic/` 与 windmill 同构**（单文件 bash 运维 CLI、Docker Compose 部署、
-命令分域、退出码分级、已有并发锁）。模块骨架照抄即可。
+There is an existing template: **`tools/openmaic/` is isomorphic to windmill** (single-file bash ops CLI, Docker Compose deployment, command-domain separation, exit-code tiers, existing concurrency lock). Copy the module skeleton directly.
 
-真正的工作量在 CLI 自身：
+The real workload is in the CLI itself:
 
-| # | 改造项 | 必要性 |
+| # | Refactor item | Necessity |
 | --- | --- | --- |
-| 1 | 剥离内网代理绑定（还会落进生成的 compose 文件） | **必须** |
-| 2 | 版本变量加前缀（`CLI_VERSION` → `WINDMILL_CLI_VERSION`） | **必须** |
-| 3 | 落点约定：配置统一 `/etc/windmill/windmill.conf`、部署统一 `$AIBOX_HOME/apps/windmill` | 推荐 |
-| 4 | 平台抽象层（为 macOS 适配打底，共 8 处） | 本期打底，后续填充 |
-| 5 | `aibox self uninstall` 改 fail-closed（**前置条件**，见 §3.3） | **必须** |
+| 1 | Strip the intranet-proxy binding (also lands in the generated compose file) | **Required** |
+| 2 | Prefix the version variable (`CLI_VERSION` → `WINDMILL_CLI_VERSION`) | **Required** |
+| 3 | Placement convention: config unified to `/etc/windmill/windmill.conf`, deploy unified to `$AIBOX_HOME/apps/windmill` | Recommended |
+| 4 | Platform abstraction layer (foundation for macOS adaptation, 8 spots total) | Foundation this round; fill in later |
+| 5 | `aibox self uninstall` changed to fail-closed (**prerequisite**, see §3.3) | **Required** |
 
-## 二、同构性
+## 2. Isomorphism
 
-### 2.1 可直接复用 openmaic 的部分
+### 2.1 Parts directly reusable from openmaic
 
-目标平台（Linux + docker compose）、CLI 形态（单文件 bash）、命令分域、退出码分级、
-并发锁、以及整套钩子契约与 `lib.sh` 结构。
+Target platform (Linux + docker compose), CLI form (single-file bash), command-domain separation, exit-code tiers, concurrency lock, and the entire hook contract and `lib.sh` structure.
 
-### 2.2 差异点
+### 2.2 Differences
 
-| # | 维度 | openmaic | windmill 现状 | 处理 |
+| # | Dimension | openmaic | windmill current | Handling |
 | --- | --- | --- | --- | --- |
-| 1 | 落点 | 配置 `/etc/openmaic`、部署 `/opt/openmaic`（分离） | 全在 `/opt/windmill`（配置与运行时不分离） | 配置 → `/etc/windmill/windmill.conf`；部署 → `$AIBOX_HOME/apps/windmill`，见 §3.3 |
-| 2 | 内网绑定 | 无 | 硬编码内网代理，且**写进生成的 compose** | 必须剥离 |
-| 3 | 版本变量 | `OPENMAIC_CLI_VERSION` | `CLI_VERSION`（通用名） | 加前缀 |
-| 4 | 平台守卫 | 有（退出码 3） | 无 | 新增 |
-| 5 | `--json` | 有 | 无 | 可选，本期不做 |
-| 6 | macOS 解析 | 需规避 bash 4 语法 | **实测 `bash -n` 通过** | 无需处理 |
+| 1 | Placement | Config `/etc/openmaic`, deploy `/opt/openmaic` (separated) | All in `/opt/windmill` (config and runtime not separated) | Config → `/etc/windmill/windmill.conf`; deploy → `$AIBOX_HOME/apps/windmill`, see §3.3 |
+| 2 | Intranet binding | None | Hardcoded intranet proxy, and **written into the generated compose** | Must strip |
+| 3 | Version variable | `OPENMAIC_CLI_VERSION` | `CLI_VERSION` (generic name) | Add prefix |
+| 4 | Platform guard | Yes (exit code 3) | None | Add |
+| 5 | `--json` | Yes | None | Optional, not done this round |
+| 6 | macOS parsing | Needs to avoid bash 4 syntax | **Verified `bash -n` passes** | No handling needed |
 
-> **第 6 条是个好消息**：windmill CLI 在 macOS 自带 bash 3.2 下能完整解析，
-> 意味着执行期守卫能给出清晰提示，不会像 openmaic 那样先撞语法错误。
+> **Item 6 is good news**: the windmill CLI parses cleanly under macOS's built-in bash 3.2, meaning the runtime guard can give a clear message instead of hitting a syntax error first like openmaic.
 
-## 三、CLI 需要改造的 4 项
+## 3. Four CLI Items to Refactor
 
-### 3.1 剥离内网绑定（必须）
+### 3.1 Strip the intranet binding (required)
 
 ```bash
-# 第 23 行
-DEFAULT_PROXY="http://<内网IP>:7897"
-# 第 1146 行 —— 更严重
-WM_PROXY=${DEFAULT_PROXY}      # 会落进 windmill init 生成的 docker-compose.yml
+# Line 23
+DEFAULT_PROXY="http://<intranet-IP>:7897"
+# Line 1146 — more severe
+WM_PROXY=${DEFAULT_PROXY}      # lands in the docker-compose.yml generated by windmill init
 ```
 
-第 1146 行意味着**每次生成 compose 都带着内网地址**，并随部署留在目标机上。
+Line 1146 means **every generated compose carries the intranet address**, and it stays on the target machine with the deployment.
 
-改法：
+Fix:
 
-- 删除 `DEFAULT_PROXY`，`PROXY_URL` 改为「命令行 > 环境变量 > conf」三级读取，**默认空**
-- 渲染时 `WM_PROXY=` 留空值，且**依赖它的分支要能优雅跳过**（空值时不做 `curl -x http://`）
-- 自查：`grep -rn '192\.168\.' tools/windmill/` 必须为 0
+- Remove `DEFAULT_PROXY`; `PROXY_URL` changes to a three-tier read "command line > env var > conf", **default empty**.
+- At render time, leave `WM_PROXY=` empty, and **branches depending on it must skip gracefully** (when empty, do not run `curl -x http://`).
+- Self-check: `grep -rn '192\.168\.' tools/windmill/` must be 0.
 
-### 3.2 版本变量加前缀
+### 3.2 Prefix the version variable
 
-`CLI_VERSION` → `WINDMILL_CLI_VERSION`（含第 2801、2819 行引用）。
-模块 `lib.sh` 用 `sed -nE 's/^WINDMILL_CLI_VERSION="([^"]+)".*/\1/p'` 读取，与
-`OPENMAIC_CLI_VERSION` 保持同一约定。
+`CLI_VERSION` → `WINDMILL_CLI_VERSION` (including references at lines 2801, 2819).
+The module's `lib.sh` reads it with `sed -nE 's/^WINDMILL_CLI_VERSION="([^"]+)".*/\1/p'`, keeping the same convention as `OPENMAIC_CLI_VERSION`.
 
-### 3.3 落点约定 —— 配置 `/etc/windmill/`、部署 `$AIBOX_HOME/apps/windmill`
+### 3.3 Placement convention — config `/etc/windmill/`, deploy `$AIBOX_HOME/apps/windmill`
 
-**结论：两者都两平台同形，不做平台分支。** 配置写 `/etc/windmill/windmill.conf` 需要
-`sudo`，但**只在安装那一次**（模块的 `install.sh` 钩子）——装完之后 `status` / `up` /
-`logs` / `backup` 等日常命令一律不需要提权；部署目录落在 `$AIBOX_HOME/apps/` 下，
-日常命令也不需要提权。
+**Conclusion: both have the same shape on both platforms; no platform branch.** Writing config to `/etc/windmill/windmill.conf` requires `sudo`, but **only once during install** (the module's `install.sh` hook) — after install, daily commands like `status` / `up` / `logs` / `backup` need no privilege escalation; the deploy directory lives under `$AIBOX_HOME/apps/`, and daily commands need no privilege escalation either.
 
-**为什么是 `/etc/windmill/` 而不是 `/opt`**
+**Why `/etc/windmill/` and not `/opt`**
 
-先把「放 `/opt` 下面」的三种含义分开：
+First, separate the three meanings of "put it under `/opt`":
 
-| 放法 | 结果 |
+| Placement | Result |
 | --- | --- |
-| 放 `/opt/windmill/` 内（现状：`.env`、`backups/`） | **无效** —— `destroy` 就是 `rm -rf "$WM_DIR"`，换个更深的子目录照样删 |
-| 放 `/opt/` 根下（如 `/opt/windmill.conf`） | 能活下来（不在 `WM_DIR` 内），但归属不清：`/opt` 的约定是「一个包一个目录」（`/opt/<package>/`）。孤零零一个配置文件，没人知道它属于谁、卸载时该不该删 |
-| **放 `/etc/windmill/`（推荐）** | 见下 |
+| Inside `/opt/windmill/` (current: `.env`, `backups/`) | **Invalid** — `destroy` is just `rm -rf "$WM_DIR"`; moving to a deeper subdirectory still deletes it |
+| Under `/opt/` root (e.g. `/opt/windmill.conf`) | Survives (not inside `WM_DIR`), but ownership is unclear: the `/opt` convention is "one directory per package" (`/opt/<package>/`). A lone config file leaves no one knowing who it belongs to or whether to delete it on uninstall |
+| **`/etc/windmill/` (recommended)** | See below |
 
-`/etc` 在四个维度上都对：
+`/etc` is correct on four dimensions:
 
-| 维度 | 依据 |
+| Dimension | Basis |
 | --- | --- |
-| 语义 | FHS（`man 5 hier`）：`/etc` = *host-specific system configuration*。代理、镜像源、端口正是**主机专属、跨部署实例不变**的设置 |
-| 先例 | `/etc/docker/daemon.json`、`/etc/caddy/`、`/etc/nginx/` —— 同类「单机部署的守护服务」都这么放 |
-| 双平台 | macOS 的 `/etc` 是 `/private/etc` 的符号链接，`sudo` 可写；Linux 上部署本身就由 root 操作。**同一路径成立，无需分支** |
-| 不随部署消失 | 在 `$WM_DIR` 之外，`destroy --all` 动不到 |
+| Semantics | FHS (`man 5 hier`): `/etc` = *host-specific system configuration*. Proxy, image mirrors, ports are exactly **host-specific settings invariant across deploy instances** |
+| Precedent | `/etc/docker/daemon.json`, `/etc/caddy/`, `/etc/nginx/` — similar "single-machine daemon-service deployments" all do this |
+| Cross-platform | On macOS, `/etc` is a symlink to `/private/etc`, writable with `sudo`; on Linux, deployment itself is done as root. **The same path works, no branch needed** |
+| Does not vanish with the deployment | Outside `$WM_DIR`; `destroy --all` cannot reach it |
 
-`/opt/windmill.conf` 还有一条实际硬伤：Linux 服务器上 `/opt` 同样是 `root:root 755`，
-**你能写只是因为你以 root 操作**。一旦要双平台，这个「能写」的感觉立刻破产；而 `/etc`
-不依赖这个假设 —— 它明确就是「需要特权才能改的文件放这儿」，语义自洽。
+`/opt/windmill.conf` has another hard flaw: on a Linux server, `/opt` is also `root:root 755`, and **you can write to it only because you operate as root**. Once you target two platforms, that "writable" feeling immediately breaks; whereas `/etc` does not rely on this assumption — it is explicitly "put files here that require privilege to change", semantically self-consistent.
 
-**权限：目录 `755 root:root`，文件 `644 root:root`**
+**Permissions: directory `755 root:root`, file `644 root:root`**
 
-关键是读写分离：**写只发生在安装期（需要 sudo），读发生在每次命令（不能需要 sudo）**，
-所以文件必须 `644`，让普通用户能读到。
+The key is read/write separation: **writes happen only during install (need sudo); reads happen on every command (must not need sudo)**, so the file must be `644`, letting ordinary users read it.
 
-> 直接后果：**不要把凭据写进这个文件**（644 等于全机可读）。若日后真要放代理凭据，
-> 只能改 `600`，代价是 macOS 上每次运行都提权 —— 这笔账不划算，凭据留在 aibox 自己
-> 的配置里。当前代理无凭据，安全。
+> Direct consequence: **do not put credentials in this file** (644 means whole-machine readable). If you ever need to store proxy credentials, the only option is `600`, at the cost of escalating on every run on macOS — not worth it; credentials stay in aibox's own config. Currently the proxy has no credentials, so it's safe.
 
-**关键区分：配置可以统一到 `/etc`，部署目录不行**
+**Key distinction: config can be unified to `/etc`, the deploy directory cannot**
 
-两者对「谁写、写多频繁」的要求完全不同：
+The two have completely different requirements for "who writes, how often":
 
-| | 配置目录 | 部署目录 `WM_DIR` |
+| | Config directory | Deploy directory `WM_DIR` |
 | --- | --- | --- |
-| CLI 对它的动作 | **写一次，天天读** | **每条命令都写** |
-| 内容 | 代理 / 镜像源 / 端口 | `.env`、`docker-compose.yml`、`Caddyfile`、`CREDENTIALS.txt`、`backups/`、`logs/`、`.lock`（L66–72 实测全在 `$WM_DIR` 内） |
-| 放 `/etc`、`/opt` | 能（sudo 一次可接受） | **不能** —— `status` 这种只读命令也得提权 |
+| What the CLI does to it | **Write once, read daily** | **Writes on every command** |
+| Contents | Proxy / image mirror / port | `.env`, `docker-compose.yml`, `Caddyfile`, `CREDENTIALS.txt`, `backups/`, `logs/`, `.lock` (L66–72 verified all inside `$WM_DIR`) |
+| Put in `/etc`, `/opt` | Works (one-time sudo acceptable) | **Does not work** — even a read-only command like `status` would need privilege escalation |
 
-**部署目录：两平台统一 `$AIBOX_HOME/apps/windmill`**（跨模块约定已写进 `docs/module-spec.md`）
+**Deploy directory: both platforms unified to `$AIBOX_HOME/apps/windmill`** (cross-module convention written into `docs/module-spec.md`)
 
 ```bash
 APPS_ROOT="${AIBOX_APPS_ROOT:-${AIBOX_HOME:-$HOME/.aibox}/apps}"
 WM_DIR="${WM_DIR:-$APPS_ROOT/windmill}"
-WM_CONF_FILE="${WM_CONF_FILE:-/etc/windmill/windmill.conf}"   # 无平台分支
+WM_CONF_FILE="${WM_CONF_FILE:-/etc/windmill/windmill.conf}"   # no platform branch
 ```
 
-| 平台 | 身份 | 部署目录 |
+| Platform | Identity | Deploy directory |
 | --- | --- | --- |
-| macOS | 普通用户 | `~/.aibox/apps/windmill` |
+| macOS | Ordinary user | `~/.aibox/apps/windmill` |
 | Linux | root | `/root/.aibox/apps/windmill` |
 
-同一个表达式、无平台分支。三条硬约束中的前两条来自实测（详见 module-spec）：
+One expression, no platform branch. The first two of the three hard constraints come from real testing (see module-spec):
 
-1. **macOS 被 Docker Desktop 的共享列表卡死** —— 默认只共享 `/Users`、`/Volumes`、
-   `/private`、`/tmp`、`/var/folders`（官方文档）。而 compose 里有
-   `- ./Caddyfile:/etc/caddy/Caddyfile`（L1047）这种**相对挂载**，源就是 `$WM_DIR` →
-   放 `/opt` 会直接 `Mounts denied`。这与 sudo 无关，提权解决不了。
-2. **日常命令不能要 sudo** —— 锁 / 日志 / 备份都在 `$WM_DIR` 内，放进 `root:wheel` 的
-   `/opt` 意味着 `windmill status` 也要提权。
-3. **必须与 `$AIBOX_HOME/modules/` 分命名空间** —— 那里放的是下载的钩子脚本；若部署目录
-   写成 `$AIBOX_HOME/windmill`，与 `$AIBOX_HOME/modules/windmill/` 同名、只差一层，误删风险高。
+1. **macOS is locked by Docker Desktop's shared list** — by default it only shares `/Users`, `/Volumes`, `/private`, `/tmp`, `/var/folders` (official docs). And compose has relative mounts like `- ./Caddyfile:/etc/caddy/Caddyfile` (L1047), whose source is `$WM_DIR` → putting it under `/opt` hits `Mounts denied` directly. This has nothing to do with sudo; privilege escalation cannot fix it.
+2. **Daily commands must not require sudo** — locks / logs / backups are all inside `$WM_DIR`; putting them in `root:wheel` `/opt` means `windmill status` would also need privilege escalation.
+3. **Must be in a separate namespace from `$AIBOX_HOME/modules/`** — that holds downloaded hook scripts; if the deploy directory were `$AIBOX_HOME/windmill`, it would share a name with `$AIBOX_HOME/modules/windmill/`, differing by only one level, creating a high risk of accidental deletion.
 
-**两个前置条件（不是可选优化）**
+**Two prerequisites (not optional optimizations)**
 
-⚠️ **① `aibox self uninstall` 必须改成 fail-closed。** `apps/` 里放的是**部署实例**
-（数据库、备份），生命周期比 aibox 本身长；而现在是裸 `rm -rf "$AIBOX_HOME"`
-（`bin/aibox:851`）—— 卸掉管理器就把所有部署连数据一起删。必须：`apps/` 非空时**默认拒绝**、
-列出将丢失的部署，要显式 `--yes` 才继续。（与「非交互下危险操作返回 2」的既有规则一致。）
+⚠️ **① `aibox self uninstall` must be changed to fail-closed.** `apps/` holds **deploy instances** (databases, backups) whose lifecycle outlasts aibox itself; currently it's a bare `rm -rf "$AIBOX_HOME"` (`bin/aibox:851`) — uninstalling the manager deletes all deployments along with their data. It must: **default to refuse** when `apps/` is non-empty, list the deployments that would be lost, and require an explicit `--yes` to proceed. (Consistent with the existing rule "dangerous operations under non-interactive mode return 2".)
 
-⚠️ **② systemd 单元必须显式带 `Environment=`。** 实测（`systemd-run /usr/bin/env`）：
+⚠️ **② The systemd unit must explicitly carry `Environment=`.** Verified (`systemd-run /usr/bin/env`):
 
 ```
-USER=root          ← 系统服务里只有这个，没有 HOME，也没有 SHELL
+USER=root          ← the system service has only this; no HOME, no SHELL
 ```
 
-**systemd 系统服务里不存在 `HOME` 变量** → 任何 `$HOME` 派生的路径在服务上下文里会解析成
-空。现有单元之所以没事，纯因为 `WM_DIR` 是常量 `/opt/windmill`。改成派生值后必须把解析
-结果烘进单元：
+**The `HOME` variable does not exist in a systemd system service** → any `$HOME`-derived path resolves to empty in the service context. The existing unit only works because `WM_DIR` is the constant `/opt/windmill`. After changing it to a derived value, the resolved result must be baked into the unit:
 
 ```ini
 Environment="AIBOX_HOME=/root/.aibox"
 ```
 
-CLI 侧配套：解析不到就**报错退出**，绝不拼出 `/.aibox/apps/windmill` 这种路径。
+CLI-side accompaniment: if resolution fails, **error and exit**; never assemble a path like `/.aibox/apps/windmill`.
 
-**顺带统一了备份抢救目录**：`evacuate_backups()` 现在落 `/var/backups/`（Linux 专有目录、
-需 root、macOS 没有），改用同一个根就两台通吃 —— `${AIBOX_HOME}/backups/`，平台分支消失。
+**Also unifies the backup evacuation directory**: `evacuate_backups()` currently lands in `/var/backups/` (a Linux-specific directory, needs root, absent on macOS); using the same root works on both — `${AIBOX_HOME}/backups/`, and the platform branch disappears.
 
-**conf 里放什么、不放什么**
+**What goes in conf, what doesn't**
 
-| 放 | 不放 |
+| Goes in | Does not go in |
 | --- | --- |
-| `WM_PROXY`、`WM_GHCR_MIRROR`、`WM_HUB_MIRROR`、`HTTP_PORT` —— **人配的、跨部署实例不变的** | 数据库口令、admin 口令 —— 它们是**部署实例的状态**，`init` 重新生成本就是设计意图，放进 conf 反而制造矛盾 |
+| `WM_PROXY`, `WM_GHCR_MIRROR`, `WM_HUB_MIRROR`, `HTTP_PORT` — **human-configured, invariant across deploy instances** | DB password, admin password — these are **deploy-instance state**; `init` regenerating them is by design, so putting them in conf creates a contradiction |
 
-配置文件不存在时全部走内置默认 → 服务器上现有部署行为**完全不变**。
+When the config file is absent, everything falls back to built-in defaults → the behavior of existing deployments on the server **is completely unchanged**.
 
-> 旁证：这个 CLI 自己已经在为「不分离」打补丁了 —— `BACKUP_DIR="$WM_DIR/backups"` 放在
-> 部署目录内，于是 `destroy` 必须先用 `evacuate_backups()` 把备份抢救到
-> `/var/backups/windmill-pre-destroy-*`。「有些东西不该随部署一起消失」这个判断，代码里
-> **早就存在**，只是用了「事后抢救」而不是「一开始就分开」。这个补丁本身还带两个平台问题：
-> `/var/backups` 是 Linux 专有目录（macOS 没有），且创建它需要 root。
+> Corroborating evidence: this CLI is already patching "not separated" — `BACKUP_DIR="$WM_DIR/backups"` is inside the deploy directory, so `destroy` must first use `evacuate_backups()` to rescue backups to `/var/backups/windmill-pre-destroy-*`. The judgment "some things shouldn't vanish with the deployment" **already exists** in the code, just via "rescue after the fact" rather than "separate from the start". This patch itself has two platform issues: `/var/backups` is a Linux-specific directory (absent on macOS), and creating it requires root.
 >
-> 顺带一处小冗余：`--keep-backups` 与默认行为完全相同（L1674 的三元表达式两分支输出一致）。
+> Also a small redundancy: `--keep-backups` is identical to the default behavior (the two branches of the ternary at L1674 produce the same output).
 
-### 3.4 平台抽象层（macOS 适配打底）
+### 3.4 Platform abstraction layer (foundation for macOS adaptation)
 
-实测你本机（Darwin arm64）：`flock` ✗、`ss` ✗、`free` ✗、`lsof` ✓、`launchctl` ✓、
-docker CLI ✓（compose v5.5.1）、但 **daemon 未运行**。
+Verified on your local machine (Darwin arm64): `flock` ✗, `ss` ✗, `free` ✗, `lsof` ✓, `launchctl` ✓, docker CLI ✓ (compose v5.5.1), but **daemon not running**.
 
-CLI 里需要适配的共 **8 处**：
+There are **8 spots** in the CLI needing adaptation:
 
-| # | 位置 | 现状（Linux） | macOS 差异 | 处理 |
+| # | Location | Current (Linux) | macOS difference | Handling |
 | --- | --- | --- | --- | --- |
-| 1 | L639 并发锁 | `flock -n 9` | macOS 无 `flock` | 抽象 `with_lock()`：有 flock 用它，否则 `mkdir` 原子锁 |
-| 2 | L299 停滞检测 | `du -sm /var/lib/docker` | Docker Desktop 的镜像层在 VM 内，宿主看不见该目录 | 换进度信号：解析 `docker pull` 输出行的时间戳 |
-| 3 | L166 写 .env | `sed -i "s\|…\|"` | BSD sed 需 `sed -i ''` | 改 `awk + mv`（无平台差异，比适配 sed 更稳） |
-| 4 | L541 / L1920 端口探测 | `ss -ltn` | 无 `ss` | 抽象 `port_listening()`：`ss` → `lsof -iTCP -sTCP:LISTEN` → `netstat -an` |
-| 5 | L722 / L1436 取本机 IP | `hostname -I` | 无 `-I` | 抽象 `primary_ip()`：`hostname -I` → `ipconfig getifaddr en0` |
-| 6 | L1870 内存显示 | `free -h` | 无 `free` | 抽象 `mem_used()`：`/proc/meminfo` → `vm_stat` |
-| 7 | L821 备份转移 | `/var/backups/` | macOS 无此目录，且创建需 root | 统一到 `${AIBOX_HOME}/backups/` —— **两平台同一表达式，分支消失**（见 §3.3） |
-| 8 | systemd 17 处 | `systemctl` + timer | macOS 用 launchd | `windmill systemd` 在 macOS 上译为 launchd（**参考 `tools/pi-web/lib.sh` 的 plist 写法**） |
+| 1 | L639 concurrency lock | `flock -n 9` | macOS has no `flock` | Abstract `with_lock()`: use flock if available, otherwise `mkdir` atomic lock |
+| 2 | L299 stall detection | `du -sm /var/lib/docker` | Docker Desktop's image layers are inside the VM; the host cannot see that directory | Switch to a progress signal: parse timestamps from `docker pull` output lines |
+| 3 | L166 writing .env | `sed -i "s\|…\|"` | BSD sed needs `sed -i ''` | Switch to `awk + mv` (no platform difference, more robust than adapting sed) |
+| 4 | L541 / L1920 port probe | `ss -ltn` | No `ss` | Abstract `port_listening()`: `ss` → `lsof -iTCP -sTCP:LISTEN` → `netstat -an` |
+| 5 | L722 / L1436 get local IP | `hostname -I` | No `-I` | Abstract `primary_ip()`: `hostname -I` → `ipconfig getifaddr en0` |
+| 6 | L1870 memory display | `free -h` | No `free` | Abstract `mem_used()`: `/proc/meminfo` → `vm_stat` |
+| 7 | L821 backup evacuation | `/var/backups/` | macOS has no such directory, and creating it needs root | Unify to `${AIBOX_HOME}/backups/` — **same expression on both platforms, branch disappears** (see §3.3) |
+| 8 | systemd 17 spots | `systemctl` + timer | macOS uses launchd | `windmill systemd` translates to launchd on macOS (**reference the plist writing in `tools/pi-web/lib.sh`**) |
 
-第 7 项最重 —— 现有三个单元要一一对应：
+Item 7 is the heaviest — the three existing units map one-to-one:
 
 | Linux | macOS |
 | --- | --- |
-| `windmill-stack.service`（开机对齐） | LaunchAgent + `RunAtLoad` |
+| `windmill-stack.service` (boot alignment) | LaunchAgent + `RunAtLoad` |
 | `windmill-backup.timer` | LaunchAgent + `StartCalendarInterval` |
 | `windmill-update-check.timer` | LaunchAgent + `StartCalendarInterval` |
 
-`WM_DIR` 改成派生值（`$AIBOX_HOME/apps/windmill`），**两平台同一个表达式、无分支**。
-理由与三条硬约束见 §3.3，跨模块约定见 `docs/module-spec.md`。
+`WM_DIR` becomes a derived value (`$AIBOX_HOME/apps/windmill`), **one expression on both platforms, no branch**.
+Rationale and the three hard constraints are in §3.3; the cross-module convention is in `docs/module-spec.md`.
 
 ```bash
 APPS_ROOT="${AIBOX_APPS_ROOT:-${AIBOX_HOME:-$HOME/.aibox}/apps}"
 WM_DIR="${WM_DIR:-$APPS_ROOT/windmill}"
 ```
 
-⚠️ 但派生值带来一个新的**服务上下文风险**，必须配套处理：实测 `systemd-run /usr/bin/env`
-显示**系统服务里没有 `HOME`**（只有 `USER=root`）。因此：
+⚠️ But the derived value introduces a new **service-context risk** that must be handled: verified via `systemd-run /usr/bin/env` showing **no `HOME` in the system service** (only `USER=root`). Therefore:
 
-- 单元模板必须显式写 `Environment="AIBOX_HOME=…"`（安装时把解析结果烘进去）
-- CLI 解析不到 `HOME`/`AIBOX_HOME` 时**报错退出**，不要拼出 `/.aibox/apps/windmill`
-- `windmill doctor` 增加一项：断言「单元里声明的路径」与「当前解析出的路径」一致
+- The unit template must explicitly write `Environment="AIBOX_HOME=…"` (bake the resolved result in at install time)
+- The CLI, when it cannot resolve `HOME`/`AIBOX_HOME`, **errors and exits**; do not assemble `/.aibox/apps/windmill`
+- `windmill doctor` adds a check: assert "the path declared in the unit" matches "the currently resolved path"
 
-**建议**：本期只**抽出抽象层函数**（`with_lock` / `port_listening` / `primary_ip` / `mem_used` /
-`sed_inplace` / `backup_evac_dir`），Linux 分支保持现有实现不变；macOS 分支留 `TODO`。这样本期零风险，
-后续填充分支即可，不用再动主干。
+**Recommendation**: this round only **extract the abstraction-layer functions** (`with_lock` / `port_listening` / `primary_ip` / `mem_used` / `sed_inplace` / `backup_evac_dir`); the Linux branch keeps its current implementation unchanged; the macOS branch is left as `TODO`. This keeps this round zero-risk; later rounds just fill in the branch without touching the main trunk again.
 
-## 四、模块设计
+## 4. Module Design
 
-### 4.1 目录与文件
+### 4.1 Directory and files
 
 ```
 tools/windmill/
-├── windmill         # CLI 本体（单文件 bash，129 KB）
-├── lib.sh           # 落点解析、版本读取、语法检查、host_notice
+├── windmill         # CLI body (single-file bash, 129 KB)
+├── lib.sh           # placement resolution, version reading, syntax check, host_notice
 ├── install.sh
 ├── uninstall.sh
 ├── update.sh
@@ -274,17 +243,16 @@ tools/windmill/
 └── README.md
 ```
 
-> ⚠️ 仓库成为 **CLI 的唯一源头**（同 openmaic）：此后改 `tools/windmill/windmill`，
-> `aibox update windmill` 各机同步。会话目录里那份不再作为源头。
+> ⚠️ The repo becomes **the single source of the CLI** (same as openmaic): from now on, editing `tools/windmill/windmill` syncs to each machine via `aibox update windmill`. The copy in the session directory is no longer the source.
 
-### 4.2 registry.sh 登记
+### 4.2 registry.sh registration
 
 ```sh
 AIBOX_MODULES="${AIBOX_MODULES} windmill"
 
 AIBOX_MODULE_windmill_version="1.0.0"
 AIBOX_MODULE_windmill_description="Windmill self-host ops CLI (init/upgrade/backup/restore/doctor) — Docker Compose"
-AIBOX_MODULE_windmill_platform=""          # 空 = 跨平台（后续补 macOS 分支）
+AIBOX_MODULE_windmill_platform=""          # empty = cross-platform (macOS branch to be added later)
 AIBOX_MODULE_windmill_dir="tools/windmill"
 AIBOX_MODULE_windmill_files="windmill lib.sh install.sh uninstall.sh update.sh svc.sh"
 AIBOX_MODULE_windmill_install="install.sh"
@@ -294,88 +262,80 @@ AIBOX_MODULE_windmill_svc="svc.sh"
 AIBOX_MODULE_windmill_actions="init deploy destroy up down status doctor check upgrade rollback backup snapshots restore drill logs shell exec psql credentials systemd version"
 ```
 
-### 4.3 钩子职责
+### 4.3 Hook responsibilities
 
-| 文件 | 职责 | 与 openmaic 的差异 |
+| File | Responsibility | Difference from openmaic |
 | --- | --- | --- |
-| `install.sh` | `do_install` + `ensure_path` + `host_notice` + **播种 `/etc/windmill/windmill.conf`** | 差异：openmaic 没有系统级配置落点（macOS 上需提权一次） |
-| `update.sh` | `cmp -s` 内容比对，一致跳过 | 无 |
-| `uninstall.sh` | 只删 CLI 本体 | 保留 `$AIBOX_HOME/apps/windmill`、`/etc/windmill/windmill.conf`、`$AIBOX_HOME/backups/` |
-| `svc.sh` | 透传给本机 `windmill` | 撞车提醒：`aibox install windmill` vs `aibox windmill init / destroy` |
-| `lib.sh` | 落点解析（`APPS_ROOT` / `WM_DIR` / `WM_CONF_FILE`）+ 版本读取 + `check_syntax` + `host_notice` | 变量前缀 `WINDMILL_*`；落点用统一表达式，**无平台分支**；`host_notice` 改为**双平台**提示 |
+| `install.sh` | `do_install` + `ensure_path` + `host_notice` + **seed `/etc/windmill/windmill.conf`** | Difference: openmaic has no system-level config placement (on macOS, one-time privilege escalation needed) |
+| `update.sh` | `cmp -s` content comparison, skip if identical | None |
+| `uninstall.sh` | Only deletes the CLI body | Preserves `$AIBOX_HOME/apps/windmill`, `/etc/windmill/windmill.conf`, `$AIBOX_HOME/backups/` |
+| `svc.sh` | Passes through to the local `windmill` | Collision reminder: `aibox install windmill` vs `aibox windmill init / destroy` |
+| `lib.sh` | Placement resolution (`APPS_ROOT` / `WM_DIR` / `WM_CONF_FILE`) + version reading + `check_syntax` + `host_notice` | Variable prefix `WINDMILL_*`; placement uses a unified expression, **no platform branch**; `host_notice` changed to a **dual-platform** notice |
 
-**落点**：`WINDMILL_BIN_DIR` → `AIBOX_BIN_DIR` → `~/.local/bin` 三级回退。
-装到系统目录：`WINDMILL_BIN_DIR=/usr/local/bin aibox install windmill`。
+**Placement**: `WINDMILL_BIN_DIR` → `AIBOX_BIN_DIR` → `~/.local/bin` three-tier fallback.
+Install to a system directory: `WINDMILL_BIN_DIR=/usr/local/bin aibox install windmill`.
 
-**配置文件由谁写**：`install.sh` 负责**首次播种** —— 把 aibox 的全局设置（代理 / 镜像源 /
-端口）落成 `/etc/windmill/windmill.conf`。策略是**只补不覆盖**：文件已存在就跳过，避免冲掉
-手改过的值。CLI 自己**只读不写**这个文件，因此 `644` 足够，日常命令不需要提权。
+**Who writes the config file**: `install.sh` does the **initial seeding** — drops aibox's global settings (proxy / image mirror / port) into `/etc/windmill/windmill.conf`. The strategy is **append-only, never overwrite**: if the file already exists, skip, to avoid clobbering hand-edited values. The CLI itself **only reads, never writes** this file, so `644` is sufficient and daily commands need no privilege escalation.
 
-### 4.4 代理怎么接（不新增子命令，论证）
+### 4.4 How the proxy connects (no new subcommand; rationale)
 
-你提到「aibox 的 proxy 是全局的」—— 顺着这个思路，windmill **不需要自己的 proxy 命令**，
-链路本来就通：
+You mentioned "aibox's proxy is global" — following that line of thinking, windmill **does not need its own proxy command**; the link is already connected:
 
-| 场景 | 走谁 | 是否自动 |
+| Scenario | Who handles it | Automatic? |
 | --- | --- | --- |
-| 钩子自身网络请求（下载模块文件） | aibox 导出的 `http_proxy` 等 | ✓ 自动继承 |
-| `windmill check` 查上游 release | 同上（CLI 是钩子的子进程，继承环境变量） | ✓ 自动继承 |
-| **`docker pull` 拉镜像** | **环境变量完全无效** | ✗ 需显式指定 |
+| The hook's own network requests (downloading module files) | aibox-exported `http_proxy` etc. | ✓ inherited automatically |
+| `windmill check` querying the upstream release | Same (the CLI is a child process of the hook, inheriting env vars) | ✓ inherited automatically |
+| **`docker pull` pulling images** | **Env vars are entirely ineffective** | ✗ must be specified explicitly |
 
-第三行是唯一的缺口，但**恰好已被现有机制覆盖**：CLI 的 `--ghcr-mirror` / `--hub-mirror`
-是「预拉 + 重打 tag」，自己接管拉取，不依赖 daemon 配置。所以闭环成立：
+The third row is the only gap, but **it is already covered by the existing mechanism**: the CLI's `--ghcr-mirror` / `--hub-mirror` do "pre-pull + re-tag", taking over the pull itself without relying on the daemon config. So the loop is closed:
 
 ```
-aibox 全局代理  →  覆盖 CLI 的所有 HTTP 请求
-镜像源参数     →  覆盖 docker pull（绕开 daemon）
+aibox global proxy  →  covers all of the CLI's HTTP requests
+image-mirror args   →  cover docker pull (bypassing the daemon)
 ```
 
-**卸载时的边界**：`aibox proxy unset` 不会影响 windmill 的部署状态；反之
-`windmill destroy` 也不会动 aibox 的代理配置 —— 两者互不侵入，符合「只删自己」原则。
+**Uninstall boundary**: `aibox proxy unset` does not affect windmill's deployment state; conversely `windmill destroy` does not touch aibox's proxy config — the two do not intrude on each other, consistent with the "delete only your own stuff" principle.
 
-**可选加速（写进 README，不做成功能）**：受限网络下给 docker daemon 配 HTTP 代理，
-实测把 ghcr.io 拉取从 2.4 KB/s 提到 66 MB/s。Linux 上落点是
-`/etc/systemd/system/docker.service.d/http-proxy.conf`；macOS 上走 Docker Desktop 设置
-（**不是** systemd）。这是性能优化项，不是功能依赖。
+**Optional acceleration (write into README, not a feature)**: under restricted networks, configure an HTTP proxy for the docker daemon; verified to boost ghcr.io pulls from 2.4 KB/s to 66 MB/s. On Linux the placement is `/etc/systemd/system/docker.service.d/http-proxy.conf`; on macOS it goes through Docker Desktop settings (**not** systemd). This is a performance optimization, not a functional dependency.
 
-## 五、风险
+## 5. Risks
 
-| 风险 | 缓解 |
+| Risk | Mitigation |
 | --- | --- |
-| 内网地址残留（含生成的 compose 文件） | 改造后 `grep -rn '192\.168\.' tools/windmill/` 须为 0 |
-| 双源头漂移 | 确立仓库为唯一源头，会话目录那份废弃 |
-| macOS 无法完整验证 | 打底阶段只抽抽象层、不改 Linux 分支行为；真机验证放后续 |
-| 129 KB 单文件入库 | 与 openmaic 同模式，项目已接受 |
-| 配置文件引入后行为变化 | conf 不存在时全走内置默认 → 现有部署行为不变 |
-| macOS 安装期要写 `/etc`，需提权 | 只在 `install.sh` 提权一次；conf 设 `644`，日常命令不读不写就无需 sudo |
-| **`apps/` 里的部署被 aibox 卸载连坐** | **前置条件**：`cmd_self_uninstall` 改 fail-closed（`apps/` 非空默认拒绝 + 列出将丢失项，`--yes` 才继续） |
-| **解析不到 `HOME`（服务上下文）** | 单元显式 `Environment="AIBOX_HOME=…"`；CLI 解析失败即报错退出；`doctor` 断言「单元路径 == 当前解析路径」 |
-| 现存实例在 `/opt/windmill`，与新默认不一致 | **不迁移，直接重装**：先 `windmill --yes destroy --all`，再按新落点 `init`。不引入一次性迁移路径 —— 存量少时重装成本更低，也少一处长期维护面 |
-| macOS 部署根若重新落到 `/opt` | 硬约束已写入 §3.3 / §3.4 与 `module-spec`；`lib.sh` 加断言（`Darwin` 下 `WM_DIR` 必须在 `/Users` 下） |
-| module-spec 新约定与 openmaic 的 `/opt/openmaic` 不一致 | **已对齐**：openmaic 部署根改 `$AIBOX_HOME/apps/openmaic`（`OPENMAIC_BASE_DIR` 默认值 + 注释 + README + uninstall 提示），落点解析加 `HOME` 缺失守卫 |
+| Intranet address residue (including generated compose files) | After refactor, `grep -rn '192\.168\.' tools/windmill/` must be 0 |
+| Dual-source drift | Establish the repo as the single source; abandon the copy in the session directory |
+| macOS cannot be fully verified | Foundation phase only extracts the abstraction layer and does not change Linux-branch behavior; real-machine verification deferred |
+| 129 KB single file checked in | Same pattern as openmaic; the project already accepts it |
+| Behavior change after introducing the config file | When conf is absent, everything falls back to built-in defaults → existing deployment behavior unchanged |
+| macOS install writes to `/etc`, needs privilege escalation | Escalate only once in `install.sh`; conf set to `644`; daily commands neither read nor write it, so no sudo needed |
+| **Deployments in `apps/` taken down by an aibox uninstall** | **Prerequisite**: change `cmd_self_uninstall` to fail-closed (`apps/` non-empty → default refuse + list items to be lost; `--yes` required to proceed) |
+| **`HOME` cannot be resolved (service context)** | Unit explicitly sets `Environment="AIBOX_HOME=…"`; CLI errors and exits on resolution failure; `doctor` asserts "unit path == currently resolved path" |
+| Existing instance at `/opt/windmill`, inconsistent with the new default | **No migration, just reinstall**: first `windmill --yes destroy --all`, then `init` at the new location. No one-time migration path — when the existing footprint is small, reinstall costs less and removes one long-term maintenance surface |
+| macOS deploy root if it lands back under `/opt` | Hard constraints written into §3.3 / §3.4 and `module-spec`; `lib.sh` adds an assertion (on `Darwin`, `WM_DIR` must be under `/Users`) |
+| New module-spec convention inconsistent with openmaic's `/opt/openmaic` | **Already aligned**: openmaic deploy root changed to `$AIBOX_HOME/apps/openmaic` (`OPENMAIC_BASE_DIR` default value + comment + README + uninstall hint); placement resolution adds a missing-`HOME` guard |
 
-## 六、执行阶段
+## 6. Execution Phases
 
-| 阶段 | 内容 | 验收 |
+| Phase | Content | Acceptance |
 | --- | --- | --- |
-| 0 | **前置**：改 `bin/aibox` 的 `cmd_self_uninstall` 为 fail-closed | ✅ **已完成**：`apps/` 非空时返回 `2` 并列出将丢失项；`--yes` 放子命令前后都认 |
-| 0b | **前置**：存量模块落点对齐（openmaic → `$AIBOX_HOME/apps/openmaic`） | ✅ **已完成**：落点解析 8 项断言全通过；`pi-web` 确认无需改动 |
-| 1 | 搬迁 CLI 到 `tools/windmill/`；剥离内网；版本变量加前缀 | `bash -n` 通过；无内网残留 |
-| 2 | 抽象层打底（6 个函数）+ 配置外置 `/etc/windmill/windmill.conf` + 部署根统一 `$AIBOX_HOME/apps/windmill` + 单元显式 `Environment=` | Linux 行为不变；conf 缺失时正常；`HOME` 缺失时报错而非拼路径；单元路径 == 解析路径 |
-| 3 | 写 6 个模块文件 + registry 登记 + README + `module-spec` 约定入库 | — |
-| 4 | 沙箱验证：隔离 `HOME`/`BIN_DIR` + `file://` 本地源，跑 install → 透传 → 幂等 update → uninstall | 端到端通过 |
-| 5 | 实机验证：装到 `/usr/local/bin`，跑只读命令 + 一次 `--dry-run` | 零副作用 |
-| 6 | **（后续）** macOS 分支填充：锁、进度信号、端口/IP/内存、launchd | macOS 本地跑通一套 |
-| 7 | **实机重装**（不迁移）：存量 `/opt/windmill` 直接 `destroy --all` → 在新落点 `$AIBOX_HOME/apps/windmill` 重新 `init` | 重装后 `doctor` 全绿、`drill` 通过、8 容器 Up、UI 200 |
+| 0 | **Prerequisite**: change `bin/aibox`'s `cmd_self_uninstall` to fail-closed | ✅ **Done**: returns `2` and lists items to be lost when `apps/` is non-empty; `--yes` accepted both before and after the subcommand |
+| 0b | **Prerequisite**: existing-module placement alignment (openmaic → `$AIBOX_HOME/apps/openmaic`) | ✅ **Done**: all 8 placement-resolution assertions pass; `pi-web` confirmed to need no changes |
+| 1 | Move the CLI to `tools/windmill/`; strip the intranet binding; prefix the version variable | `bash -n` passes; no intranet residue |
+| 2 | Abstraction-layer foundation (6 functions) + externalize config to `/etc/windmill/windmill.conf` + unify deploy root to `$AIBOX_HOME/apps/windmill` + unit explicit `Environment=` | Linux behavior unchanged; works when conf is absent; errors (instead of assembling a path) when `HOME` is missing; unit path == resolved path |
+| 3 | Write the 6 module files + registry registration + README + check in the `module-spec` convention | — |
+| 4 | Sandbox verification: isolate `HOME`/`BIN_DIR` + `file://` local source; run install → pass-through → idempotent update → uninstall | End-to-end pass |
+| 5 | Real-machine verification: install to `/usr/local/bin`; run read-only commands + one `--dry-run` | Zero side effects |
+| 6 | **(Later)** Fill in macOS branches: lock, progress signal, port/IP/memory, launchd | A full set runs locally on macOS |
+| 7 | **Real-machine reinstall** (no migration): existing `/opt/windmill` directly `destroy --all` → re-`init` at the new location `$AIBOX_HOME/apps/windmill` | After reinstall, `doctor` all green, `drill` passes, 8 containers Up, UI 200 |
 
-## 七、已确认的决策
+## 7. Confirmed Decisions
 
-| # | 决策 | 结论 |
+| # | Decision | Conclusion |
 | --- | --- | --- |
-| 1 | 跨机器架构 | **本机运行**，无远程；模块只做本机安装 |
-| 2 | 配置目录 | **外置，两平台统一 `/etc/windmill/windmill.conf`**（`755 root:root` + 文件 `644`），保留 `WM_CONF_FILE` 覆盖；macOS 由 `install.sh` 提权一次写入。**不放 `/opt`**（`destroy` 会连坐 / 归属不清，见 §3.3） |
-| 3 | 部署目录 | **两平台统一 `$AIBOX_HOME/apps/windmill`**（Linux `/root/.aibox/apps/windmill`、macOS `~/.aibox/apps/windmill`），**无平台分支**；备份抢救目录同根 `${AIBOX_HOME}/backups/`。三条约束见 §3.3 |
-| 4 | 部署根是否入规范 | **写进 `docs/module-spec.md`** —— 跨模块约定，含三条硬约束与两个配套强制项 |
-| 5 | `aibox self uninstall` | **改为 fail-closed**（现为裸 `rm -rf "$AIBOX_HOME"`）—— 本方案前置条件 |
-| 6 | `windmill proxy` 子命令 | **不新增**，代理走 aibox 全局 + CLI 镜像源参数 |
-| 7 | 平台 | 本期 Linux 打通 + macOS 抽象层打底；macOS 完整适配后续 |
+| 1 | Cross-machine architecture | **Local run**, no remote; the module only does local install |
+| 2 | Config directory | **Externalized, both platforms unified to `/etc/windmill/windmill.conf`** (`755 root:root` + file `644`), with `WM_CONF_FILE` override retained; on macOS, `install.sh` escalates once to write it. **Not in `/opt`** (`destroy` would take it down / ownership unclear, see §3.3) |
+| 3 | Deploy directory | **Both platforms unified to `$AIBOX_HOME/apps/windmill`** (Linux `/root/.aibox/apps/windmill`, macOS `~/.aibox/apps/windmill`), **no platform branch**; backup evacuation directory same root `${AIBOX_HOME}/backups/`. Three constraints in §3.3 |
+| 4 | Whether the deploy root enters the spec | **Written into `docs/module-spec.md`** — a cross-module convention, including the three hard constraints and two accompanying mandatory items |
+| 5 | `aibox self uninstall` | **Changed to fail-closed** (currently a bare `rm -rf "$AIBOX_HOME"`) — a prerequisite of this plan |
+| 6 | `windmill proxy` subcommand | **Not added**; proxy goes through aibox global + the CLI's image-mirror args |
+| 7 | Platform | This round gets Linux working + lays the macOS abstraction-layer foundation; full macOS adaptation comes later |

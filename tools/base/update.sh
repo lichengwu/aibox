@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# base 模块 — 更新钩子：刷新 compose 文件
-# aibox 会透传 --restart/--no-restart —— 共享 stack 重启由 base restart 负责，忽略。
+# base module — update hook: refreshes the compose file.
+# aibox passes through --restart/--no-restart — restarting the shared stack is the job of
+# `base restart`, so those args are ignored here.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
@@ -8,5 +9,5 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mkdir -p "$(base_deploy_root)"
 cp "$DIR/docker-compose.yml" "$COMPOSE_FILE"
-log "compose 已更新（${COMPOSE_FILE}）"
-log "应用变更: aibox base restart"
+log "compose updated (${COMPOSE_FILE})"
+log "Apply changes: aibox base restart"

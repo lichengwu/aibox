@@ -1,5 +1,5 @@
-# pi-web 模块共享库（被各钩子 source，不单独执行）
-# 提取自原 pi-web-ctl 的配置与共享函数。
+# pi-web module shared library (sourced by hooks, not executed directly)
+# Extracted from the original pi-web-ctl config and shared functions.
 
 LABEL="pi-web"
 OLD_LABELS=("com.agegr.pi-web")
@@ -13,7 +13,7 @@ else
   LOG_DIR="$HOME/.local/share/${LABEL}/logs"
 fi
 PORT="${PI_WEB_PORT:-30141}"
-PASSWORD="" # 由 resolve_password 填充（见下）；PI_WEB_PASSWORD 可覆盖
+PASSWORD="" # filled by resolve_password (below); PI_WEB_PASSWORD overrides
 BIND="${PI_WEB_BIND:-0.0.0.0}"
 UID_="$(id -u)"
 
@@ -24,15 +24,16 @@ die() {
   exit 1
 }
 
-# ---------- 访问密码 ----------
-# 优先级：PI_WEB_PASSWORD 环境变量 > 已装 plist 里的密码（幂等：重装/更新不换）
-# > 首次安装随机生成。避免固定弱默认密码暴露在公网可达的本机服务上。
+# ---------- access password ----------
+# Priority: PI_WEB_PASSWORD env > password in the installed plist (idempotent: re-install/update
+# doesn't rotate) > random on first install. Avoids a fixed weak default on a host service
+# reachable from the network.
 resolve_password() {
   if [ -n "${PI_WEB_PASSWORD:-}" ]; then
     PASSWORD="$PI_WEB_PASSWORD"
     return 0
   fi
-  # 复用已装 plist 里的密码（update/重装不换密码）
+  # Reuse the password in the installed plist (update/re-install keeps the same password).
   if [ -f "$PLIST" ]; then
     local prev
     prev="$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:PI_WEB_PASSWORD' "$PLIST" 2>/dev/null || true)"
@@ -41,7 +42,7 @@ resolve_password() {
       return 0
     fi
   fi
-  # 首次安装：随机生成 16 位 hex
+  # First install: random 16-hex.
   if command -v openssl >/dev/null 2>&1; then
     PASSWORD="$(openssl rand -hex 8 2>/dev/null || true)"
   fi
@@ -51,13 +52,13 @@ resolve_password() {
   [ -n "$PASSWORD" ] || PASSWORD="pi-web-$(date +%s)"
 }
 
-# 软选择确认：ask_yn "<提示>" [y|n]
-# 交互读 y/N；非交互（无 TTY）走默认并 warn。默认 n=拒绝、y=同意。
-# 与 openmaic/windmill 的 confirm（危险操作、输入 yes）区分：本函数用于轻量选择。
+# Soft choice confirmation: ask_yn "<prompt>" [y|n]
+# Interactive y/N; non-interactive (no TTY) takes the default and warns. Default n=decline, y=accept.
+# Distinct from openmaic/windmill's confirm (dangerous ops, type `yes`): this is for light choices.
 ask_yn() {
   local prompt="$1" def="${2:-n}" ans hint
   if [ ! -t 0 ]; then
-    warn "非交互环境，${prompt} → 默认 ${def}"
+    warn "Non-interactive environment, ${prompt} -> default ${def}"
     case "$def" in y | Y) return 0 ;; *) return 1 ;; esac
   fi
   case "$def" in
@@ -78,7 +79,7 @@ ask_yn() {
   esac
 }
 
-# ---------- node 探测 ----------
+# ---------- node detection ----------
 resolve_node() {
   if command -v node >/dev/null 2>&1; then
     NODE_BIN="$(command -v node)"
@@ -89,16 +90,16 @@ resolve_node() {
   fi
 
   if [ -z "${NODE_BIN:-}" ] || ! "$NODE_BIN" -v >/dev/null 2>&1; then
-    warn "未检测到 node"
+    warn "node not found"
     if [ -s "$HOME/.nvm/nvm.sh" ]; then
-      log "尝试用 nvm 安装 node 22 ..."
+      log "Trying to install node 22 via nvm ..."
       # shellcheck disable=SC1091
       . "$HOME/.nvm/nvm.sh"
       nvm install 22
       nvm use 22 >/dev/null
       NODE_BIN="$(command -v node)"
     else
-      die "请先安装 Node.js 22+（推荐 brew install nvm 后 nvm install 22）"
+      die "Please install Node.js 22+ first (recommended: brew install nvm, then nvm install 22)"
     fi
   fi
 
@@ -106,21 +107,21 @@ resolve_node() {
   NODE_MAJOR="$("$NODE_BIN" -p 'process.versions.node.split(".")[0]')"
   if [ "$NODE_MAJOR" -lt 22 ]; then
     if [ -s "$HOME/.nvm/nvm.sh" ]; then
-      log "当前 node $($NODE_BIN -v) < 22，用 nvm 装 22 ..."
+      log "Current node $($NODE_BIN -v) < 22, installing 22 via nvm ..."
       # shellcheck disable=SC1091
       . "$HOME/.nvm/nvm.sh"
       nvm install 22 && nvm use 22 >/dev/null
       NODE_BIN="$(command -v node)"
       NODE_DIR="$(dirname "$NODE_BIN")"
     else
-      die "node 版本 $($NODE_BIN -v) 太旧，需要 >= 22"
+      die "node version $($NODE_BIN -v) is too old, need >= 22"
     fi
   fi
   log "node: $NODE_BIN ($($NODE_BIN -v))"
   export PATH="$NODE_DIR:$PATH"
 }
 
-# ---------- 清理旧残留 ----------
+# ---------- old-residue cleanup ----------
 cleanup_old() {
   local lbl old pids
   if [ "$OS_KIND" = "Darwin" ]; then
@@ -137,26 +138,26 @@ cleanup_old() {
       systemctl --user stop "$lbl" 2>/dev/null || true
       systemctl --user disable "$lbl" 2>/dev/null || true
     done
-    # 旧 label 的 unit 文件清理
+    # Clean up unit files for old labels.
     [ -f "${UNIT_FILE}" ] && rm -f "${UNIT_FILE}"
     [ -f "${UNIT_DIR}/com.agegr.pi-web.service" ] && rm -f "${UNIT_DIR}/com.agegr.pi-web.service"
     systemctl --user daemon-reload 2>/dev/null || true
   fi
-  # 端口占用兜底（两平台共用）
+  # Port-occupation fallback (shared across platforms).
   if command -v lsof >/dev/null 2>&1; then
     pids="$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)"
     [ -n "$pids" ] && {
-      warn "端口 $PORT 被 $pids 占用，杀之"
+      warn "Port $PORT occupied by $pids; killing"
       echo "$pids" | xargs kill -9 2>/dev/null || true
     }
   fi
   sleep 1
 }
 
-# ---------- 生成服务单元（mac plist / linux systemd，按平台分支）----------
+# ---------- generate service unit (mac plist / linux systemd, branched by platform) ----------
 write_service() {
   local pi_bin="$NODE_DIR/pi-web"
-  [ ! -x "$pi_bin" ] && die "未找到 ${pi_bin}，请确认 npm i -g @agegr/pi-web 已成功"
+  [ ! -x "$pi_bin" ] && die "Not found: ${pi_bin}; confirm npm i -g @agegr/pi-web succeeded"
   if [ "$OS_KIND" = "Darwin" ]; then
     write_plist "$pi_bin"
   else
@@ -199,7 +200,7 @@ write_plist() {
 </dict>
 </plist>
 EOF
-  plutil -lint "$PLIST" >/dev/null || die "plist 语法错误：${PLIST}"
+  plutil -lint "$PLIST" >/dev/null || die "plist syntax error: ${PLIST}"
 }
 
 # Linux systemd --user unit
@@ -233,33 +234,33 @@ EOF
   systemctl --user daemon-reload
 }
 
-# ---------- 状态显示（install/status/diagnose 共用）----------
+# ---------- status display (shared by install/status/diagnose) ----------
 show_status() {
   resolve_password
   if [ "$OS_KIND" = "Darwin" ]; then
     if launchctl print "gui/${UID_}/${LABEL}" 2>/dev/null | grep -qE "state\s*=\s*running"; then
       launchctl print "gui/${UID_}/${LABEL}" | grep -E "^\s*(state|last exit code|program)\s*=" | head -4
     else
-      warn "$LABEL 未运行"
+      warn "$LABEL is not running"
     fi
   else
     if systemctl --user is-active --quiet "$LABEL" 2>/dev/null; then
       systemctl --user status --no-pager "$LABEL" 2>/dev/null | head -8
     else
-      warn "$LABEL 未运行"
+      warn "$LABEL is not running"
     fi
   fi
   echo "---"
-  lsof -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || echo "[端口 $PORT 未监听]"
+  lsof -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || echo "[port $PORT not listening]"
   echo "---"
-  curl -s -o /dev/null --max-time 3 -w "HTTP %{http_code}（pi/${PASSWORD}）\n" -u "pi:${PASSWORD}" "http://127.0.0.1:${PORT}/" || echo "curl 探测失败"
+  curl -s -o /dev/null --max-time 3 -w "HTTP %{http_code} (pi/${PASSWORD})\n" -u "pi:${PASSWORD}" "http://127.0.0.1:${PORT}/" || echo "curl probe failed"
 }
 
-# Dashboard 接口（aibox dashboard 调用）：输出 endpoint/credential/log/health
+# Dashboard interface (called by `aibox dashboard`): outputs endpoint/credential/log/health.
 dashboard_info() {
   resolve_password
   echo "endpoint=http://127.0.0.1:${PORT}"
-  echo "credential=用户名 pi / 密码 ${PASSWORD}"
+  echo "credential=Username pi / password ${PASSWORD}"
   echo "log=${LOG_DIR}/pi-web.log"
   echo "health=curl -s -o /dev/null -w '%{http_code}' -u pi:${PASSWORD} http://127.0.0.1:${PORT}/"
 }

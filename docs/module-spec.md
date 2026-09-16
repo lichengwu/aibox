@@ -1,247 +1,266 @@
-# aibox 模块规范
+# aibox module spec
 
-aibox 的每个「模块」是一个独立工具，放在仓库 `tools/<name>/` 下，由主 CLI `aibox` 统一安装 / 更新 / 卸载 / 调度。
+Each aibox "module" is an independent tool, living under `tools/<name>/` in the repo, installed / updated / uninstalled / dispatched uniformly by the main CLI `aibox`.
 
-## 目录结构
+## Directory layout
 
 ```
 tools/<name>/
-├── lib.sh          # 共享函数（可选，各钩子 source 它复用）
-├── install.sh      # 必需：安装
-├── uninstall.sh    # 推荐：卸载
-├── update.sh       # 可选：更新
-├── svc.sh          # 可选：动作入口，$1=动作（常驻服务；也可仅透传给下发的命令）
-└── README.md       # 模块说明
+├── lib.sh          # shared functions (optional; hooks source it to reuse)
+├── install.sh      # required: install
+├── uninstall.sh    # recommended: uninstall
+├── update.sh       # optional: update
+├── svc.sh          # optional: action entry point; $1=action (long-lived service; or just pass-through to a dispatched command)
+└── README.md       # module docs
 ```
 
-## 注册到 registry.sh
+## Registering a module — via `module.yaml` (source of truth)
 
-在仓库根 `registry.sh` 追加（模块名含连字符时，变量名用下划线：`pi-web` → `AIBOX_MODULE_pi_web_*`）：
+> As of v0.4.0, **`module.yaml` is the source of truth** for module metadata. The legacy `registry.sh` has been **removed**; `load_registry` auto-discovers `tools/*/module.yaml`:
+>
+> - **Local source (`file://`)**: the main CLI globs `tools/*/module.yaml` directly (no `registry.sh` needed — adding a module = create `tools/<name>/` + `module.yaml`, zero global changes).
+> - **Remote source (`https://`)**: the GitHub API lists `tools/` dirs, then fetches each `module.yaml` over HTTPS. Results are cached to `~/.aibox/registry.cache` (1h TTL) to dodge the unauthenticated GitHub API rate limit (60 req/hour/IP).
 
-```sh
-AIBOX_MODULES="$AIBOX_MODULES <name>"
-AIBOX_MODULE_<name>_version="x.y.z"
-AIBOX_MODULE_<name>_description="一句话描述"
-AIBOX_MODULE_<name>_platform="darwin"          # 可选；空=跨平台
-AIBOX_MODULE_<name>_dir="tools/<name>"
-AIBOX_MODULE_<name>_files="lib.sh install.sh uninstall.sh update.sh svc.sh"
-AIBOX_MODULE_<name>_install="install.sh"
-AIBOX_MODULE_<name>_uninstall="uninstall.sh"
-AIBOX_MODULE_<name>_update="update.sh"
-AIBOX_MODULE_<name>_svc="svc.sh"
-AIBOX_MODULE_<name>_actions="start stop ..."     # svc 支持的动作
-AIBOX_MODULE_<name>_deps="docker python3"          # 可选；运行依赖（命令名，空格分隔）
-                                                     # 可带 @平台（docker@linux 仅该平台检查）或 :版本（node:22 主版本约束）
+Create `tools/<name>/module.yaml`:
+
+```yaml
+name: <name>                       # required. Hyphenated name.
+version: x.y.z                     # required.
+description: "one-line description"
+platform: ""                       # optional; empty = cross-platform; darwin = macOS-only
+dir: tools/<name>                  # required. repo dir
+deps:                              # optional. runtime deps (command names)
+  - "node:22"                      #   node:22 = major version >= 22
+  - "docker@linux"                 #   @linux = check on Linux only
+  - npm                            #   bare = no version/platform constraint
+ports:                             # optional. ports occupied (port/proto:usage) — CI detects conflicts
+  - 30141/tcp:http
+files:                             # optional. extra files only; the standard 5 (lib.sh/install.sh/uninstall.sh/update.sh/svc.sh) are implicit
+  - docker-compose.yml
+hooks:                             # required. hook filenames
+  install: install.sh
+  uninstall: uninstall.sh
+  update: update.sh
+  svc: svc.sh
+actions:                           # optional. actions svc supports (list all)
+  - start
+  - stop
+upstream:                          # optional. dev-guide links (see §6 of module-system-spec.md)
+  homepage: https://...
+  docs: https://...
+services:                          # optional. shared-component deps (CI validates provider/component)
+  - base:postgres#<your-db>
 ```
 
-## 钩子契约
+See `docs/module-system-spec.md` §2.3 for the full field reference.
 
-- aibox 把 `files` 列出的脚本下载到 `~/.aibox/modules/<name>/`，再以 `bash <dest>/<hook>.sh [args]` 调用。
-- 钩子内可 `source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"` 复用共享函数。
-- aibox 注入以下环境变量：
+> **History note (registry.sh):** before v0.4.0, modules were registered by appending `AIBOX_MODULE_<name>_*` shell variables to a root-level `registry.sh` (sourced directly by the CLI). That file no longer exists; the same fields now live in `module.yaml` and are parsed by a zero-dependency awk subset parser at runtime (`parse_yaml_module_stdin`), with yq validating the subset in CI. Module names with hyphens map to underscored variable keys internally (`pi-web` → `AIBOX_MODULE_pi_web_*`); that convention is unchanged.
 
-  | 变量 | 说明 |
+## Hook contract
+
+- aibox downloads the files listed in `files` (plus the standard 5 implicitly) to `~/.aibox/modules/<name>/`, then invokes them as `bash <dest>/<hook>.sh [args]`.
+- Hooks can `source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"` to reuse shared functions.
+- aibox injects these environment variables:
+
+  | Variable | Description |
   | --- | --- |
-  | `AIBOX_HOME` | aibox 状态目录 |
-  | `AIBOX_MODULE` | 当前模块名 |
-  | `AIBOX_RAW` | 仓库 raw 基址（可能是 `file://` 本地源） |
-  | `AIBOX_BIN_DIR` | 主 CLI 安装目录，模块落点从这里起手 |
-  | `AIBOX_PROXY_URL` | 当前生效的代理 URL；未启用时为空。可能来自 aibox 配置，也可能来自用户已有的环境变量 |
-  | `AIBOX_NO_PROXY` | 不走代理的地址列表 |
-  | `AIBOX_PROXY_ENABLED` | `1` 启用 / `0` 未启用 |
+  | `AIBOX_HOME` | aibox state dir |
+  | `AIBOX_MODULE` | current module name |
+  | `AIBOX_RAW` | repo raw base URL (may be a `file://` local source) |
+  | `AIBOX_BIN_DIR` | main CLI install dir; module install paths start here |
+  | `AIBOX_PROXY_URL` | effective proxy URL; empty when disabled. May come from aibox config or pre-existing env |
+  | `AIBOX_NO_PROXY` | comma-separated addresses that bypass the proxy |
+  | `AIBOX_PROXY_ENABLED` | `1` enabled / `0` disabled |
 
-  同时导出标准变量 `http_proxy` / `https_proxy` / `all_proxy` / `no_proxy`，**小写与大写都给** —— curl 只认小写的 `http_proxy`（大写 `HTTP_PROXY` 会被它忽略），而 apt 之类只认大写，实测两者认的集合不同。详见下方《代理》。
-- `install.sh` 负责把模块自身装好（落点自治，例如 pi-web 写 launchd plist）。
-- `svc.sh`：`$1` = 动作，其余参数透传。
-  - 常驻服务型模块（如 pi-web）实现 `start/stop/restart/status/logs/diagnose`。
-  - 分发型模块（如 openmaic）可以只做透传：`exec <下发的命令> "$1" "$@"`，动作集就是那个命令的子命令。
-- 安装落点请从 `${AIBOX_BIN_DIR:-$HOME/.local/bin}` 起手，并留一个模块专属覆盖变量（部署主机上常要 `/usr/local/bin`）。
-- 平台差异建议只告警不硬拦：安装通常跨平台，真正跑不动的限制由脚本执行时报清楚。
+  Standard vars `http_proxy` / `https_proxy` / `all_proxy` / `no_proxy` are also exported, **lowercase and uppercase both** — curl only honors lowercase `http_proxy` (it ignores uppercase `HTTP_PROXY`), while apt-style tools only honor uppercase; the two sets differ in practice. See [Proxy](#proxy) below.
+- `install.sh` installs the module itself (paths are self-determined, e.g. pi-web writes a launchd plist).
+- `svc.sh`: `$1` = action, rest pass through.
+  - **`svc.sh` is an "action entry point", NOT "must be a daemon".** Long-lived-service modules (e.g. pi-web) implement `start/stop/restart/status/logs/diagnose`. Dispatch-only modules (e.g. openmaic) can just pass through: `exec <dispatched-cmd> "$1" "$@"`, where the action set is that command's subcommands. The contract is "the file named by `hooks.svc` receives `(action, args...)`" — nothing more.
+- Start install paths from `${AIBOX_BIN_DIR:-$HOME/.local/bin}` and expose a module-specific override (deploy hosts often want `/usr/local/bin`).
+- Platform differences: warn, don't hard-block. Install is usually cross-platform; the real limit is reported by the script at execution time, which is less false-positive-prone than blocking at install.
 
-## 部署目录与配置落点约定
+## Deploy directory & config path conventions
 
-模块分两类，**判据是「有没有随部署实例生死的运行时数据」**：
+Modules fall into two classes, **judged by "is there runtime data that lives and dies with the deploy instance"**:
 
-- **安装型**（如 `pi-web`）：只往 `${AIBOX_BIN_DIR}` 放东西，外加把服务交给平台托管
-  （launchd plist 必须放 `~/Library/LaunchAgents`、日志在 `~/Library/Logs`）。
-  **不引入部署根** —— 沿用平台约定位置即可，硬塞进 `apps/` 反而破坏平台惯例。
-- **部署型**（如 `openmaic`、`windmill`）：除 CLI 外还要在目标机落一份运行时数据
-  （compose 文件、`.env`、数据卷、备份、锁、日志）。**落点按下述约定，别各自发明。**
+- **Install-type** (e.g. `pi-web`): only drops things into `${AIBOX_BIN_DIR}` and hands the service to the platform
+  (the launchd plist must go in `~/Library/LaunchAgents`, logs in `~/Library/Logs`).
+  **No deploy root** — stick to platform-conventional locations; forcing them under `apps/` breaks platform conventions.
+- **Deploy-type** (e.g. `openmaic`, `windmill`): besides the CLI, drops runtime data on the target
+  (compose files, `.env`, data volumes, backups, locks, logs). **Use the paths below — don't invent your own.**
 
-### 部署根：`$AIBOX_HOME/apps/<name>`
+### Deploy root: `$AIBOX_HOME/apps/<name>`
 
 ```sh
 APPS_ROOT="${AIBOX_APPS_ROOT:-${AIBOX_HOME:-$HOME/.aibox}/apps}"
 BASE_DIR="${<MODULE>_BASE_DIR:-$APPS_ROOT/<name>}"
 ```
 
-> ⚠️ 展开时**别丢 `.aibox` 那一层**。写成 `${AIBOX_HOME:-$HOME}` 会解析出
-> `$HOME/apps/<name>` 而不是 `$HOME/.aibox/apps/<name>` —— 脚本不报错，路径却是错的
-> （这个坑实际踩到过，靠断言具体路径的测试才抓出来）。
-> 更稳的写法是 `${AIBOX_HOME:-${HOME:+$HOME/.aibox}}`：`HOME` 为空时整体为空，交给守卫报错。
+> ⚠️ When expanding, **don't drop the `.aibox` segment**. Writing `${AIBOX_HOME:-$HOME}` resolves to
+> `$HOME/apps/<name>` instead of `$HOME/.aibox/apps/<name>` — the script doesn't error, but the path is wrong
+> (this was hit in practice; caught only by a test asserting the exact path).
+> A safer form is `${AIBOX_HOME:-${HOME:+$HOME/.aibox}}`: if `HOME` is empty, the whole thing is empty and a guard errors out.
 
-**macOS 与 Linux 用同一个表达式，不做平台分支。** 解析结果：
+**The same expression works on macOS and Linux — no platform branch.** Resolved values:
 
-| 平台 | 身份 | 部署目录 |
+| Platform | User | Deploy dir |
 | --- | --- | --- |
-| macOS | 普通用户 | `~/.aibox/apps/<name>` |
+| macOS | normal user | `~/.aibox/apps/<name>` |
 | Linux | root | `/root/.aibox/apps/<name>` |
 
-换根前请逐条复核下面三条约束（前两条是实测结论，不是风格偏好）：
+Before switching roots, verify these three constraints in order (the first two are empirical findings, not style):
 
-1. **必须在容器运行时的默认共享列表内。** Docker Desktop（macOS）默认只共享 `/Users`、
-   `/Volumes`、`/private`、`/tmp`、`/var/folders` —— 部署目录放 `/opt` 会让 compose 里的
-   **相对挂载**（如 `- ./Caddyfile:/etc/caddy/Caddyfile`）报 `Mounts denied`。
-   这条与提权无关，`sudo` 解决不了。
-2. **日常命令的执行者身份必须可写。** 锁文件、日志、备份都在部署目录里，**每条命令都会写** ——
-   放到需要提权的路径，`status` 这种只读命令也得 sudo，等于不可用。
-   （对比：配置是「写一次、天天读」，所以才允许放 `/etc`。）
-3. **集中但不混命名空间。** 放在 `$AIBOX_HOME` 下便于 aibox 统一枚举、统计与清理
-   （`$AIBOX_HOME/apps/*`），但**必须用 `apps/` 这类子目录**与
-   `$AIBOX_HOME/modules/<name>/`（下载的钩子脚本）分开 —— 否则两者同名、只差一层，误删风险高。
+1. **Must be in the container-runtime default share list.** Docker Desktop (macOS) by default only shares `/Users`,
+   `/Volumes`, `/private`, `/tmp`, `/var/folders` — putting the deploy dir under `/opt` makes compose **relative mounts**
+   (e.g. `- ./Caddyfile:/etc/caddy/Caddyfile`) fail with `Mounts denied`. This is unrelated to privileges; `sudo` won't fix it.
+2. **The identity running daily commands must be able to write.** Lock files, logs, backups all live in the deploy dir, and **every command writes** — putting it under a path that needs privilege escalation means even `status` (read-only) needs sudo, i.e. unusable.
+   (By contrast, config is "write once, read daily", so it's allowed under `/etc`.)
+3. **Centralized but not mixed namespaces.** Under `$AIBOX_HOME` lets aibox enumerate/audit/clean uniformly
+   (`$AIBOX_HOME/apps/*`), but **you must use a sub-dir like `apps/`** to keep it separate from
+   `$AIBOX_HOME/modules/<name>/` (the downloaded hook scripts) — otherwise the two share a name and differ by one level, making accidental deletion likely.
 
-> ⚠️ `apps/` 里是**部署实例**，不是「aibox 状态」：它的生命周期比 aibox 本身长。
+> ⚠️ `apps/` holds **deploy instances**, not "aibox state": their lifecycle outlasts aibox itself.
 
-### 配套强制项（缺一即事故）
+### Mandatory corollaries (skip any and you get an incident)
 
-- **`aibox self uninstall` 必须 fail-closed。** `apps/` 非空时**默认拒绝**并列出将被删除的
-  部署（数据库、备份），必须显式 `--yes` 才继续。裸 `rm -rf "$AIBOX_HOME"` 前面加一行提示
-  不算保护。（与「非交互下危险操作返回 2」的既有规则一致。）
-  **已实现**：`aibox self uninstall [--yes]` —— `apps/` 非空时列出部署并要求交互确认，
-  非交互且无 `--yes` 时返回 `2` 且不做任何改动；`--yes` 放子命令前后都认。
-- **systemd / launchd 单元必须把解析后的绝对路径显式烘进去**，例如
-  `Environment="AIBOX_HOME=/root/.aibox"`。
-  **实测：systemd 系统服务里没有 `HOME` 变量**（`systemd-run /usr/bin/env` 只输出 `USER=root`）。
-  任何靠 `$HOME` 派生的路径在服务上下文里都会解析成空 → 指向错误目录。
-- **解析不到就报错，不要拼路径。** `HOME` 为空且无显式值时直接失败退出，
-  而不是算出 `/.aibox/apps/<name>` 这种路径。
-- **模块卸载只删自己的本体**，`apps/<name>` 与配置文件要保留（属于「这套部署」）。
+- **`aibox self uninstall` must be fail-closed.** When `apps/` is non-empty it **refuses by default** and lists the deploys
+  (databases, backups) that would be deleted; an explicit `--yes` is required to proceed. A bare `rm -rf "$AIBOX_HOME"`
+  with a one-line prompt is not protection. (Consistent with "dangerous ops return 2 non-interactively".)
+  **Implemented**: `aibox self uninstall [--yes]` — when `apps/` is non-empty it lists deploys and requires interactive
+  confirmation; non-interactive without `--yes` returns `2` and changes nothing; `--yes` is accepted before or after the subcommand.
+- **systemd / launchd units must bake the resolved absolute paths in explicitly**, e.g.
+  `Environment="AIBOX_HOME=/root/.aibox"`.
+  **Empirically: there is no `HOME` variable in a systemd system service** (`systemd-run /usr/bin/env` only outputs `USER=root`).
+  Any path derived from `$HOME` resolves to empty in the service context → points at the wrong dir.
+- **Fail when unresolvable, don't construct paths.** If `HOME` is empty and no explicit value is set, fail and exit,
+  rather than producing a path like `/.aibox/apps/<name>`.
+- **Module uninstall deletes only the module's own body**; `apps/<name>` and config files are retained (they belong to "this deployment").
 
-### 配置落点：`/etc/<name>/<name>.conf`（跨平台同名）
+### Config path: `/etc/<name>/<name>.conf` (same name cross-platform)
 
-| | 配置目录 | 部署目录 |
+| | Config dir | Deploy dir |
 | --- | --- | --- |
-| 写入频率 | 写一次、天天读 | **每条命令都写** |
-| 落点 | `/etc/<name>/` | `$AIBOX_HOME/apps/<name>` |
-| 能否放特权路径 | 能（安装期提权一次） | 不能（日常命令会全部要 sudo） |
+| Write frequency | write once, read daily | **every command writes** |
+| Location | `/etc/<name>/` | `$AIBOX_HOME/apps/<name>` |
+| Allowed under privileged path | yes (privilege once at install) | no (daily commands would all need sudo) |
 
-- 权限：目录 `755 root:root`、文件 **`644`** —— **写只发生在安装期**（可提权），
-  **读发生在每次命令**（不可提权）。**因此不要往里放凭据。**
-- 由 `install.sh` **播种**（从 aibox 全局设置生成），策略**只补不覆盖**；CLI **只读不写**。
-- 不放 `/opt/<name>.conf`：`/opt` 的约定是「一个包一个目录」，孤立的配置文件归属不清，
-  卸载时不知道该不该删。
-- 配置文件不存在时全部走内置默认 —— 行为与引入前完全一致。
+- Permissions: dir `755 root:root`, file **`644`** — **writes only happen at install** (can escalate),
+  **reads happen on every command** (can't escalate). **So don't put credentials here.**
+- **Seeded** by `install.sh` (from aibox global settings); policy is **supplement, don't overwrite**; the CLI **reads but never writes**.
+- Don't use `/opt/<name>.conf`: `/opt`'s convention is "one package, one dir"; a lone config file has unclear ownership,
+  and at uninstall you wouldn't know whether to delete it.
+- When the config file doesn't exist, built-in defaults apply — behavior is identical to before its introduction.
 
-> 存量模块状态：
+> Current module status:
 >
-> - `openmaic` **已按本约定对齐**（部署根 `$AIBOX_HOME/apps/openmaic`、配置 `/etc/openmaic`）；
-> - `windmill` **已按本约定对齐**（部署根 `$AIBOX_HOME/apps/windmill`、配置 `/etc/windmill/windmill.conf`；CLI 兼容 bash 3.2，定时任务用 systemd 单元）；
-> - `clash` **已按本约定对齐**（部署根 `$AIBOX_HOME/apps/clash`；无 `/etc` 配置——订阅含 token，state/config/pool.yaml 均 600 落部署根；mihomo 二进制由 install 钩子从 GitHub 下载）；
-> - `pi-web` 属安装型，不需要部署根，落点保持平台约定。
+> - `openmaic` **aligned** (deploy root `$AIBOX_HOME/apps/openmaic`, config `/etc/openmaic`);
+> - `windmill` **aligned** (deploy root `$AIBOX_HOME/apps/windmill`, config `/etc/windmill/windmill.conf`; CLI bash-3.2 compatible, scheduled tasks via systemd units);
+> - `clash` **aligned** (deploy root `$AIBOX_HOME/apps/clash`; no `/etc` config — the subscription contains a token, so state/config/pool.yaml are all mode 600 under the deploy root; the mihomo binary is downloaded from GitHub by the install hook);
+> - `pi-web` is install-type — no deploy root, paths stay platform-conventional.
 
-## 代理
+## Proxy
 
-用户可用 `aibox proxy set <url>` 配一个全局代理（见仓库 README）。模块有两种消费方式：
+Users can set a global proxy via `aibox proxy set <url>` (see the repo README). Modules consume it two ways:
 
-**1. 靠环境变量（多数情况，什么都不用写）**
+**1. Via env vars (the common case — do nothing)**
 
-钩子是 aibox 的子进程，代理已由父进程导出，直接调 `curl` / `git` / `npm` 即生效。
+Hooks are child processes of aibox; the proxy is already exported by the parent, so calling `curl` / `git` / `npm` just works.
 
-**2. 持久化到自己的配置（跨机器、跨时间时必须做）**
+**2. Persisted into the module's own config (required for cross-machine / cross-time)**
 
-如果模块下的命令会在**别的机器**、或 **aibox 不在场的时候**联网 —— 例如 `openmaic` 分发的 CLI 会在部署主机上跑 `openmaic upgrade` 拉源码 —— 环境变量传不过去，**必须由模块在安装/更新钩子里把代理写进自己的配置文件**。参考 `tools/openmaic/lib.sh` 的 `sync_proxy_to_conf`。
+If the module's dispatched command will network on **another machine** or **when aibox isn't present** — e.g. the `openmaic`-dispatched CLI runs `openmaic upgrade` on the deploy host to pull source — env vars can't cross that boundary, so **the module must write the proxy into its own config file** in the install/update hook. See `sync_proxy_to_conf` in `tools/openmaic/lib.sh`.
 
-两条注意：
+Caveats:
 
-- 未配置代理时 `AIBOX_PROXY_URL` 为空且 `AIBOX_PROXY_ENABLED=0`，模块应**优雅跳过**而不是报错或写入空值。
-- 不要假定代理是 HTTP 代理。值可能是 `socks5://host:port`，**整体透传**，别自己拼 `http://` 前缀。
-- 写入配置文件时记得脱敏 —— 代理 URL 可能含 `user:pass@`，日志里别打明文（可参考 `mask_url`）。
+- When no proxy is configured, `AIBOX_PROXY_URL` is empty and `AIBOX_PROXY_ENABLED=0`; the module should **skip gracefully** rather than erroring or writing an empty value.
+- Don't assume the proxy is HTTP. The value may be `socks5://host:port`; **pass it through wholesale**, don't prepend `http://`.
+- When writing the config file, remember to redact — the proxy URL may contain `user:pass@`; don't log it in cleartext (see `mask_url`).
 
-## 用户命令 → 钩子映射
+## User command → hook mapping
 
-| 用户命令 | 钩子 |
+| User command | Hook |
 | --- | --- |
 | `aibox install <name>` | `install.sh` |
 | `aibox uninstall <name>` | `uninstall.sh` |
 | `aibox update <name>` | `update.sh` |
 | `aibox <name> <action>` | `svc.sh <action>` |
 
-## 退出码约定
+## Exit code convention
 
-钩子与透传的 CLI 应遵循统一退出码，便于自动化脚本（`aibox <module> <action>; echo $?`）稳定依赖。`aibox` 自身沿用 `die` → 退出 `1`。
+Hooks and dispatched CLIs should follow unified exit codes so automation (`aibox <module> <action>; echo $?`) can depend on them stably. `aibox` itself uses `die` → exit `1`.
 
-| 码 | 含义 | 示例 |
+| Code | Meaning | Example |
 | --- | --- | --- |
-| 0 | 成功 | — |
-| 1 | 运行错误（通用） | 命令执行失败 |
-| 2 | 用法错误 / 非交互下被拒 | 参数不对；危险操作在非交互环境未获确认 |
-| 3 | 依赖缺失 | 平台/命令不满足（如非 Linux 跑部署命令） |
-| 4 | 前置校验失败 | 配置缺失、镜像拉不到 |
-| 10 | 升级失败已回滚 | — |
-| 20 | 需人工介入 | 健康检查失败、回滚后未就绪 |
-| 30 | 服务未就绪 | 容器启动但未通过健康检查 |
-| 40 | 并发冲突 | 拿不到锁（另一项运维在跑） |
-| 50 | 用户取消 | 交互确认选了「否」 |
+| 0 | success | — |
+| 1 | runtime error (general) | command execution failed |
+| 2 | usage error / declined non-interactively | bad args; a dangerous op wasn't confirmed in a non-interactive env |
+| 3 | dependency missing | platform/command not satisfied (e.g. deploy command on non-Linux) |
+| 4 | precheck failed | config missing, image unpullable |
+| 10 | upgrade failed, rolled back | — |
+| 20 | manual intervention needed | health check failed; not ready after rollback |
+| 30 | service not ready | container started but didn't pass health check |
+| 40 | concurrency conflict | couldn't acquire the lock (another op is running) |
+| 50 | user cancelled | interactive confirmation chose "no" |
 
-约定：
+Conventions:
 
-- `aibox <module> <action>` 会把 svc 钩子的退出码原样返回给调用方（`AIBOX_MODULE=... bash "$svc"`）。
-- 危险操作在**非交互环境**下默认拒绝并返回 `2`，不静默执行（见下方《交互确认》）。
-- 分发型模块（openmaic/windmill）的 CLI 主体已实现这套语义码；新模块请对齐。
+- `aibox <module> <action>` returns the svc hook's exit code to the caller as-is (`AIBOX_MODULE=... bash "$svc"`).
+- Dangerous ops **decline by default in non-interactive environments** and return `2`, never executing silently (see [Interactive confirmation](#interactive-confirmation) below).
+- Dispatch-type modules' (openmaic/windmill) CLI bodies already implement this scheme; new modules should align.
 
-## 交互确认
+## Interactive confirmation
 
-涉及不可逆操作（卸载部署、清空数据卷、拆除）时必须交互确认，且遵循统一模式：
+Irreversible ops (uninstalling a deploy, wiping data volumes, teardown) must be interactively confirmed, following a unified pattern:
 
-- **危险操作用 `confirm "<提示>"`**：要求输入 `yes` 才继续；尊重 `--yes`/`-y`（`ASSUME_YES=1`，跳过确认直接继续）与 `--dry-run`（只显示不执行）。openmaic/windmill 的 `confirm` 已如此。
-- **软选择用 `ask_yn "<提示>" [y|n]`**：默认 `n`（拒绝）或 `y`（同意）；**非交互环境（`[ -t 0 ]` 为假）一律走保守默认**并 warn 提示。
-- 主 CLI 的 `ask_confirm`（`bin/aibox`）即软选择、默认拒绝、非交互返回 `1`。`aibox self uninstall` 在 `apps/` 非空时据此 fail-closed。
-- **绝不静默执行危险操作**：非交互 + 无 `--yes` 时返回 `2` 而非 `0`，让脚本与 CI 能察觉。
+- **Dangerous ops use `confirm "<prompt>"`**: requires typing `yes` to proceed; honors `--yes`/`-y` (`ASSUME_YES=1`, skip confirmation) and `--dry-run` (show only, don't execute). openmaic/windmill's `confirm` already does this.
+- **Soft choices use `ask_yn "<prompt>" [y|n]`**: default `n` (decline) or `y` (accept); **non-interactive environments (`[ -t 0 ]` false) always take the conservative default** with a warning.
+- The main CLI's `ask_confirm` (`bin/aibox`) is the soft-choice, default-decline, non-interactive-returns-`1` variant. `aibox self uninstall` uses it for fail-closed behavior when `apps/` is non-empty.
+- **Never silently execute a dangerous op**: non-interactive + no `--yes` returns `2` instead of `0`, so scripts and CI can notice.
 
-## 依赖声明与自动检查
+## Dependency declaration & auto-check
 
-模块在 registry 声明 `deps` 字段（命令名，空格分隔），aibox `install` 时自动检查、缺则按平台装：
+Modules declare a `deps` field in `module.yaml` (command names, list); `aibox install` auto-checks and installs by platform if missing:
 
-- **格式**：`命令名` / `命令名@平台`（仅该平台检查）/ `命令名:版本`（主版本约束）
-- **示例**：`docker@linux docker-compose git`（仅 Linux 查 docker）、`node:22 npm`（node 22+）、`python3`
-- **检查时机**：`aibox install <module>` 调 `check_deps`，在 install 钩子前
-- **平台过滤**：`platform=darwin` 的模块在非 darwin 跳过；`@平台` 标记的依赖在非目标平台跳过（只提示）
-- **自动安装**（`install_dep`）：
-  - 轻量/有包管理器 → 装（macOS brew / Linux apt/yum/dnf）
-  - 需 sudo（apt/yum）或 GUI 交互（Docker Desktop）→ **提示手动命令**，不静默 sudo
-  - node 优先复用 nvm（pi-web 模式）
-- **未知依赖**：提示手动安装
+- **Format**: `command` / `command@platform` (check on that platform only) / `command:version` (major-version constraint)
+- **Examples**: `docker@linux docker-compose git` (docker on Linux only), `node:22 npm` (node 22+), `python3`
+- **When**: `aibox install <module>` calls `check_deps`, before the install hook
+- **Platform filter**: a `platform=darwin` module skips the check on non-darwin; `@platform`-tagged deps are skipped off-target (just a hint)
+- **Auto-install** (`install_dep`):
+  - Lightweight / has a package manager → install (macOS brew / Linux apt/yum/dnf)
+  - Needs sudo (apt/yum) or GUI interaction (Docker Desktop) → **print the manual command**, never silently sudo
+  - node reuses nvm (pi-web pattern)
+- **Unknown deps**: print a manual-install hint
 
-## 设计取舍
+## Design tradeoffs
 
-- **registry 用 shell 可 source 格式而非 JSON**：零运行时依赖、兼容 macOS 自带 bash 3.2，主 CLI 直接 source 即可，无需 `jq`/`python`。
-- **模块脚本落地缓存**：aibox 把模块脚本下载到本地再执行，钩子可复用 `lib.sh`，`svc.sh` 透传不每次联网。
-- **平台由模块自报**：`platform=darwin` 的模块在非 macOS 仅警告不阻断（模块自身在执行时报错更清晰）。
+- **Registry uses a shell-sourceable format, not JSON**: zero runtime dependencies, compatible with macOS bash 3.2; the main CLI sources it directly, no `jq`/`python`. (Now via `module.yaml` + an awk subset parser; yq validates the subset in CI.)
+- **Module scripts are cached on disk**: aibox downloads module scripts to `~/.aibox/modules/<name>/` before executing; hooks reuse `lib.sh`; `svc.sh` pass-through doesn't re-fetch.
+- **Platform is self-reported by the module**: a `platform=darwin` module only warns on non-macOS (the module's own error at runtime is clearer).
 
-## module.yaml 声明（终态，2026-09 更新）
+## module.yaml (source of truth)
 
-> **registry.sh 已退化为远程源模块名索引**（单行 `AIBOX_MODULES="..."`）。本地源（file://）主 CLI 扫 `tools/*/module.yaml` 自动发现模块（不依赖 registry.sh）；远程源（https://）用 registry.sh 拿模块名（远程不能 glob 目录）。**加模块 = 建 `tools/<name>/` + `module.yaml`，本地源零改全局。**
+> **`registry.sh` is gone.** `load_registry` discovers modules from `tools/*/module.yaml` (local source globs directly; remote source uses the GitHub API + caches with TTL). **Adding a module = create `tools/<name>/` + `module.yaml`; local source needs zero global changes.**
 
-### module.yaml 字段（详见 docs/module-system-spec.md §2.3）
+### module.yaml fields (see docs/module-system-spec.md §2.3)
 
-name/version/description/platform/dir/deps/ports/files/hooks/actions/upstream/dashboard。
+name/version/description/platform/dir/deps/ports/files/hooks/actions/upstream/dashboard.
 
-### ports 字段（端口/协议:用途）
+### ports field (port/proto:usage)
 
-CI port-conflict 检测端口+协议唯一（spec §3）。`aibox ports` 命令列分配表 + lsof 监听探测。
+CI `port-conflict` checks port+proto uniqueness (spec §3). The `aibox ports` command lists the assignment table + does an lsof listen probe.
 
-### dashboard_info() 接口（spec §4.4）
+### dashboard_info() interface (spec §4.4)
 
-各模块 `lib.sh` 实现 `dashboard_info()`，输出 key=value：endpoint/credential/log/health。`aibox dashboard` / `aibox <module> dashboard` 调用。
+Each module's `lib.sh` implements `dashboard_info()`, outputting key=value: endpoint/credential/log/health. Called by `aibox dashboard` / `aibox <module> dashboard`.
 
-### DB 命名约定（共享 base，spec §5.4）
+### DB naming convention (shared base, spec §5.4)
 
-单 DB: `<module>`；多 DB: `<module>_<用途>`。`aibox base createdb <module> [用途]` 建库。
+Single DB: `<module>`; multiple DBs: `<module>_<usage>`. `aibox base createdb <module> [usage]` creates the DB.
 
-### base 模块（spec §5）
+### base module (spec §5)
 
-`tools/base/` 共享 PG18+Redis7（compose + createdb）。各部署型模块连共享（.env DATABASE_URL + compose override network，见 `tools/windmill/docker-compose.shared.yml`）。
+`tools/base/` ships shared PG18+Redis7 (compose + createdb). Deploy-type modules connect to the shared instance (.env DATABASE_URL + compose override network, see `tools/windmill/docker-compose.shared.yml`).
 
-### hooks 字段解析
+### hooks field parsing
 
-awk 解析 `hooks:` 嵌套时去 parent 前缀（`hooks.install` → `AIBOX_MODULE_<name>_install`，兼容 `module_field`）；upstream/dashboard 保留前缀（`_upstream_homepage`、`_dashboard_hint`）。
+The awk parser strips the parent prefix for `hooks:` nesting (`hooks.install` → `AIBOX_MODULE_<name>_install`, compatible with `module_field`); upstream/dashboard keep the prefix (`_upstream_homepage`, `_dashboard_hint`).
