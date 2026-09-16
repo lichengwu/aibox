@@ -35,7 +35,7 @@
 
 ## 连共享 base PG（省资源，多模块共享）
 
-windmill compose 的 db service 已改为 `replicas: ${DB_REPLICAS:-1}`（.env 控制）。
+windmill compose 的 db service 已改为 `replicas: 0 (hardcoded，连共享 PG，db 不起)`（.env 控制）。
 连共享 aibox base PG（避免每模块独立 PG）的配置流程：
 
 1. 启共享 base：`aibox base start`（PG 35432）
