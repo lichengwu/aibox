@@ -36,8 +36,8 @@ AIBOX_PROXY_SOURCE=""
 PROBE_CONFIRMED=0
 # 代理自检目标：就用 aibox 真正要访问的那个文件，测别的没意义
 case "$AIBOX_RAW" in
-  file://*) PROBE_TARGET="https://raw.githubusercontent.com/${AIBOX_REPO}/${AIBOX_BRANCH}/registry.sh" ;;
-  *)        PROBE_TARGET="$AIBOX_RAW/registry.sh" ;;
+  file://*) PROBE_TARGET="https://raw.githubusercontent.com/${AIBOX_REPO}/${AIBOX_BRANCH}/install.sh" ;;
+  *)        PROBE_TARGET="$AIBOX_RAW/install.sh" ;;
 esac
 
 # 注入给模块钩子（钩子契约见 docs/module-spec.md）。
