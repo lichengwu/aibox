@@ -74,6 +74,10 @@ WM_REPO="ghcr.io/windmill-labs/windmill"
 WM_EXTRA_REPO="ghcr.io/windmill-labs/windmill-extra"
 PG_IMAGE="postgres:18"
 CADDY_IMAGE="ghcr.io/windmill-labs/caddy-l4:2.11.4-1"
+# 共享 base PG：compose 已把 db service 设为 replicas:0，DATABASE_URL 改指 base PG。
+# 库操作走固定容器名 + 业务用户 aibox（独立模式为 compose 的 db / postgres）。
+SHARED_PG_CONTAINER="aibox-base-pg"
+SHARED_PG_USER="aibox"
 # ghcr 镜像源（国内加速）。空 = 直连 ghcr.io。
 # 直连实测约 0.5 MB/s，而 windmill-extra 压缩后就有 1.99 GiB，
 # 一次全新拉取要 ~1 小时；换成 ghcr.nju.edu.cn 实测约 62 MB/s。
@@ -565,13 +569,53 @@ pull_images() {
 # =============================================================================
 # 数据库 / 健康
 # =============================================================================
-db_cid()      { compose ps -q db 2>/dev/null | head -1; }
+# 共享模式判定：.env 的 DATABASE_URL 指向 aibox-base-pg 时，compose 的 db service
+# （已设 replicas:0）不再运行，所有库操作改走共享 base PG 容器。
+shared_pg_active() {
+  case "$(get_env DATABASE_URL)" in
+    *${SHARED_PG_CONTAINER}*) return 0 ;;
+    *)                        return 1 ;;
+  esac
+}
+
+# 库操作容器路由：共享 → docker exec aibox-base-pg；独立 → dexec db（compose exec）。
+# 仅负责选容器；连接用户（-U aibox / -U postgres）由调用方经 pg_user() 决定。
+pg_exec() {
+  if shared_pg_active; then
+    docker exec -i "$SHARED_PG_CONTAINER" "$@"
+  else
+    dexec db "$@"
+  fi
+}
+
+# 当前库连接用户：共享模式 = aibox，独立模式 = postgres。
+pg_user() {
+  if shared_pg_active; then printf '%s' "$SHARED_PG_USER"
+  else printf '%s' 'postgres'; fi
+}
+
+db_cid() {
+  if shared_pg_active; then
+    # 共享模式：db service 不运行，固定指向 base PG 容器（容器在跑才返回其名）
+    if docker inspect "$SHARED_PG_CONTAINER" >/dev/null 2>&1; then
+      printf '%s' "$SHARED_PG_CONTAINER"
+    fi
+  else
+    compose ps -q db 2>/dev/null | head -1
+  fi
+}
 server_cid()  { compose ps -q windmill_server 2>/dev/null | head -1; }
 extra_cid()   { compose ps -q windmill_extra 2>/dev/null | head -1; }
 
 db_healthy() {
   local cid h
   cid=$(db_cid); [ -n "$cid" ] || return 1
+  if shared_pg_active; then
+    # 共享 PG 由 base 部署管理，其 healthcheck 不一定与本 stack 对齐，
+    # 直接用 pg_isready 探活更可靠（doctor/status/upgrade/backup 共用此判定）。
+    docker exec "$cid" pg_isready -U "$SHARED_PG_USER" >/dev/null 2>&1
+    return $?
+  fi
   h=$(docker inspect "$cid" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || echo none)
   [ "$h" = "healthy" ]
 }
@@ -586,14 +630,14 @@ wait_db() {
 }
 
 migration_count() {
-  dexec db psql -U postgres -d windmill -tAc 'select count(*) from _sqlx_migrations' 2>/dev/null | tr -d '[:space:]'
+  pg_exec psql -U "$(pg_user)" -d windmill -tAc 'select count(*) from _sqlx_migrations' 2>/dev/null | tr -d '[:space:]'
 }
 migration_max() {
-  dexec db psql -U postgres -d windmill -tAc 'select max(version) from _sqlx_migrations' 2>/dev/null | tr -d '[:space:]'
+  pg_exec psql -U "$(pg_user)" -d windmill -tAc 'select max(version) from _sqlx_migrations' 2>/dev/null | tr -d '[:space:]'
 }
 # 通用单值查询
 qval() {
-  dexec db psql -U postgres -d "${2:-windmill}" -tAc "$1" 2>/dev/null | tr -d '[:space:]'
+  pg_exec psql -U "$(pg_user)" -d "${2:-windmill}" -tAc "$1" 2>/dev/null | tr -d '[:space:]'
 }
 
 # 优先问「本实例」的 server 容器。
@@ -876,7 +920,7 @@ verify_dump_file() {
 make_backup() {
   local d="$1" pol
   step "全量快照 → $d"
-  dexec db pg_dumpall -U postgres > "$d/cluster.sql" 2>"$d/dump.err" || {
+  pg_exec pg_dumpall -U "$(pg_user)" > "$d/cluster.sql" 2>"$d/dump.err" || {
     warn "pg_dumpall 失败，stderr:"; cat "$d/dump.err" >&2; return 1; }
   [ -s "$d/cluster.sql" ] || { warn "备份文件为空"; return 1; }
   grep -q '^CREATE DATABASE windmill' "$d/cluster.sql" \
@@ -915,15 +959,16 @@ prune_backups() {
 
 # 把 pg_dumpall 文本 dump 恢复到生产库。前置: db 已 running 且 healthy。
 restore_cluster_from() {
-  local sql="$1" log_dst="${2:-$LOG_DIR/restore.log}" cid errs
+  local sql="$1" log_dst="${2:-$LOG_DIR/restore.log}" cid errs u
   verify_dump_file "$sql" || return 1
   cid=$(db_cid); [ -n "$cid" ] || { warn "db 容器未运行，无法恢复"; return 1; }
+  u=$(pg_user)
 
   # POSTGRES_DB 已建出一个空 windmill，先 DROP，否则 dump 里的 CREATE DATABASE 必然失败
-  dexec db psql -U postgres -d postgres -c 'DROP DATABASE IF EXISTS windmill' >/dev/null 2>&1 || true
+  pg_exec psql -U "$u" -d postgres -c 'DROP DATABASE IF EXISTS windmill' >/dev/null 2>&1 || true
   docker cp "$sql" "$cid":/tmp/restore.sql >/dev/null 2>&1 || { warn "无法把 dump 复制进 db 容器"; return 1; }
-  dexec db psql -U postgres -d postgres -f /tmp/restore.sql > "$log_dst" 2>&1 || true
-  dexec db sh -c 'rm -f /tmp/restore.sql' >/dev/null 2>&1 || true
+  pg_exec psql -U "$u" -d postgres -f /tmp/restore.sql > "$log_dst" 2>&1 || true
+  pg_exec sh -c 'rm -f /tmp/restore.sql' >/dev/null 2>&1 || true
 
   errs=$(grep -ci '^ERROR' "$log_dst" 2>/dev/null || true); errs="${errs:-0}"
   info "  恢复日志 ERROR 行数 = ${errs}（预期 0 或 1；>1 说明恢复不完整）"
@@ -932,16 +977,88 @@ restore_cluster_from() {
 
 # dump 里记的是「快照当时」的角色口令，.env 里才是当前生效口令。不同步会连不上库。
 sync_db_password() {
-  local pw; pw=$(get_env POSTGRES_PASSWORD)
+  local pw u
+  pw=$(get_env POSTGRES_PASSWORD)
   [ -n "$pw" ] || { warn ".env 未设置 POSTGRES_PASSWORD"; return 1; }
-  dexec db psql -U postgres -d postgres -c "ALTER USER postgres WITH PASSWORD '${pw}'" >/dev/null 2>&1 \
-    || { warn "ALTER USER postgres 失败"; return 1; }
-  info "  已把 .env 的数据库口令同步到 postgres 角色"
+  u=$(pg_user)
+  pg_exec psql -U "$u" -d postgres -c "ALTER USER ${u} WITH PASSWORD '${pw}'" >/dev/null 2>&1 \
+    || { warn "ALTER USER ${u} 失败"; return 1; }
+  info "  已把 .env 的数据库口令同步到 ${u} 角色"
 }
 
 refresh_planner_stats() {
-  dexec db vacuumdb -U postgres --all --analyze-in-stages >/dev/null 2>&1 \
+  pg_exec vacuumdb -U "$(pg_user)" --all --analyze-in-stages >/dev/null 2>&1 \
     && info "  已重建 planner 统计" || warn "  vacuumdb 跳过（不影响可用性）"
+}
+
+# 独立 → 共享 PG 迁移：把本地 compose db 的全量 dump 灌入 aibox base PG 的 windmill 库。
+# 幂等：已在共享模式则直接退出；目标迁移条数与源一致即视为成功。
+cmd_migrate_to_shared_pg() {
+  require_ready; wm_paths
+  [ -f "$ENV_FILE" ] || die "未发现部署（${ENV_FILE}）"
+
+  hr; log "${C_BOLD}迁移到共享 base PG${C_RESET}  $(ts)"; hr
+
+  if shared_pg_active; then
+    ok "当前 DATABASE_URL 已指向 ${SHARED_PG_CONTAINER}，无需迁移"
+    return 0
+  fi
+
+  # 数据源：本地独立 db 必须在跑且健康
+  db_healthy || die "本地 db 当前不健康，无法作为迁移数据源；先 ${CLI_NAME} up"
+  # 目标：共享 PG 容器必须在跑
+  docker inspect "$SHARED_PG_CONTAINER" >/dev/null 2>&1 \
+    || die "共享 PG 容器 ${SHARED_PG_CONTAINER} 未运行；请先启动 aibox base"
+
+  log "  源  : 本地 compose db（独立模式）"
+  log "  目标: ${SHARED_PG_CONTAINER} / windmill（用户 ${SHARED_PG_USER}）"
+  warn "迁移会向共享 PG 灌入 windmill 库全量数据；目标库若已有同名数据请先自行清理。"
+  confirm "确认把本地 db 迁移到 ${SHARED_PG_CONTAINER}？" || return 0
+
+  local tmp="/tmp/windmill-migrate-$$.sql" log_dst="$LOG_DIR/migrate-shared.log" errs=0
+  mkdir -p "$LOG_DIR"
+  trap "rm -f -- '${tmp}'" EXIT
+
+  step "1/4 导出本地全量 dump"
+  if ! dexec db pg_dumpall -U postgres > "$tmp" 2>"$log_dst"; then
+    warn "pg_dumpall 失败:"; cat "$log_dst" >&2; rm -f -- "$tmp"; return 1
+  fi
+  [ -s "$tmp" ] || { warn "dump 为空"; rm -f -- "$tmp"; return 1; }
+  grep -q '^CREATE DATABASE windmill' "$tmp" \
+    || { warn "dump 不含 'CREATE DATABASE windmill'"; rm -f -- "$tmp"; return 1; }
+  info "  dump $(du -h "$tmp" | cut -f1)"
+
+  step "2/4 确保目标 windmill 库存在"
+  # 目标已存在则静默；下面灌数据时 dump 内的 CREATE DATABASE 会报已存在，属预期。
+  docker exec -i "$SHARED_PG_CONTAINER" psql -U "$SHARED_PG_USER" -d postgres \
+    -c 'CREATE DATABASE windmill' >>"$log_dst" 2>&1 || true
+
+  step "3/4 灌入共享 PG"
+  # pg_dumpall dump 含 roles + 各 DB；灌入既有集群会产生若干 'already exists' 错误，属正常。
+  if ! docker exec -i "$SHARED_PG_CONTAINER" psql -U "$SHARED_PG_USER" -d windmill \
+        < "$tmp" >>"$log_dst" 2>&1; then
+    warn "灌入命令返回非零（'already exists' 类错误属正常，见日志）"
+  fi
+
+  step "4/4 校验迁移结果"
+  local src_mc dst_mc
+  src_mc=$(dexec db psql -U postgres -d windmill -tAc 'select count(*) from _sqlx_migrations' 2>/dev/null | tr -d '[:space:]' || true)
+  dst_mc=$(docker exec "$SHARED_PG_CONTAINER" psql -U "$SHARED_PG_USER" -d windmill -tAc 'select count(*) from _sqlx_migrations' 2>/dev/null | tr -d '[:space:]' || true)
+  errs=$(grep -ci '^ERROR' "$log_dst" 2>/dev/null || true); errs="${errs:-0}"
+  info "  迁移条数 源=${src_mc:-0} 目标=${dst_mc:-0}；日志 ERROR 行数=${errs}"
+  rm -f -- "$tmp"
+
+  if [ -n "$dst_mc" ] && [ "${src_mc:-0}" = "$dst_mc" ]; then
+    ok "迁移完成：windmill 迁移条数一致（${dst_mc}）"
+    hr
+    log "  下一步：把 ${ENV_FILE} 的 DATABASE_URL 改为"
+    log "    DATABASE_URL=postgres://${SHARED_PG_USER}:\${POSTGRES_PASSWORD}@${SHARED_PG_CONTAINER}:5432/windmill"
+    log "  然后 ${CLI_NAME} deploy 重建（compose db 将以 replicas:0 退场）。"
+    hr
+  else
+    warn "迁移条数不一致或目标为空，请检查 ${log_dst}"
+    return 1
+  fi
 }
 
 # 备份目录移到部署目录之外，避免随部署一起被清掉
@@ -2060,7 +2177,7 @@ cmd_doctor() {
   if [ -r "$WM_CONF_FILE" ]; then
     chk "主机级配置" 1 "$WM_CONF_FILE"
   else
-    chk "主机级配置" 1 "未配置（$WM_CONF_FILE 不存在，走内置默认）"
+    chk "主机级配置" 1 "未配置（${WM_CONF_FILE} 不存在，走内置默认）"
   fi
   command -v python3 >/dev/null 2>&1 && chk "python3" 1 "$(python3 --version 2>&1 | cut -d' ' -f2)" || chk "python3" 0 "compose 配置解析需要"
 
@@ -2135,11 +2252,19 @@ cmd_doctor() {
     chk "部署目录" 1 "${WM_DIR}（尚未部署）"
   fi
 
+  # 数据库：共享模式探 aibox-base-pg 的 pg_isready；独立模式探本地 db healthcheck。
+  # 两者都收敛到 db_healthy()，doctor/status/upgrade/backup 共用同一判定。
+  if db_healthy; then
+    chk "数据库" 1 "$(shared_pg_active && printf '共享 %s' "${SHARED_PG_CONTAINER}" || printf '本地 db healthy')"
+  else
+    chk "数据库" 0 "$(shared_pg_active && printf '%s 不可达' "${SHARED_PG_CONTAINER}" || printf '本地 db 非 healthy')"
+  fi
+
   if [ -f /etc/systemd/system/windmill-backup.timer ]; then
     local en; en=$(systemctl is-enabled windmill-backup.timer 2>/dev/null || echo unknown)
     chk "systemd 定时任务" 1 "$en"
   else
-    chk "systemd 定时任务" 1 "未安装（$CLI_NAME systemd install）"
+    chk "systemd 定时任务" 1 "未安装（${CLI_NAME} systemd install）"
   fi
 
   hr
@@ -2577,7 +2702,7 @@ cmd_backup() {
   out="$daily_dir/cluster-${stamp}.sql"
   err="$daily_dir/.last-error"
 
-  if ! dexec db pg_dumpall -U postgres > "$out" 2>"$err"; then
+  if ! pg_exec pg_dumpall -U "$(pg_user)" > "$out" 2>"$err"; then
     warn "pg_dumpall 失败:"; cat "$err" >&2; rm -f "$out"
     append_log backup.log "每日备份失败: pg_dumpall 出错"
     exit 1
@@ -3144,6 +3269,7 @@ ${C_BOLD}日常运维${C_RESET}
   exec <服务> <命令> 在容器内执行命令
   psql [库名]        进入数据库
   credentials        查看凭据 / --rotate-admin / --rotate-db
+  migrate-to-shared-pg  从独立 db 迁移到共享 base PG（灌库 + 校验）
   systemd <动作>     install | status | uninstall
   version            显示 CLI 与部署各层版本
 
@@ -3476,6 +3602,7 @@ main() {
     exec)        cmd_exec "$@" ;;
     psql)        cmd_psql "$@" ;;
     credentials|cred) cmd_credentials "$@" ;;
+    migrate-to-shared-pg|migrate) cmd_migrate_to_shared_pg "$@" ;;
     systemd)     cmd_systemd "$@" ;;
     version|ver) cmd_version "$@" ;;
     help)        cmd_help "$@" ;;
