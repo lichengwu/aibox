@@ -537,7 +537,7 @@ cmd_proxy_env() {
 # 标签|URL|分组'
 AIBOX_PROBE_SITES_DEFAULT='github.com|https://github.com|开发依赖
 api.github.com|https://api.github.com|开发依赖
-raw.githubusercontent.com|https://raw.githubusercontent.com/lichengwu/aibox/main/registry.sh|开发依赖
+raw.githubusercontent.com|https://raw.githubusercontent.com/lichengwu/aibox/main/install.sh|开发依赖
 docker hub|https://registry-1.docker.io/v2/|开发依赖
 ghcr.io|https://ghcr.io/v2/|开发依赖
 npm registry|https://registry.npmjs.org|开发依赖
