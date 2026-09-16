@@ -1,0 +1,46 @@
+# Windmill 连共享 aibox base PG 的 compose override
+#
+# 连共享 PG 模式（避免每模块独立 PG，省资源）：
+#   1. aibox base start && aibox base createdb windmill
+#   2. .env 配置:
+#      - DB_REPLICAS=0（不起本地 db，主 compose 的 db replicas 已改 ${DB_REPLICAS:-1}）
+#      - DATABASE_URL=postgres://aibox:aibox@aibox-base-pg:5432/windmill
+#   3. docker compose -f docker-compose.yml -f docker-compose.shared.yml up -d
+#
+# 降级（回独立 PG）: docker compose -f docker-compose.yml up -d（不用 override）
+#
+# 原理: override 把 db replicas 设 0（不起）、去掉各 service 的 depends_on db（连共享不依赖本地 db）、
+#       join aibox-base network（容器经服务名 aibox-base-pg 连共享 PG）。
+#       DATABASE_URL 由 .env 控制（主 compose 的 windmill_server/worker 已用 ${DATABASE_URL}）。
+services:
+  db:
+    deploy:
+      replicas: 0
+
+  windmill_server:
+    depends_on: []
+    networks:
+      - default
+      - aibox-base
+
+  windmill_worker:
+    depends_on: []
+    networks:
+      - default
+      - aibox-base
+
+  windmill_worker_native:
+    depends_on: []
+    networks:
+      - default
+      - aibox-base
+
+  windmill_indexer:
+    depends_on: []
+    networks:
+      - default
+      - aibox-base
+
+networks:
+  aibox-base:
+    external: true

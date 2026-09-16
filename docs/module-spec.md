@@ -217,3 +217,25 @@ BASE_DIR="${<MODULE>_BASE_DIR:-$APPS_ROOT/<name>}"
 - **registry 用 shell 可 source 格式而非 JSON**：零运行时依赖、兼容 macOS 自带 bash 3.2，主 CLI 直接 source 即可，无需 `jq`/`python`。
 - **模块脚本落地缓存**：aibox 把模块脚本下载到本地再执行，钩子可复用 `lib.sh`，`svc.sh` 透传不每次联网。
 - **平台由模块自报**：`platform=darwin` 的模块在非 macOS 仅警告不阻断（模块自身在执行时报错更清晰）。
+
+## module.yaml 声明（终态，2026-09 更新）
+
+> **registry.sh 已退化为远程源模块名索引**（单行 `AIBOX_MODULES="..."`）。本地源（file://）主 CLI 扫 `tools/*/module.yaml` 自动发现模块（不依赖 registry.sh）；远程源（https://）用 registry.sh 拿模块名（远程不能 glob 目录）。**加模块 = 建 `tools/<name>/` + `module.yaml`，本地源零改全局。**
+
+### module.yaml 字段（详见 docs/module-system-spec.md §2.3）
+name/version/description/platform/dir/deps/ports/files/hooks/actions/upstream/dashboard。
+
+### ports 字段（端口/协议:用途）
+CI port-conflict 检测端口+协议唯一（spec §3）。`aibox ports` 命令列分配表 + lsof 监听探测。
+
+### dashboard_info() 接口（spec §4.4）
+各模块 `lib.sh` 实现 `dashboard_info()`，输出 key=value：endpoint/credential/log/health。`aibox dashboard` / `aibox <module> dashboard` 调用。
+
+### DB 命名约定（共享 base，spec §5.4）
+单 DB: `<module>`；多 DB: `<module>_<用途>`。`aibox base createdb <module> [用途]` 建库。
+
+### base 模块（spec §5）
+`tools/base/` 共享 PG18+Redis7（compose + createdb）。各部署型模块连共享（.env DATABASE_URL + compose override network，见 `tools/windmill/docker-compose.shared.yml`）。
+
+### hooks 字段解析
+awk 解析 `hooks:` 嵌套时去 parent 前缀（`hooks.install` → `AIBOX_MODULE_<name>_install`，兼容 `module_field`）；upstream/dashboard 保留前缀（`_upstream_homepage`、`_dashboard_hint`）。
