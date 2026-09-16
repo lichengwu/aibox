@@ -1262,10 +1262,11 @@ render_env() {
 # 当前部署版本记录在 ${VERSION_FILE}。
 # ============================================================================
 
-# --- 数据库 ---------------------------------------------------------------
-DATABASE_URL=postgres://postgres:${dbpass}@db/windmill?sslmode=disable
-# POSTGRES_PASSWORD 仅在 db 卷首次初始化时生效；变更既有实例的口令必须执行
-# \`windmill credentials --rotate-db\`（内部走 ALTER USER）。
+# --- 数据库（连共享 aibox base PG，db replicas:0 不起本地 PG）----------------
+# 前置: aibox base start && aibox base createdb windmill
+# 凭据: AIBOX_BASE_PG_USER/AIBOX_BASE_PG_PASSWORD（默认 aibox/aibox）
+DATABASE_URL=postgres://${AIBOX_BASE_PG_USER:-aibox}:${AIBOX_BASE_PG_PASSWORD:-aibox}@aibox-base-pg:5432/windmill
+# POSTGRES_PASSWORD 保留供独立模式 db 卷初始化（共享模式 db replicas:0 不起本地 PG）
 POSTGRES_PASSWORD=${dbpass}
 
 # --- 镜像版本（钉死，禁止用 :main / :latest）-------------------------------
