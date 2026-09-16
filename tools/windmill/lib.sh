@@ -9,17 +9,13 @@ CLI_SRC="${MODULE_DIR}/${CLI_NAME}"
 WINDMILL_BIN_DIR="${WINDMILL_BIN_DIR:-${AIBOX_BIN_DIR:-${HOME}/.local/bin}}"
 CLI_DEST="${WINDMILL_BIN_DIR}/${CLI_NAME}"
 
-# ---------- output / colors (TTY + NO_COLOR aware; no leakage into pipes) ----------
-if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
-  C_RST=$'\033[0m'; C_CYA=$'\033[36m'; C_YEL=$'\033[33m'; C_RED=$'\033[31m'
-else
-  C_RST=''; C_CYA=''; C_YEL=''; C_RED=''
-fi
-
-log() { printf '%s[windmill]%s %s\n' "$C_CYA" "$C_RST" "${*}"; }
-warn() { printf '%s[!]%s %s\n' "$C_YEL" "$C_RST" "${*}" >&2; }
+# Output helpers: colors are inherited from aibox via the exported C_* env vars (single
+# source of truth); ${C_*:-} falls back to empty when this lib is sourced standalone.
+# Prefix uses AIBOX_MODULE (injected by aibox) with the module name as a fallback.
+log() { printf '%s[%s]%s %s\n' "${C_CYA:-}" "${AIBOX_MODULE:-windmill}" "${C_RST:-}" "${*}"; }
+warn() { printf '%s[!]%s %s\n' "${C_YEL:-}" "${C_RST:-}" "${*}" >&2; }
 die() {
-  printf '%s[x]%s %s\n' "$C_RED" "$C_RST" "${*}" >&2
+  printf '%s[x]%s %s\n' "${C_RED:-}" "${C_RST:-}" "${*}" >&2
   exit 1
 }
 

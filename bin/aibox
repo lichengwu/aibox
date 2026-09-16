@@ -64,6 +64,9 @@ else
   C_CLR=''
   TUI_TTY=0
 fi
+# Exported so module hooks (child processes) inherit the same scheme — single source of
+# truth. Modules' log/warn/die use ${C_*:-} (empty fallback when run standalone, not via aibox).
+export C_RST C_DIM C_BOLD C_GRN C_YEL C_RED C_CYA
 
 log()  { printf '%s[aibox]%s %s\n' "$C_CYA" "$C_RST" "$*"; }
 warn() { printf '%s[!]%s %s\n' "$C_YEL" "$C_RST" "$*" >&2; }
