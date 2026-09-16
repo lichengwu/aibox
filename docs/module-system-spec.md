@@ -2,13 +2,15 @@
 
 > 状态：设计稿。本文档收录端口声明、Dashboard、共享基础组件、模块开发指南、module.yaml 声明规范等增强需求，作为后续实现的依据。
 >
+> **增量修订（2026-09-16）**：module.yaml 字段去冗余（files 隐式标准集 / actions 公共生命周期契约 / dashboard 瘦身）+ 公共组件依赖声明与连接信息传播（provider 模型 + `sync-deps` 生成）。详见 [`docs/module-yaml-refactor-design.md`](module-yaml-refactor-design.md)。§1 / §2.3 / §4 / §5 / 附录 B/C 已同步标注。
+>
 > 定位：aibox 是本地开发 + 单机部署运维的轻量模块管理器（纯 bash、零运行时依赖、兼容 macOS bash 3.2）。模块从当前 4 个增长到几十个时的终态设计。
 
 ---
 
 ## 1. 背景与目标
 
-当前 aibox 模块声明集中在 `registry.sh`（shell-sourced 变量），适合 4-5 个模块。随着模块增长到几十个，集中文件臃肿、merge 冲突多、加模块要改全局。同时需要：端口不冲突、模块状态可视化、共享组件省资源、开发指南助 AI 升级。
+历史上 aibox 模块声明集中在 `registry.sh`（shell-sourced 变量），适合 4-5 个模块；现已迁移为每模块 `tools/<name>/module.yaml`（自治、扫 `tools/*/module.yaml` 发现，registry.sh 已删，见 §9）。随着模块增长到几十个，仍需：端口不冲突、模块状态可视化、共享组件省资源、开发指南助 AI 升级。
 
 本规格定义：
 
@@ -59,7 +61,7 @@ ports:                            # 可选。占用端口（端口/协议:用途
   - 30141/tcp:http
   - 9090/tcp:api
 
-files:                            # 必填。仓库内文件（aibox 下载缓存到 ~/.aibox/modules/<name>/）
+files:                            # 可选。仅列「额外」文件；标准 5 文件（lib.sh/install.sh/uninstall.sh/update.sh/svc.sh）隐式默认（awk union，旧 yaml 列全仍兼容）
   - lib.sh
   - install.sh
   - uninstall.sh
@@ -72,7 +74,7 @@ hooks:                            # 必填。钩子文件名
   update: update.sh
   svc: svc.sh
 
-actions:                          # 可选。svc 支持的动作
+actions:                          # 可选。svc 支持的动作（列全部）；服务型模块的 lifecycle 子集（start/stop/restart/status/logs）须满足《公共动作契约》，见 §4 与 design doc §4
   - start
   - stop
   - restart
@@ -86,11 +88,23 @@ upstream:                         # 可选。开发指南链接（见 §6）
   install: https://github.com/agegr/pi-web#installation
   test: https://github.com/agegr/pi-web#development
 
-dashboard:                        # 可选。Dashboard 展示信息（见 §4）
+dashboard:                        # 可选。仅作未装时的静态 fallback；只允许 endpoints[] + hint 两子字段，运行时一律走 lib.sh 的 dashboard_info()（见 §4）
   endpoints:
     - "http://127.0.0.1:${PORT}"
   hint: "用户名 pi / 密码见 aibox pi-web status"
 ```
+
+### 2.3.1 增量字段（2026-09-16，详见 [design doc](module-yaml-refactor-design.md)）
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `files` | 否 | 仅列**额外**文件；标准 5 文件隐式（awk union，旧 yaml 列全仍兼容）。CI 校验列出项存在。 |
+| `actions` | 否 | 列全部动作。服务型模块 lifecycle 子集（start/stop/restart/status/logs）须满足《公共动作契约》；分布型（透传下发 CLI）可 `lifecycle: passthrough` 豁免。CLI 转发前校验声明 ∈ actions（提示不拦）。 |
+| `services` | 否 | 公共组件依赖，紧凑串 `provider:component[#dbname]`。component **全名**（`postgres`/`redis`，禁 `pg` 等简称）。多 DB：`base:postgres#windmill_jobs`。 |
+| `provides` | 否 | 仅 provider 模块（如 base）填。声明对外提供的组件全名。消费模块 `services` 引用须命中 provider `provides`。 |
+| `dashboard` | 否 | 仅 `endpoints[]` + `hint`，作未装时静态 fallback；运行时走 `dashboard_info()`。 |
+
+**全名一致性**：component 名全程用全名 —— module.yaml `services`/`provides`、env 变量（`AIBOX_POSTGRES_*`）、compose service/container（`postgres:` / `aibox-base-postgres`）、`base_conn_info` 参数、port 用途标签（`35432/tcp:postgres`）。
 
 ### 2.4 解析方案（方案 A：内置 awk，零依赖）
 
@@ -136,9 +150,13 @@ awk 解析器只支持 §2.2 子集；CI 保证 YAML 合规（见 §2.5）。
           fail=0
           for f in tools/*/module.yaml; do
             [ -f "$f" ] || continue
-            # 1. 必填字段：name/version/dir/files/hooks.install 非空
+            # 1. 必填字段：name/version/dir/hooks.install 非空（files 现为可选，仅列额外）
             # 2. YAML 子集合规：无锚点(&/*)、无多行(|/>)、无流式({}/[])
             # 3. ports 格式：端口/协议:用途
+            # 4. files 列出项必须存在于 tools/<name>/
+            # 5. 服务型模块 actions 含 lifecycle 集 且 svc.sh 实现之（passthrough 豁免）
+            # 6. dashboard 只允许 endpoints + hint 两子字段
+            # 7. services/provides component 名为全名（白名单 postgres/redis/...）
             yq -e '.name' "$f" >/dev/null || { echo "::error file=$f::缺 name"; fail=1; }
             ...
           done
@@ -214,7 +232,7 @@ clash       7890/tcp     mixed     CLASH_PORT
 clash       9090/tcp     api       CLASH_API_PORT
 windmill    8080/tcp     http      WM_HTTP_PORT
 openmaic    3000/tcp     app       —
-openmaic    5432/tcp     pg        —
+openmaic    5432/tcp     postgres  —（迁移期本地 pg；共享后由 base 接管）
 ```
 
 开发者加模块前 `aibox ports` 看已分配，选空闲端口。主 CLI 从 module.yaml ports 字段实时收集（动态，无需维护 docs/ports.md）。
@@ -270,7 +288,7 @@ dashboard_info() {
 }
 ```
 
-约定写进 module-spec。模块未装时 aibox 只显示声明信息（module.yaml dashboard 段）。
+约定写进 module-spec。**module.yaml 的 `dashboard` 段仅作未装时的静态 fallback，且只允许 `endpoints[]` + `hint` 两子字段；模块一旦安装，运行时信息（endpoint/凭据/日志/健康）一律以 `dashboard_info()` 输出为准，覆盖 yaml。**
 
 ### 4.5 凭据来源（各模块）
 
@@ -311,8 +329,11 @@ dashboard_info() {
 ```yaml
 # tools/base/module.yaml
 name: base
+provides:                # 声明对外提供的组件（全名）
+  - postgres
+  - redis
 ports:
-  - 35432/tcp:pg        # 非默认端口，避免撞系统 PG
+  - 35432/tcp:postgres   # 非默认端口 + 全名用途标签，避免撞系统 PG
   - 36379/tcp:redis
 deps:
   - docker
@@ -322,6 +343,7 @@ actions:
   - stop
   - restart
   - status
+  - createdb
 ```
 
 **各部署型模块 compose 改造**：
@@ -338,12 +360,15 @@ actions:
 
 约定写进 module-spec。
 
-### 5.5 实现要点
+### 5.5 实现要点（provider 模型 + sync-deps 生成，详见 [design doc](module-yaml-refactor-design.md) §5–§6）
 
-- `tools/base/lib.sh`：共享 compose lifecycle（start/stop/status）+ DB 创建工具（`base createdb <module> [用途]`）
-- 各模块 `init` 调 `base createdb <module>` 建库，compose env 指向共享
-- 版本兼容：module.yaml 可声明 `deps` 含 `pg:16`（base 模块管版本，模块声明兼容版本）
-- 网络：共享 compose 建 docker network `aibox-base`，各模块 compose join
+- `base` 作为 **provider**，单一信息源 = `tools/base/docker-compose.yml`（实例定义）+ `tools/base/lib.sh` 的 `base_conn_info <component>`（bash 可调，输出 `host/port/user/password`）。两者一致性由 CI deps-lint 守。
+- 消费模块 module.yaml `services: [base:postgres#<db>]` 声明依赖（全名）。
+- `aibox <module> sync-deps`（install/update 自动调）：读 `services` → 调 `base_conn_info` → 生成 `$APP_DIR/.env.aibox`（`AIBOX_POSTGRES_*` 等全名变量）+ `docker-compose.override.deps.yml`（join `aibox-base` 网络，env 指向 `${AIBOX_POSTGRES_*}`）。
+- 模块自己的 compose/`.env` **只引用 `${AIBOX_POSTGRES_*}`，绝不硬编码** `aibox:aibox@` / `aibox-base-postgres:5432`。改 base 一处 → 重跑 sync-deps → 多处自动重连。
+- `tools/base/lib.sh` 仍管共享 compose lifecycle（start/stop/status）+ DB 创建工具（`base createdb <module> [用途]`）；各模块 `init` 调 `base createdb <module>` 建库。
+- 版本兼容：module.yaml 可声明 `deps` 含 `postgres:16`（base 管版本，模块声明兼容版本；**全名**）
+- 网络：共享 compose 建 docker network `aibox-base`，各模块经生成的 override join
 
 ### 5.6 分阶段（避免大爆炸）
 
@@ -355,7 +380,7 @@ actions:
 
 ### 5.7 降级
 
-某模块需要独占 PG 版本（不兼容共享 18）时，可回退独立实例（compose 自己起 PG）。module.yaml 标注 `deps: pg:14@standalone` 或类似，base 不接管。
+某模块需要独占 PG 版本（不兼容共享 18）时，可回退独立实例（compose 自己起 PG）。module.yaml 不声明该 `services`，或标注 `deps: postgres:14@standalone`（全名），base 不接管。
 
 ### 5.8 依赖
 
@@ -550,15 +575,18 @@ dashboard:
 5. dashboard.endpoints（列表）→ `AIBOX_MODULE_<name>_dashboard_endpoints="url1 url2"`
 6. 跳过 `#` 注释、空行
 7. 输出 `eval`-able 赋值，主 CLI `eval "$(parse_yaml_module "$f" "$name")"`
+8. **files union（增量）**：解析后与标准 5 文件做 union 去重（标准集在前），向后兼容旧 yaml 列全
+9. **services/provides（增量）**：作为新列表字段照常解析（空格分隔标量），供 `sync-deps` 读取
 
 awk 只处理 §2.2 子集；CI（yq）保证 YAML 合规。
 
 ## 附录 C：CI workflows 汇总
 
-`.github/workflows/lint.yml` 增加两个 job：
+`.github/workflows/lint.yml` 增加 job：
 
-- `module-lint`：yq 校验 module.yaml（必填字段 + 子集合规 + ports 格式）
+- `module-lint`：yq 校验 module.yaml（必填字段 + 子集合规 + ports 格式 + files 项存在 + lifecycle 实现 + dashboard 仅两子字段 + component 全名白名单）
 - `port-conflict`：yq 收集所有 ports，检测 端口+协议 重复
+- `deps-lint`（新增）：①消费模块 `services` 的 provider/component 必须命中某 provider 的 `provides`；②禁止 `tools/*/docker-compose*.yml`（base 除外）硬编码 `aibox:aibox@` / `aibox-base-postgres:5432` 等字面量；③`base/lib.sh` 的 `base_conn_info` 默认值与 `base/docker-compose.yml` 端口/凭据一致
 
 现有 `bash -n` + `shellcheck` + `bash32-gotchas` 保留。
 
