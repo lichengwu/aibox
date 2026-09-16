@@ -1,0 +1,44 @@
+# OpenMAIC 连共享 aibox base PG 的 compose override
+#
+# 此文件是仓库内的参考副本 —— openmaic CLI 在 OPENMAIC_SHARED_PG=1 时会把
+# 完全相同的内容自动写到 $APP_DIR/docker-compose.shared.yml（见 CLI 的
+# _shared_override_write heredoc）。两处务必保持一致（改一处同步另一处）。
+# 也可手工: cp 此文件到 $APP_DIR/docker-compose.shared.yml —— CLI 检测到即在
+# compose 调用里自动 -f 追加（openmaic up/install/upgrade/backup 等均生效）。
+#
+# 连共享 PG 模式（避免每模块独立 PG，省资源）：
+#   1. aibox base start && aibox base createdb openmaic
+#      （install 时若 aibox-base-pg 在跑，CLI 会自动 CREATE DATABASE openmaic）
+#   2. 开启共享模式：/etc/openmaic/openmaic.conf 写 OPENMAIC_SHARED_PG=1
+#      （或临时 OPENMAIC_SHARED_PG=1 openmaic install）
+#   3. openmaic install / up —— CLI 自动落本文件 + 建 openmaic 库 + 起 app 连共享 PG
+#
+# 降级（回独立 PG）: OPENMAIC_SHARED_PG=0 后 openmaic up（CLI 会删 override）。
+#
+# 原理: postgres replicas:0（不起本地 PG）；openmaic app 加 aibox-base network
+#       （经服务名 aibox-base-pg 连共享 PG），并在 environment 写死 DATABASE_URL 指向
+#       共享 PG（覆盖 .env.local 的 DATABASE_URL —— environment 优先级高于 env_file）。
+#       .env.local 仍需存在（PERSISTENCE_DEV_TOKEN、API Key、ACCESS_CODE 等），
+#       只是其中 DATABASE_URL 会被本 override 覆盖。
+#       render-service 不改 —— 它在 internal: true 的 render 网络上，加 aibox-base
+#       会破坏其出网隔离（untrusted Chromium 将能触达共享 PG）。
+#
+# 验证: docker compose --profile server-persistence \
+#         -f docker-compose.yml -f docker-compose.shared.yml config
+services:
+  postgres:
+    deploy:
+      replicas: 0
+
+  openmaic:
+    depends_on: []
+    networks:
+      - default
+      - render
+      - aibox-base
+    environment:
+      - DATABASE_URL=postgres://aibox:aibox@aibox-base-pg:5432/openmaic
+
+networks:
+  aibox-base:
+    external: true

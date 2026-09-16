@@ -966,7 +966,7 @@ render_compose() {
 ## Windmill 自托管 compose —— 由 `windmill init` 生成
 ##
 ## 相对上游 https://github.com/windmill-labs/windmill 的 docker-compose.yml，
-## 本文件有 7 处本地化改动。日后对照上游升级时请保留：
+## 本文件有 8 处本地化改动。日后对照上游升级时请保留：
 ##
 ##  1. 删除过时的 `version: "3.7"` 顶层字段（消除 compose 警告）
 ##  2. `pull_policy: always` -> `missing`
@@ -981,6 +981,11 @@ render_compose() {
 ##     80 端口不监听、整个 UI 不可访问。邮件触发器家用场景不需要。
 ##  6. db 的 POSTGRES_PASSWORD 改为 ${POSTGRES_PASSWORD}
 ##  7. worker/native 内存上限由 2048M 收紧（4 个执行容器 ×2G 超过物理内存 7.8G）
+##  8. 连共享 aibox base PG（不起本地独立 db）：
+##     db 改 `deploy.replicas: 0`；windmill_server/worker/worker_native/indexer
+##     去 depends_on、接入 external network `aibox-base`。
+##     前置：aibox base start + aibox base createdb windmill，
+##     .env DATABASE_URL=postgres://aibox:aibox@aibox-base-pg:5432/windmill。
 ##
 ## 另注：postgres:18 的挂载点必须是 /var/lib/postgresql（父目录），不可改回
 ##       pre-18 的 /var/lib/postgresql/data，否则会静默生成空集群。
@@ -1003,9 +1008,10 @@ services:
   ## https://www.windmill.dev/docs/advanced/self_host#upgrade-postgresql-to-18
   db:
     deploy:
-      # To use an external database, set replicas to 0 and set DATABASE_URL to the external database url in the .env file
-      # 连共享 aibox base PG：.env DB_REPLICAS=0 + DATABASE_URL=postgres://aibox:aibox@aibox-base-pg:5432/windmill
-      replicas: ${DB_REPLICAS:-1}
+      # 连共享 aibox base PG（不起本地独立 db）：
+      #   aibox base start + aibox base createdb windmill
+      #   .env DATABASE_URL=postgres://aibox:aibox@aibox-base-pg:5432/windmill
+      replicas: 0
     image: postgres:18
     shm_size: 1g
     restart: unless-stopped
@@ -1048,9 +1054,8 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - MODE=server
-    depends_on:
-      db:
-        condition: service_healthy
+    depends_on: []
+    networks: [default, aibox-base]
     volumes:
       - worker_logs:/tmp/windmill/logs
 
@@ -1077,9 +1082,8 @@ services:
       # If running with non-root/non-windmill UID (e.g., user: "1001:1001"),
       # add: - HOME=/tmp
       - FAVOR_UNSHARE_PID=true
-    depends_on:
-      db:
-        condition: service_healthy
+    depends_on: []
+    networks: [default, aibox-base]
     # to mount the worker folder to debug, KEEP_JOB_DIR=true and mount /tmp/windmill
     volumes:
       - worker_dependency_cache:/tmp/windmill/cache
@@ -1115,9 +1119,8 @@ services:
       - WORKER_GROUP=native
       - NATIVE_MODE=true
       - SLEEP_QUEUE=200
-    depends_on:
-      db:
-        condition: service_healthy
+    depends_on: []
+    networks: [default, aibox-base]
     volumes:
       - worker_logs:/tmp/windmill/logs
     logging: *default-logging
@@ -1135,9 +1138,8 @@ services:
       - PORT=8002
       - DATABASE_URL=${DATABASE_URL}
       - MODE=indexer
-    depends_on:
-      db:
-        condition: service_healthy
+    depends_on: []
+    networks: [default, aibox-base]
     volumes:
       - windmill_index:/tmp/windmill/search
       - worker_logs:/tmp/windmill/logs
@@ -1195,6 +1197,11 @@ volumes:
   windmill_index: null
   lsp_cache: null
   caddy_data: null
+
+networks:
+  default:
+  aibox-base:
+    external: true
 WMEOF
   chmod 0644 "$COMPOSE_FILE"
 }

@@ -64,6 +64,7 @@ CLI 运行时（也可写进 `/etc/openmaic/openmaic.conf`，环境变量优先�
 | `OPENMAIC_HEALTH_TIMEOUT` | `300` | 健康检查等待上限（秒） |
 | `OPENMAIC_BACKUP_KEEP` | `14` | 备份保留份数 |
 | `OPENMAIC_RENDER_ENABLED` | `1` | 是否启用视频渲染容器 profile |
+| `OPENMAIC_SHARED_PG` | `0` | 连共享 aibox base PG（`1` 启用：CLI 自动落 override + 建 openmaic 库；详见 docs/DEVELOPMENT.md） |
 | `OPENMAIC_BUILD_TIMEOUT_MAIN` | `3600` | 主镜像构建超时（秒） |
 | `OPENMAIC_BUILD_TIMEOUT_RENDER` | `2400` | 渲染镜像构建超时（秒） |
 
@@ -140,6 +141,7 @@ openmaic completion bash                # 补全脚本
 | `uninstall.sh` | 卸载（只删本体） |
 | `update.sh` | 更新（内容比对，幂等） |
 | `svc.sh` | 动作透传 |
+| `docker-compose.shared.yml` | 连共享 aibox base PG 的 compose override（参考副本；`OPENMAIC_SHARED_PG=1` 时 CLI 自动落到 `$APP_DIR`） |
 
 ## 平台
 
