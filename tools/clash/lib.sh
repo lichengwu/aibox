@@ -19,10 +19,17 @@ KERNEL_DEST="${CLASH_BIN_DIR}/${KERNEL_NAME}"
 CLASH_PORT="${CLASH_PORT:-7890}"
 CLASH_API_PORT="${CLASH_API_PORT:-9090}"
 
-log() { printf '\033[36m[clash]\033[0m %s\n' "${*}"; }
-warn() { printf '\033[33m[!]\033[0m %s\n' "${*}" >&2; }
+# ---------- output / colors (TTY + NO_COLOR aware; no leakage into pipes) ----------
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_RST=$'\033[0m'; C_CYA=$'\033[36m'; C_YEL=$'\033[33m'; C_RED=$'\033[31m'
+else
+  C_RST=''; C_CYA=''; C_YEL=''; C_RED=''
+fi
+
+log() { printf '%s[clash]%s %s\n' "$C_CYA" "$C_RST" "${*}"; }
+warn() { printf '%s[!]%s %s\n' "$C_YEL" "$C_RST" "${*}" >&2; }
 die() {
-  printf '\033[31m[x]\033[0m %s\n' "${*}" >&2
+  printf '%s[x]%s %s\n' "$C_RED" "$C_RST" "${*}" >&2
   exit 1
 }
 mask_url() { printf '%s' "${1:-}" | sed -E 's#(://[^:/@]+):[^@]*@#\1:***@#'; }

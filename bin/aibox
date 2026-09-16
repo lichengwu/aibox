@@ -51,12 +51,27 @@ esac
 # AIBOX_BIN_DIR is exported so modules install into the same dir as the main CLI.
 export AIBOX_HOME AIBOX_RAW AIBOX_BIN_DIR
 
-log()  { printf '\033[36m[aibox]\033[0m %s\n' "$*"; }
-warn() { printf '\033[33m[!]\033[0m %s\n' "$*"; }
-die()  { printf '\033[31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
-ok()   { printf '\033[32m[ok]\033[0m %s\n' "$*"; }
-bad()  { printf '\033[31m[!!]\033[0m %s\n' "$*"; }
-info() { printf '       %s\n' "$*"; }
+# ---------- output / colors ----------
+# Colors only on a TTY and when NO_COLOR is unset — no leakage into pipes/scripts,
+# and the probe TUI reuses the same scheme (single source of color truth).
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_RST=$'\033[0m'; C_DIM=$'\033[2m'; C_BOLD=$'\033[1m'
+  C_GRN=$'\033[32m'; C_YEL=$'\033[33m'; C_RED=$'\033[31m'; C_CYA=$'\033[36m'
+  C_CLR=$'\r\033[K'
+  TUI_TTY=1
+else
+  C_RST=''; C_DIM=''; C_BOLD=''; C_GRN=''; C_YEL=''; C_RED=''; C_CYA=''
+  C_CLR=''
+  TUI_TTY=0
+fi
+
+log()  { printf '%s[aibox]%s %s\n' "$C_CYA" "$C_RST" "$*"; }
+warn() { printf '%s[!]%s %s\n' "$C_YEL" "$C_RST" "$*" >&2; }
+die()  { printf '%s[x]%s %s\n' "$C_RED" "$C_RST" "$*" >&2; exit 1; }
+ok()   { printf '%s[ok]%s %s\n' "$C_GRN" "$C_RST" "$*"; }
+bad()  { printf '%s[!!]%s %s\n' "$C_RED" "$C_RST" "$*"; }
+# 8-space indent aligns continuation text under `log`'s message ([aibox] + space = 8 cols).
+info() { printf '        %s\n' "$*"; }
 
 # Parse a module.yaml subset (§2.2) from stdin into eval-able AIBOX_MODULE_<name>_* assignments.
 # BSD awk compatible (index/substr/sub, no capture groups; runs on bash 3.2's nawk).
@@ -620,18 +635,8 @@ dashscope|https://dashscope.aliyuncs.com|CN mirrors'
 AIBOX_PROBE_SITES="${AIBOX_PROBE_SITES:-$AIBOX_PROBE_SITES_DEFAULT}"
 PROBE_TIMEOUT="${AIBOX_PROBE_TIMEOUT:-8}"
 
-# Colors only on a TTY. Non-TTY (pipe / redirect to file) output has no control chars,
-# otherwise logs fill up with \033[K.
-if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
-  C_RST=$'\033[0m'; C_DIM=$'\033[2m'; C_BOLD=$'\033[1m'
-  C_GRN=$'\033[32m'; C_YEL=$'\033[33m'; C_RED=$'\033[31m'; C_CYA=$'\033[36m'
-  C_CLR=$'\r\033[K'
-  TUI_TTY=1
-else
-  C_RST=''; C_DIM=''; C_BOLD=''; C_GRN=''; C_YEL=''; C_RED=''; C_CYA=''
-  C_CLR=''
-  TUI_TTY=0
-fi
+# Colors and TUI_TTY are set up globally (see "output / colors" above); the probe reuses them.
+# --no-tui (in cmd_proxy_check) overrides TUI_TTY=0 to force a static dump.
 
 # Probe results, indexed to match the site list. P_DONE=1 means the result is in.
 P_LABEL=(); P_URL=(); P_GROUP=(); P_DONE=()
@@ -975,7 +980,7 @@ install_dep() {
 cmd_ports() {
   load_registry
   echo "Port assignments:"
-  printf '  %-14s %-18s %-12s %s\n' "Module" "Port/Proto" "Usage" "Status"
+  printf '  %-12s %-14s %-10s %s\n' "Module" "Port/Proto" "Usage" "Status"
   local m p port proto_usage proto usage status
   for m in ${AIBOX_MODULES:-}; do
     for p in $(module_field "$m" ports); do
@@ -988,7 +993,7 @@ cmd_ports() {
       else
         status="—"
       fi
-      printf '  %-14s %-18s %-12s %s\n' "$m" "${port}/${proto}" "$usage" "$status"
+      printf '  %-12s %-14s %-10s %s\n' "$m" "${port}/${proto}" "$usage" "$status"
     done
   done
 }
@@ -1122,19 +1127,20 @@ cmd_list() {
     name="${key#AIBOX_INSTALLED_}"
     name="${name//_/-}"
     val="${val%\"}"; val="${val#\"}"
-    printf '  %-16s %s\n' "$name" "$val"
+    printf '  %s✔%s %-14s %s\n' "$C_GRN" "$C_RST" "$name" "$val"
   done < "$AIBOX_INSTALLED"
 }
 
 cmd_list_available() {
   load_registry
   echo "Available modules (registry @ ${AIBOX_BRANCH}):"
-  local m desc ver inst
+  local m desc ver inst line
   for m in ${AIBOX_MODULES:-}; do
     desc="$(module_field "$m" description)"
     ver="$(module_field "$m" version)"
-    inst=""; is_installed "$m" && inst="[installed]"
-    printf '  %-16s %-8s %s %s\n' "$m" "$ver" "$desc" "$inst"
+    inst=""; is_installed "$m" && inst="  ${C_DIM}✔ installed${C_RST}"
+    line=$(printf '%-14s %-8s %s' "$m" "$ver" "$desc")
+    printf '  %s%s\n' "$line" "$inst"
   done
 }
 
@@ -1149,27 +1155,33 @@ cmd_dashboard() {
   fi
 }
 
+# Truncate a string to N visible columns, appending an ellipsis if it was cut.
+# Values come from dashboard_info()/module.yaml hints (ASCII), so byte-slicing is safe here.
+_trunc() { local s="$1" n="$2"; [ "${#s}" -gt "$n" ] && printf '%s…' "${s:0:$((n-1))}" || printf '%s' "$s"; }
+
 cmd_dashboard_overview() {
   load_registry
-  printf '  %-14s %-10s %-36s %s\n' "Module" "Status" "Endpoint" "Credentials"
-  echo "  ────────────────────────────────────────────────────────────────────"
-  local m info endpoint cred status
+  printf '  %-16s  %-26s  %s\n' "MODULE" "ENDPOINT" "CREDENTIALS"
+  echo "  ─────────────────────────────────────────────────────────────────"
+  local m info endpoint cred mark
   for m in ${AIBOX_MODULES:-}; do
     if is_installed "$m"; then
-      status="installed"
+      mark="${C_GRN}✔${C_RST}"
       info=""
-      if [ -f "$AIBOX_MOD_DIR/$m/lib.sh" ]; then
+      [ -f "$AIBOX_MOD_DIR/$m/lib.sh" ] && \
         info="$(AIBOX_MODULE="$m" AIBOX_HOME="$AIBOX_HOME" bash -c ". '$AIBOX_MOD_DIR/$m/lib.sh' 2>/dev/null && type dashboard_info >/dev/null 2>&1 && dashboard_info 2>/dev/null || true" 2>/dev/null)"
-      fi
       endpoint=$(printf '%s\n' "$info" | sed -n 's/^endpoint=//p')
       cred=$(printf '%s\n' "$info" | sed -n 's/^credential=//p')
     else
-      status="not installed"
-      endpoint="—"
-      cred=$(module_field "$m" dashboard_hint)
+      mark="${C_RED}✘${C_RST}"
+      endpoint="—"; cred="not installed"
     fi
-    printf '  %-14s %-10s %-36s %s\n' "$m" "$status" "${endpoint:-—}" "${cred:-—}"
+    endpoint=$(_trunc "${endpoint:-—}" 26)
+    cred=$(_trunc "${cred:-—}" 42)
+    printf '  %s %-14s  %-26s  %s\n' "$mark" "$m" "$endpoint" "$cred"
   done
+  echo
+  info "✔ installed  ✘ not installed  —  details + health: aibox <module> dashboard"
 }
 
 cmd_dashboard_detail() {
@@ -1179,7 +1191,6 @@ cmd_dashboard_detail() {
   echo "=== $name ==="
   if ! is_installed "$name"; then
     warn "$name not installed"
-    log "endpoint: —"
     log "credentials: $(module_field "$name" dashboard_hint)"
     log "install: aibox install $name"
     return

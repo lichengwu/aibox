@@ -9,10 +9,17 @@ CLI_SRC="${MODULE_DIR}/${CLI_NAME}"
 WINDMILL_BIN_DIR="${WINDMILL_BIN_DIR:-${AIBOX_BIN_DIR:-${HOME}/.local/bin}}"
 CLI_DEST="${WINDMILL_BIN_DIR}/${CLI_NAME}"
 
-log() { printf '\033[36m[windmill]\033[0m %s\n' "${*}"; }
-warn() { printf '\033[33m[!]\033[0m %s\n' "${*}" >&2; }
+# ---------- output / colors (TTY + NO_COLOR aware; no leakage into pipes) ----------
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_RST=$'\033[0m'; C_CYA=$'\033[36m'; C_YEL=$'\033[33m'; C_RED=$'\033[31m'
+else
+  C_RST=''; C_CYA=''; C_YEL=''; C_RED=''
+fi
+
+log() { printf '%s[windmill]%s %s\n' "$C_CYA" "$C_RST" "${*}"; }
+warn() { printf '%s[!]%s %s\n' "$C_YEL" "$C_RST" "${*}" >&2; }
 die() {
-  printf '\033[31m[x]\033[0m %s\n' "${*}" >&2
+  printf '%s[x]%s %s\n' "$C_RED" "$C_RST" "${*}" >&2
   exit 1
 }
 
