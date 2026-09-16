@@ -2,7 +2,7 @@
 
 > 状态：设计稿。本文档收录端口声明、Dashboard、共享基础组件、模块开发指南、module.yaml 声明规范等增强需求，作为后续实现的依据。
 >
-> **增量修订（2026-09-16）**：module.yaml 字段去冗余（files 隐式标准集 / actions 公共生命周期契约 / dashboard 瘦身）+ 公共组件依赖声明与连接信息传播（provider 模型 + `sync-deps` 生成）。详见 [`docs/module-yaml-refactor-design.md`](module-yaml-refactor-design.md)。§1 / §2.3 / §4 / §5 / 附录 B/C 已同步标注。
+> **增量修订（2026-09-16）**：module.yaml 字段去冗余（files 隐式标准集 / actions 公共生命周期契约 / dashboard 瘦身）+ 公共组件依赖声明与连接信息传播（provider 模型 + base.env + compose `--env-file` live 注入，无生成器）。详见 [`docs/module-yaml-refactor-design.md`](module-yaml-refactor-design.md)。§1 / §2.3 / §4 / §5 / 附录 B/C 已同步标注。
 >
 > 定位：aibox 是本地开发 + 单机部署运维的轻量模块管理器（纯 bash、零运行时依赖、兼容 macOS bash 3.2）。模块从当前 4 个增长到几十个时的终态设计。
 
@@ -99,12 +99,12 @@ dashboard:                        # 可选。仅作未装时的静态 fallback�
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
 | `files` | 否 | 仅列**额外**文件；标准 5 文件隐式（awk union，旧 yaml 列全仍兼容）。CI 校验列出项存在。 |
-| `actions` | 否 | 列全部动作。服务型模块 lifecycle 子集（start/stop/restart/status/logs）须满足《公共动作契约》；分布型（透传下发 CLI）可 `lifecycle: passthrough` 豁免。CLI 转发前校验声明 ∈ actions（提示不拦）。 |
-| `services` | 否 | 公共组件依赖，紧凑串 `provider:component[#dbname]`。component **全名**（`postgres`/`redis`，禁 `pg` 等简称）。多 DB：`base:postgres#windmill_jobs`。 |
+| `actions` | 否 | 列全部动作。**含 `start` 即服务型**，须满足 lifecycle 契约（start/stop/restart/status/logs）；不含 `start` 即分布型，不强制。CLI 在 `aibox <module>`（无动作）时列 actions 当 help，不做每次调用校验。 |
+| `services` | 否 | 公共组件依赖，紧凑串 `provider:component[#dbname]`。component **全名**（`postgres`/`redis`，禁 `pg`）。`postgres` 应给 `#dbname`，`redis` 通常省略。声明驱动：CI 校验、`install` 自动 `base createdb`、compose 调度自动 `--env-file base.env`。多 DB：`base:postgres#windmill_jobs`。 |
 | `provides` | 否 | 仅 provider 模块（如 base）填。声明对外提供的组件全名。消费模块 `services` 引用须命中 provider `provides`。 |
 | `dashboard` | 否 | 仅 `endpoints[]` + `hint`，作未装时静态 fallback；运行时走 `dashboard_info()`。 |
 
-**全名一致性**：component 名全程用全名 —— module.yaml `services`/`provides`、env 变量（`AIBOX_POSTGRES_*`）、compose service/container（`postgres:` / `aibox-base-postgres`）、`base_conn_info` 参数、port 用途标签（`35432/tcp:postgres`）。
+**全名一致性**：component 名全程用全名 —— module.yaml `services`/`provides`、env 变量（`AIBOX_POSTGRES_*`）、compose service/container（`postgres:` / `aibox-base-postgres`）、port 用途标签（`35432/tcp:postgres`）。
 
 ### 2.4 解析方案（方案 A：内置 awk，零依赖）
 
@@ -154,7 +154,7 @@ awk 解析器只支持 §2.2 子集；CI 保证 YAML 合规（见 §2.5）。
             # 2. YAML 子集合规：无锚点(&/*)、无多行(|/>)、无流式({}/[])
             # 3. ports 格式：端口/协议:用途
             # 4. files 列出项必须存在于 tools/<name>/
-            # 5. 服务型模块 actions 含 lifecycle 集 且 svc.sh 实现之（passthrough 豁免）
+            # 5. 含 start 的模块须含 lifecycle 集 且 svc.sh 实现之（不含 start 不强制）
             # 6. dashboard 只允许 endpoints + hint 两子字段
             # 7. services/provides component 名为全名（白名单 postgres/redis/...）
             yq -e '.name' "$f" >/dev/null || { echo "::error file=$f::缺 name"; fail=1; }
@@ -349,7 +349,7 @@ actions:
 **各部署型模块 compose 改造**：
 
 - 去掉自己的 PG/Redis service
-- 连共享实例（同 docker network + env 指向共享 PG `host:35432`）
+- 连共享实例（join `aibox-base` 网络 + env 经 `${AIBOX_POSTGRES_*}` 指向共享 PG，值由 `$AIBOX_HOME/base.env` 注入）
 - `init` 时在共享 PG 建自己的 DB：`<module>` 或 `<module>_<用途>`
 
 ### 5.4 DB 命名约定
@@ -360,15 +360,16 @@ actions:
 
 约定写进 module-spec。
 
-### 5.5 实现要点（provider 模型 + sync-deps 生成，详见 [design doc](module-yaml-refactor-design.md) §5–§6）
+### 5.5 实现要点（provider 模型 + base.env 注入，详见 [design doc](module-yaml-refactor-design.md) §5–§6）
 
-- `base` 作为 **provider**，单一信息源 = `tools/base/docker-compose.yml`（实例定义）+ `tools/base/lib.sh` 的 `base_conn_info <component>`（bash 可调，输出 `host/port/user/password`）。两者一致性由 CI deps-lint 守。
+- `base` 作为 **provider**，单一信息源 = `tools/base/lib.sh` 持连接常量 → `base start`/`restart` 写 `$AIBOX_HOME/base.env`（`AIBOX_POSTGRES_*` / `AIBOX_REDIS_*`，全名）。base.env 与 `base/docker-compose.yml` 默认值一致，CI deps-lint 守。
 - 消费模块 module.yaml `services: [base:postgres#<db>]` 声明依赖（全名）。
-- `aibox <module> sync-deps`（install/update 自动调）：读 `services` → 调 `base_conn_info` → 生成 `$APP_DIR/.env.aibox`（`AIBOX_POSTGRES_*` 等全名变量）+ `docker-compose.override.deps.yml`（join `aibox-base` 网络，env 指向 `${AIBOX_POSTGRES_*}`）。
-- 模块自己的 compose/`.env` **只引用 `${AIBOX_POSTGRES_*}`，绝不硬编码** `aibox:aibox@` / `aibox-base-postgres:5432`。改 base 一处 → 重跑 sync-deps → 多处自动重连。
-- `tools/base/lib.sh` 仍管共享 compose lifecycle（start/stop/status）+ DB 创建工具（`base createdb <module> [用途]`）；各模块 `init` 调 `base createdb <module>` 建库。
+- aibox 调度 compose 时，对声明 `services` 的模块自动追加 `--env-file "$AIBOX_HOME/base.env"`（compose v2.24+ 多 `--env-file` 合并）→ `${AIBOX_POSTGRES_*}` 在模块 compose 里可插值取到。
+- 模块**手写一份稳定**的 `docker-compose.shared.yml`（网络 join + `replicas:0` + `environment: DATABASE_URL=postgres://${AIBOX_POSTGRES_USER}:${AIBOX_POSTGRES_PASSWORD}@aibox-base-postgres:${AIBOX_POSTGRES_PORT}/${AIBOX_POSTGRES_DB}`），**零硬编码凭据**；模块 `.env` 写 `AIBOX_POSTGRES_DB=<module>`（库名是模块的）。
+- 改 base 凭据/端口 → `base restart` 重写 base.env → 各模块 `aibox <module> restart`（compose up）插值取新值自动重连。**无生成器、无额外文件、无 sync-deps 命令。**
+- `tools/base/lib.sh` 仍管共享 compose lifecycle（start/stop/status）+ DB 创建工具（`base createdb <module> [用途]`）；`aibox <module> install` 见 `services` → 确保 base 起 + `base createdb <module>` 建库。
 - 版本兼容：module.yaml 可声明 `deps` 含 `postgres:16`（base 管版本，模块声明兼容版本；**全名**）
-- 网络：共享 compose 建 docker network `aibox-base`，各模块经生成的 override join
+- 网络：共享 compose 建 docker network `aibox-base`，各模块手写 override join
 
 ### 5.6 分阶段（避免大爆炸）
 
@@ -380,7 +381,7 @@ actions:
 
 ### 5.7 降级
 
-某模块需要独占 PG 版本（不兼容共享 18）时，可回退独立实例（compose 自己起 PG）。module.yaml 不声明该 `services`，或标注 `deps: postgres:14@standalone`（全名），base 不接管。
+某模块需要独占 PG 版本（不兼容共享 18）时，可回退独立实例（compose 自己起 PG）。module.yaml **不**声明该 `services`（aibox 即不加 `--env-file`，模块自带 compose 起本地实例）；如需锁版本，用既有 `deps` 机制声明 `postgres:14`（全名），不引入 `@standalone` 语法。
 
 ### 5.8 依赖
 
@@ -576,7 +577,7 @@ dashboard:
 6. 跳过 `#` 注释、空行
 7. 输出 `eval`-able 赋值，主 CLI `eval "$(parse_yaml_module "$f" "$name")"`
 8. **files union（增量）**：解析后与标准 5 文件做 union 去重（标准集在前），向后兼容旧 yaml 列全
-9. **services/provides（增量）**：作为新列表字段照常解析（空格分隔标量），供 `sync-deps` 读取
+9. **services/provides（增量）**：作为新列表字段照常解析（空格分隔标量），供 CI 校验、`install` 判定 createdb、compose wrapper 判定是否加 `--env-file base.env`
 
 awk 只处理 §2.2 子集；CI（yq）保证 YAML 合规。
 
@@ -586,7 +587,7 @@ awk 只处理 §2.2 子集；CI（yq）保证 YAML 合规。
 
 - `module-lint`：yq 校验 module.yaml（必填字段 + 子集合规 + ports 格式 + files 项存在 + lifecycle 实现 + dashboard 仅两子字段 + component 全名白名单）
 - `port-conflict`：yq 收集所有 ports，检测 端口+协议 重复
-- `deps-lint`（新增）：①消费模块 `services` 的 provider/component 必须命中某 provider 的 `provides`；②禁止 `tools/*/docker-compose*.yml`（base 除外）硬编码 `aibox:aibox@` / `aibox-base-postgres:5432` 等字面量；③`base/lib.sh` 的 `base_conn_info` 默认值与 `base/docker-compose.yml` 端口/凭据一致
+- `deps-lint`（新增）：①消费模块 `services` 的 provider/component 必须命中某 provider 的 `provides`；②禁止 `tools/*/docker-compose*.yml`（base 除外）硬编码 `aibox:aibox@` / `postgres://aibox:` 等凭据字面量（service 名 `aibox-base-postgres` 作 host 允许）；③`base/lib.sh` 写 `base.env` 的常量与 `base/docker-compose.yml` 端口/默认凭据一致 + base.env 含全名 key
 
 现有 `bash -n` + `shellcheck` + `bash32-gotchas` 保留。
 
