@@ -16,9 +16,13 @@ restart)
   cmd_start
   ;;
 status) cmd_status ;;
+logs)
+  ensure_compose
+  compose logs -f
+  ;;
 createdb)
   [ $# -ge 1 ] || die "Usage: aibox base createdb <module> [usage]"
   cmd_createdb "$@"
   ;;
-*) die "Usage: aibox base {start|stop|restart|status|createdb <module> [usage]}" ;;
+*) die "Usage: aibox base {start|stop|restart|status|logs|createdb <module> [usage]}" ;;
 esac
