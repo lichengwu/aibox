@@ -50,6 +50,15 @@ upstream:                          # optional. dev-guide links (see §6 of modul
   docs: https://...
 services:                          # optional. shared-component deps (CI validates provider/component)
   - base:postgres#<your-db>
+checks:                            # REQUIRED. preflight contract (enforced by install/update; see below)
+  disk_gb: 5                       #   min free disk (GB) at $AIBOX_HOME's filesystem
+  domains:                         #   HOST-probed domains (git/npm/curl consumers); probed as https://<host>/
+    - github.com
+  docker_pull: hello-world         #   optional. DAEMON-routed pull probe (registry consumers; tiny image)
+  docker_images:                   #   optional. when ALL are cached locally, domain+pull probes are skipped
+    - postgres:18
+  commands:                        #   optional. binaries that must exist (cmd@platform supported; no auto-install)
+    - systemctl@linux
 ```
 
 See `docs/module-system-spec.md` §2.3 for the full field reference.
@@ -219,13 +228,83 @@ Irreversible ops (uninstalling a deploy, wiping data volumes, teardown) must be 
 - The main CLI's `ask_confirm` (`bin/aibox`) is the soft-choice, default-decline, non-interactive-returns-`1` variant. `aibox self uninstall` uses it for fail-closed behavior when `apps/` is non-empty.
 - **Never silently execute a dangerous op**: non-interactive + no `--yes` returns `2` instead of `0`, so scripts and CI can notice.
 
+## Preflight checks (mandatory for every module)
+
+Install/update is **gated** by a preflight check (`preflight_module` in `bin/aibox`). Every module —
+existing and future — MUST declare a `checks:` section in `module.yaml`; CI enforces both the
+section's presence and its field formats.
+
+### What gets checked (in order)
+
+| Check | Source | Semantics |
+|-------|--------|-----------|
+| deps | `deps:` field | strict: missing after an auto-install attempt → **FAIL** (the old warn-and-continue behavior is gone) |
+| commands | `checks.commands` | binary must exist (`cmd@platform` supported; no auto-install — these are OS facilities like `systemctl@linux` / `launchctl@darwin`) |
+| disk | `checks.disk_gb` | free space at `$AIBOX_HOME`'s filesystem ≥ N GB → else **FAIL** |
+| domains | `checks.domains` | each probed as `https://<host>/` via the **host's** curl/egress; any HTTP response (even 401/404) = reachable, connection failure = not. All must pass |
+| docker pull | `checks.docker_pull` | **daemon-routed** probe: `docker pull <tiny image>` proves the daemon's actual registry path (its mirrors/proxy differ from the host's). Skipped when docker is absent (deps reports that) |
+| docker images | `checks.docker_images` | when **all** refs exist locally, the domain AND pull probes are skipped (offline restart/install works) |
+| services | `services:` field | recursive: provider `base` must be installed (profile-scoped); if its stack isn't running, **base's own preflight** runs — passes → install proceeds (`ensure_services` auto-starts it); fails → **FAIL** |
+
+### Host vs daemon probe semantics (pick the right channel)
+
+`domains:` probes run through the **host's** curl with aibox's egress (and the route fallback
+below applies). The **docker daemon has its own egress** — Docker Desktop's VM network,
+`/etc/docker/daemon.json` `registry-mirrors`, daemon-level proxy settings — none of which aibox's
+proxy/clash configuration touches. Measured reality: a macOS host where `curl https://registry-1.docker.io/v2/`
+times out on every host route while `docker pull` succeeds in 8s. Therefore:
+
+- Registries consumed by **host tools** (npm/git/curl downloads) → declare in `domains:`.
+- Registries consumed by the **docker daemon** (image pulls/builds) → declare `docker_pull: <tiny image>`
+  (e.g. `hello-world`, 5.8KB) instead; on failure the hint points at daemon-side config, not `aibox proxy`.
+- Exception: `ghcr.io` stays a host-probed domain for windmill — no canonical tiny ghcr image exists
+  for a pull probe, and on typical Linux deploy hosts daemon and host share egress.
+
+### Network failure → automatic route fallback
+
+When domains are unreachable via the current egress, the engine tries the **configured**
+alternatives in order — `direct` (bypass proxies), `clash` (the clash pool's mixed port, if a
+clash state exists), `proxy` (the static `AIBOX_PROXY_URL`, even when disabled) — and **adopts the
+first route that makes ALL failed domains reachable**, for this run only. The warning tells you how
+to make it permanent (`aibox clash on` / `aibox proxy on` / `aibox proxy off`). Nothing is tried
+that isn't already configured; global config is never changed silently.
+
+### CLI surface
+
+```bash
+aibox check                    # environment: egress route, core domains (raw.githubusercontent/api.github), docker, disk
+aibox check <module>           # that module's full preflight (usable before installing)
+aibox install <module> [--skip-checks]
+aibox update  <module> [--skip-checks] [--all]
+AIBOX_SKIP_CHECKS=1 aibox install <module>   # script-friendly bypass
+AIBOX_CHECK_TIMEOUT=3 aibox check <module>   # per-probe timeout (default 8s)
+```
+
+`--skip-checks` bypasses the WHOLE preflight (deps included) — for air-gapped installs with
+pre-staged dependencies. A failed preflight aborts install/update **before** any hook runs.
+
+### Per-module check matrix (current modules)
+
+| module | disk_gb | domains (host-probed) | docker_pull (daemon-probed) | docker_images | commands | services |
+|--------|:---:|---------|---------|---------------|----------|----------|
+| base | 5 | — | hello-world | postgres:18, redis:7 (cached → skip probes) | — | — |
+| clash | 1 | api.github.com, github.com (mihomo release; `CLASH_MIRROR` overrides the download base) | — | — | — | — |
+| pi-web | 2 | registry.npmjs.org | — | — | launchctl@darwin, systemctl@linux | — |
+| openmaic | 20 | github.com | hello-world | — | — | base:postgres#openmaic |
+| windmill | 12 | ghcr.io (shared-PG mode pulls nothing from docker.io) | — | — | — | base:postgres#windmill, base:redis |
+
+Notes: the clash **subscription URL** is user-supplied and fetched by mihomo with its own UA —
+plain-curl probes return 403 by design, so it is deliberately not a checked domain. Disk floors
+match measured reality (windmill images ≈ 9.5G live; openmaic's render-service Chromium build is
+heavy) and windmill's own `doctor` contract (≥ 12G).
+
 ## Dependency declaration & auto-check
 
 Modules declare a `deps` field in `module.yaml` (command names, list); `aibox install` auto-checks and installs by platform if missing:
 
 - **Format**: `command` / `command@platform` (check on that platform only) / `command:version` (major-version constraint)
 - **Examples**: `docker@linux docker-compose git` (docker on Linux only), `node:22 npm` (node 22+), `python3`
-- **When**: `aibox install <module>` calls `check_deps`, before the install hook
+- **When**: `aibox install/update <module>` runs deps as part of the **preflight** (strict — missing after an auto-install attempt aborts the operation; see §Preflight checks). `--skip-checks` bypasses.
 - **Platform filter**: a `platform=darwin` module skips the check on non-darwin; `@platform`-tagged deps are skipped off-target (just a hint)
 - **Auto-install** (`install_dep`):
   - Lightweight / has a package manager → install (macOS brew / Linux apt/yum/dnf)

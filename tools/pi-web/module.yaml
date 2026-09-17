@@ -11,6 +11,17 @@ deps:
 ports:
   - 30141/tcp:http
 
+# Preflight (enforced by aibox install/update; see docs/module-spec.md).
+# pi-web is installed from the npm registry; the user-level service manager
+# (launchd on macOS, systemd --user on Linux) must exist for start/enable.
+checks:
+  disk_gb: 2
+  domains:
+    - registry.npmjs.org
+  commands:
+    - launchctl@darwin
+    - systemctl@linux
+
 hooks:
   install: install.sh
   uninstall: uninstall.sh

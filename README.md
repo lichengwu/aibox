@@ -31,14 +31,21 @@ AIBOX_VERIFY=1 curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main
 ## Commands
 
 ```
-aibox install <module>            install a module
+aibox install <module> [--skip-checks]   install a module (preflight-gated)
 aibox uninstall <module>          uninstall a module
-aibox update <module> [--restart|--no-restart] [--all] | --all   update modules; with --all also updates aibox itself
+aibox update <module> [--restart|--no-restart] [--skip-checks] [--all] | --all   update modules; with --all also updates aibox itself
+aibox check [module]              preflight: environment (no arg) or one module's readiness
 aibox list                        list installed modules
 aibox list-available              list available modules
 aibox ports                       show port assignments (declared + live)
 aibox dashboard [module]          overview table, or single-module detail + health
 aibox <module> <action> [args]    invoke a module action (e.g. aibox pi-web start)
+
+Every install/update is gated by a **preflight check** (domains reachable / disk / deps / base
+services ready — declared per module in `module.yaml` `checks:`; see `docs/module-spec.md`).
+On network failure it tries the configured alternatives (direct / clash pool / static proxy) and
+adopts a working route for that run. `aibox check [module]` runs it proactively;
+`--skip-checks` (or `AIBOX_SKIP_CHECKS=1`) bypasses it.
 aibox self update                 update aibox itself (idempotent re-bootstrap)
 aibox self uninstall [--yes]      uninstall aibox (needs --yes if apps/ has deploy instances)
 aibox self version | version | help

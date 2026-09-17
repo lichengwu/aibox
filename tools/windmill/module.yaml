@@ -19,6 +19,17 @@ services:
   - base:postgres#windmill
   - base:redis
 
+# Preflight (enforced by aibox install/update; see docs/module-spec.md).
+# All windmill/caddy images come from ghcr.io — host-probed here (no canonical
+# tiny ghcr image exists for a daemon-routed pull probe; on typical Linux
+# deploy hosts daemon and host share egress). The disk floor matches the CLI's
+# own doctor contract (>=12G; live images alone measured ~9.5G). Shared-PG mode
+# needs no docker.io pull — base provides postgres (db replicas are 0).
+checks:
+  disk_gb: 12
+  domains:
+    - ghcr.io
+
 hooks:
   install: install.sh
   uninstall: uninstall.sh

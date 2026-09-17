@@ -19,6 +19,17 @@ files:
 services:
   - base:postgres#openmaic
 
+# Preflight (enforced by aibox install/update; see docs/module-spec.md).
+# github.com (host git/curl) = source clone/fetch (THU-MAIC/OpenMAIC). Compose
+# base images are pulled by the docker DAEMON (own egress: mirrors/proxy) →
+# probed daemon-routed via hello-world, not host curl. Disk: source tree +
+# docker build (the render-service Chromium layer is heavy) + pg_data growth.
+checks:
+  disk_gb: 20
+  domains:
+    - github.com
+  docker_pull: hello-world
+
 hooks:
   install: install.sh
   uninstall: uninstall.sh

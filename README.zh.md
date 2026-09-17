@@ -33,9 +33,10 @@ AIBOX_VERIFY=1 curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main
 ## 命令一览
 
 ```text
-aibox install <module>           安装模块
+aibox install <module> [--skip-checks]   安装模块（前置检查把关；--skip-checks 跳过）
 aibox uninstall <module>         卸载模块
-aibox update <module> [--restart|--no-restart] [--all] | --all   更新模块；带 --all 则一并更新 aibox 自身
+aibox update <module> [--restart|--no-restart] [--skip-checks] [--all] | --all   更新模块；带 --all 则一并更新 aibox 自身
+aibox check [module]             前置检查：不带参数查环境（出口/核心域名/docker/磁盘），带模块名查该模块安装就绪度
 aibox list                       已安装模块
 aibox list-available             可用模块
 aibox ports                      端口分配表（声明 + 实际监听）
@@ -44,6 +45,10 @@ aibox <module> <action> [args]   调用模块动作（如 aibox pi-web start）
 aibox self update                 更新 aibox 主程序（幂等重装）
 aibox self uninstall [--yes]      卸载 aibox（apps/ 下有部署实例时需 --yes）
 aibox self version | version | help
+
+安装/更新前会强制跑 preflight（各模块 module.yaml 的 checks: 声明：磁盘/域名可达/命令/base 服务就绪）；
+域名不通时会自动在已配置的路由（直连/clash/静态代理）里试出一个可达的并本次采用。
+详见 docs/module-spec.md 的 Preflight checks 一节。
 
 aibox proxy                       查看代理配置与状态
 aibox proxy set <url> [--no-test|--no-check]

@@ -8,6 +8,17 @@ ports:
   - 7890/tcp:mixed
   - 9090/tcp:api
 
+# Preflight (enforced by aibox install/update; see docs/module-spec.md).
+# The mihomo binary comes from GitHub releases (CLASH_MIRROR env overrides the
+# download base when GitHub is blocked). The subscription URL itself is
+# user-supplied and fetched by mihomo with its own UA — plain-curl probes of it
+# return 403 by design, so it is deliberately NOT a checked domain.
+checks:
+  disk_gb: 1
+  domains:
+    - api.github.com
+    - github.com
+
 hooks:
   install: install.sh
   uninstall: uninstall.sh

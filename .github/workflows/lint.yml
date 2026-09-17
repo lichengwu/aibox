@@ -80,7 +80,7 @@ jobs:
         run: |
           sudo wget -qO/usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
-      - name: validate module.yaml (required + §2.2 subset + ports + files + lifecycle + dashboard + full names)
+      - name: validate module.yaml (required + §2.2 subset + ports + files + lifecycle + dashboard + full names + checks)
         run: |
           set -e
           fail=0
@@ -121,6 +121,24 @@ jobs:
                      $(yq -o=ts '.provides[]' "$f" 2>/dev/null || true); do
               case "$c" in postgres|redis) ;; *) echo "::error file=$f::component must be a full-name whitelist entry (postgres|redis); got: $c"; fail=1;; esac
             done
+            # checks: preflight contract (docs/module-spec.md) — MANDATORY for every module;
+            # install/update hard-fail on these unless --skip-checks.
+            yq -e '.checks' "$f" >/dev/null 2>&1 || { echo "::error file=$f::missing checks: section (mandatory preflight contract — docs/module-spec.md)"; fail=1; }
+            if yq -e '.checks.disk_gb' "$f" >/dev/null 2>&1; then
+              yq '.checks.disk_gb' "$f" | grep -qE '^[0-9]+$' || { echo "::error file=$f::checks.disk_gb must be an integer (GB)"; fail=1; }
+            fi
+            for dm in $(yq -o=ts '.checks.domains[]' "$f" 2>/dev/null || true); do
+              echo "$dm" | grep -qE '^[A-Za-z0-9._:-]+(/.*)?$' || { echo "::error file=$f::checks.domains entry malformed: $dm"; fail=1; }
+            done
+            for cm in $(yq -o=ts '.checks.commands[]' "$f" 2>/dev/null || true); do
+              echo "$cm" | grep -qE '^[a-z0-9_.+-]+(@[a-z]+)?$' || { echo "::error file=$f::checks.commands entry malformed: $cm"; fail=1; }
+            done
+            for im in $(yq -o=ts '.checks.docker_images[]' "$f" 2>/dev/null || true); do
+              echo "$im" | grep -qE '^[A-Za-z0-9._/-]+(:[A-Za-z0-9._-]+)?$' || { echo "::error file=$f::checks.docker_images entry malformed: $im"; fail=1; }
+            done
+            if yq -e '.checks.docker_pull' "$f" >/dev/null 2>&1; then
+              yq '.checks.docker_pull' "$f" | grep -qE '^[A-Za-z0-9._/-]+(:[A-Za-z0-9._-]+)?$' || { echo "::error file=$f::checks.docker_pull must be an image reference"; fail=1; }
+            fi
             echo "  ok: $f"
           done
           exit $fail

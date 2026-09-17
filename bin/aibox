@@ -912,22 +912,85 @@ cmd_proxy_check() {
   return 0
 }
 
-# ---------- dependency check + auto-install ----------
-# Read a module's deps field (format: command name, optional @platform or :version), check, install by platform.
-# deps examples: "docker@linux docker-compose python3" "node:22 npm" ""
-# @platform: only checked on that platform (docker@linux = check on Linux only)
-# :version: version constraint (node:22 = major version >= 22)
-check_deps() {
-  local name="$1" deps plat dep cmd ptag ver
-  load_registry
+# ---------- preflight checks (MANDATORY contract for every module; docs/module-spec.md) ----------
+# Every module declares its checks in module.yaml:
+#   checks:
+#     disk_gb: N            minimum free disk (GB) at $AIBOX_HOME's filesystem
+#     domains: [host...]    domains that must be reachable (probed as https://<host>/)
+#     docker_images: [ref]  when ALL are present locally, domain probes are skipped (offline)
+#     commands: [cmd@plat]  binaries that must exist (OS facilities; no auto-install)
+# install/update ENFORCE these (hard fail). --skip-checks / AIBOX_SKIP_CHECKS=1 bypasses.
+# On network failure the engine tries the CONFIGURED alternative routes (direct / clash pool /
+# static proxy) and adopts the first route that makes ALL failed domains reachable — for this
+# run only; the warning tells you how to make it permanent.
+# services: dependencies (base:postgres#db) are checked recursively: base must be installed;
+# if its stack isn't running, base's own preflight decides whether install can proceed
+# (ensure_services auto-starts it) or must fail.
+
+_preflight_url() { case "$1" in http://*|https://*|file://*) printf '%s' "$1" ;; *) printf 'https://%s/' "$1" ;; esac; }
+
+# Probe one URL via a named route. Any HTTP response (even 401/404) = reachable;
+# only connection-level failure (000/empty) = unreachable (same philosophy as proxy check).
+_preflight_probe_route() {
+  local route="$1" url t code=""
+  url="$(_preflight_url "$2")"
+  t="${AIBOX_CHECK_TIMEOUT:-8}"
+  case "$route" in
+    current) code="$(curl -s -o /dev/null --max-time "$t" -w '%{http_code}' "$url" 2>/dev/null)" ;;
+    direct)  code="$(curl -s --noproxy '*' -o /dev/null --max-time "$t" -w '%{http_code}' "$url" 2>/dev/null)" ;;
+    clash)
+      local st="${AIBOX_HOME}/apps/clash/state" p
+      [ -f "$st" ] || return 1
+      # shellcheck source=/dev/null
+      p="$( . "$st" 2>/dev/null; printf '%s' "${CLASH_PORT:-7890}" )"
+      code="$(curl -s -x "socks5://127.0.0.1:${p}" -o /dev/null --max-time "$t" -w '%{http_code}' "$url" 2>/dev/null)" ;;
+    proxy)
+      [ -n "${AIBOX_PROXY_URL:-}" ] || return 1
+      code="$(curl -s -x "$AIBOX_PROXY_URL" -o /dev/null --max-time "$t" -w '%{http_code}' "$url" 2>/dev/null)" ;;
+    *) return 1 ;;
+  esac
+  [ -n "$code" ] && [ "$code" != "000" ]
+}
+
+# Switch THIS process's egress to a route (run-scoped; hint says how to persist).
+_preflight_adopt() {
+  local route="$1" st p eff
+  case "$route" in
+    direct)
+      unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
+      export no_proxy="*" NO_PROXY="*"
+      warn "  → adopting DIRECT connection for this run (current route failed). Persist: aibox proxy off / aibox clash off" ;;
+    clash)
+      st="${AIBOX_HOME}/apps/clash/state"; p=7890
+      # shellcheck source=/dev/null
+      [ -f "$st" ] && p="$( . "$st" 2>/dev/null; printf '%s' "${CLASH_PORT:-7890}" )"
+      eff="socks5://127.0.0.1:${p}"
+      export http_proxy="$eff" https_proxy="$eff" all_proxy="$eff" HTTP_PROXY="$eff" HTTPS_PROXY="$eff"
+      warn "  → adopting clash pool (${eff}) for this run. Persist: aibox clash on" ;;
+    proxy)
+      export http_proxy="$AIBOX_PROXY_URL" https_proxy="$AIBOX_PROXY_URL" all_proxy="$AIBOX_PROXY_URL" \
+             HTTP_PROXY="$AIBOX_PROXY_URL" HTTPS_PROXY="$AIBOX_PROXY_URL"
+      warn "  → adopting static proxy $(mask_url "$AIBOX_PROXY_URL") for this run. Persist: aibox proxy on" ;;
+  esac
+  AIBOX_PROXY_SOURCE="preflight-${route}"
+}
+
+# Free disk (integer GB) at a path (walks up to the nearest existing ancestor).
+_disk_free_gb() {
+  local d="$1" kb
+  while [ ! -d "$d" ] && [ "$d" != "/" ]; do d="$(dirname "$d")"; done
+  kb="$(df -k "$d" 2>/dev/null | awk 'NR==2{print $4}')"
+  printf '%s' "$(( ${kb:-0} / 1048576 ))"
+}
+
+# deps, strict: missing after an auto-install attempt → FAIL (old check_deps only warned).
+_preflight_deps() {
+  local name="$1" deps plat dep cmd ptag ver fail=0 os
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
   plat="$(module_field "$name" platform)"
-  # Platform filter: non-empty platform that doesn't match -> skip (pi-web skips node check on Linux)
-  if [ -n "$plat" ] && [ "$plat" != "$(uname -s | tr '[:upper:]' '[:lower:]')" ]; then
-    return 0
-  fi
+  if [ -n "$plat" ] && [ "$plat" != "$os" ]; then return 0; fi
   deps="$(module_field "$name" deps)"
   [ -n "$deps" ] || return 0
-  log "Checking deps: ${deps}"
   for dep in $deps; do
     cmd="$dep"; ptag=""; ver=""
     case "$dep" in
@@ -936,20 +999,236 @@ check_deps() {
     case "$cmd" in
       *:*) ver="${cmd#*:}"; cmd="${cmd%%:*}" ;;
     esac
-    # @platform filter
-    if [ -n "$ptag" ] && [ "$ptag" != "$(uname -s | tr '[:upper:]' '[:lower:]')" ]; then
-      info "  ${cmd}@${ptag} (current $(uname -s) skips; required on ${ptag})"
+    if [ -n "$ptag" ] && [ "$ptag" != "$os" ]; then
+      info "  - ${cmd}@${ptag} (skipped on $(uname -s))"
       continue
     fi
     if dep_satisfied "$cmd" "$ver"; then
-      ok "  ${cmd} ok"
+      info "  ✔ ${cmd}${ver:+ (>=${ver})}"
     else
-      bad "  ${cmd} missing"
-      install_dep "$cmd" || warn "  ${cmd} auto-install failed; install manually and retry"
+      warn "  ! ${cmd} missing — attempting auto-install..."
+      install_dep "$cmd" || true
+      if dep_satisfied "$cmd" "$ver"; then
+        info "  ✔ ${cmd} (auto-installed)"
+      else
+        bad "  ✘ ${cmd} missing (required by ${name})"
+        fail=1
+      fi
     fi
   done
+  return $fail
 }
 
+# checks.commands — must exist; no auto-install (OS facilities like systemctl/launchctl).
+_preflight_commands() {
+  local name="$1" cmds c cmd ptag os fail=0
+  cmds="$(module_field "$name" checks_commands)"
+  [ -n "$cmds" ] || return 0
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  for c in $cmds; do
+    cmd="$c"; ptag=""
+    case "$c" in *@*) cmd="${c%@*}"; ptag="${c#*@}" ;; esac
+    if [ -n "$ptag" ] && [ "$ptag" != "$os" ]; then continue; fi
+    if command -v "$cmd" >/dev/null 2>&1; then
+      info "  ✔ $cmd"
+    else
+      bad "  ✘ $cmd not found (required by ${name})"
+      fail=1
+    fi
+  done
+  return $fail
+}
+
+# checks.disk_gb — free space at $AIBOX_HOME's filesystem.
+_preflight_disk() {
+  local name="$1" req free
+  req="$(module_field "$name" checks_disk_gb)"
+  [ -n "$req" ] || return 0
+  free="$(_disk_free_gb "$AIBOX_HOME")"
+  if [ "$free" -lt "$req" ]; then
+    bad "  ✘ disk: ${free}G free at ${AIBOX_HOME}, ${name} requires ${req}G"
+    return 1
+  fi
+  info "  ✔ disk: ${free}G free (requires ${req}G)"
+}
+
+# Shared short-circuit: all checks.docker_images present locally?
+_preflight_images_cached() {
+  local name="$1" imgs i
+  imgs="$(module_field "$name" checks_docker_images)"
+  [ -n "$imgs" ] || return 1
+  command -v docker >/dev/null 2>&1 || return 1
+  for i in $imgs; do docker image inspect "$i" >/dev/null 2>&1 || return 1; done
+  return 0
+}
+
+# checks.domains — HOST-curl semantics (for git/npm/curl consumers), with the
+# docker_images cache short-circuit + configured-route fallback/adoption.
+# NOTE: do NOT declare registry domains whose consumer is the docker daemon —
+# host egress diverges from daemon egress (Docker Desktop VM, daemon.json
+# mirrors, daemon proxy). Use checks.docker_pull for those.
+_preflight_domains() {
+  local name="$1" doms d failed="" route still
+  doms="$(module_field "$name" checks_domains)"
+  [ -n "$doms" ] || return 0
+  if _preflight_images_cached "$name"; then
+    info "  ✔ docker images cached — skipping domain probes"
+    return 0
+  fi
+  for d in $doms; do
+    if _preflight_probe_route current "$d"; then
+      info "  ✔ ${d} reachable"
+    else
+      failed="${failed} ${d}"
+    fi
+  done
+  [ -z "$failed" ] && return 0
+  warn "  ! unreachable via current route:${failed} — trying configured alternatives (direct/clash/static proxy)..."
+  for route in direct clash proxy; do
+    still=""
+    for d in $failed; do
+      _preflight_probe_route "$route" "$d" || still="${still} ${d}"
+    done
+    if [ -z "$still" ]; then
+      _preflight_adopt "$route"
+      info "  ✔ all domains reachable via ${route}"
+      return 0
+    fi
+  done
+  bad "  ✘ unreachable domains:${failed}"
+  info "    fix: aibox proxy set <url>  /  aibox clash set <sub> + aibox clash on  /  check network"
+  return 1
+}
+
+# checks.docker_pull — DAEMON-routed registry probe (tiny image, e.g. hello-world).
+# Proves the docker daemon's actual pull path works (its proxy/mirrors differ
+# from the host's — aibox proxy/clash settings do NOT apply to the daemon).
+_preflight_docker_pull() {
+  local name="$1" img
+  img="$(module_field "$name" checks_docker_pull)"
+  [ -n "$img" ] || return 0
+  command -v docker >/dev/null 2>&1 || return 0   # absence is reported by deps
+  if _preflight_images_cached "$name"; then
+    info "  ✔ docker images cached — skipping pull probe"
+    return 0
+  fi
+  log "  probing daemon registry path (docker pull ${img}) ..."
+  if docker pull -q "$img" >/dev/null 2>&1; then
+    info "  ✔ docker daemon can pull images (${img})"
+    return 0
+  fi
+  bad "  ✘ docker daemon cannot pull ${img}"
+  info "    daemon egress ≠ host egress: configure /etc/docker/daemon.json registry-mirrors (Linux)"
+  info "    or Docker Desktop → Settings → Resources → Proxies. aibox proxy/clash settings do NOT affect the daemon."
+  return 1
+}
+
+# services: base:<component>#<res> → base installed + running (or recoverable).
+_preflight_services() {
+  local name="$1" svcs svc component suffix cname prof fail=0 checked_ok="" checked_bad=""
+  svcs="$(module_field "$name" services)"
+  [ -n "$svcs" ] || return 0
+  prof="${AIBOX_PROFILE:-base}"; suffix=""
+  [ "$prof" != "base" ] && suffix="-${prof}"
+  for svc in $svcs; do
+    case "$svc" in base:*) ;; *) continue ;; esac
+    component="${svc#base:}"; component="${component%%#*}"
+    if ! is_installed base; then
+      bad "  ✘ service dep base not installed (fix: aibox${suffix:+ --profile ${prof}} install base)"
+      fail=1
+      continue
+    fi
+    cname="aibox-base${suffix}-${component}"
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$cname"; then
+      info "  ✔ base:${component} ready (${cname})"
+      continue
+    fi
+    # Not running — recoverable? Check base's own preflight (once per run).
+    case " ${checked_ok} " in *" base "*) info "  ✔ base:${component} startable (base verified above)"; continue ;; esac
+    case " ${checked_bad} " in *" base "*) bad "  ✘ base:${component} not ready (base preflight failed above)"; fail=1; continue ;; esac
+    warn "  ! base:${component} not running (${cname}) — checking base's own requirements..."
+    if preflight_module base; then
+      checked_ok="${checked_ok} base"
+      info "  ✔ base is startable — install will bring it up (ensure_services)"
+    else
+      checked_bad="${checked_bad} base"
+      bad "  ✘ base:${component} not ready and base's own preflight failed"
+      fail=1
+    fi
+  done
+  return $fail
+}
+
+# Full preflight for one module — the install/update gate.
+preflight_module() {
+  local name="$1" fail=0
+  if [ "${PREFLIGHT_SKIP:-0}" = "1" ]; then
+    warn "Preflight skipped for ${name} (--skip-checks)"
+    return 0
+  fi
+  log "Preflight: ${name}"
+  _preflight_deps       "$name" || fail=1
+  _preflight_commands   "$name" || fail=1
+  _preflight_disk       "$name" || fail=1
+  _preflight_domains    "$name" || fail=1
+  _preflight_docker_pull "$name" || fail=1
+  _preflight_services   "$name" || fail=1
+  if [ "$fail" != "0" ]; then
+    bad "Preflight FAILED: ${name} — fix the issues above, or re-run with --skip-checks to bypass"
+    return 1
+  fi
+  ok "Preflight passed: ${name}"
+}
+
+# `aibox check` — environment check; `aibox check <module>` — that module's preflight.
+cmd_check() {
+  local target="${1:-}"
+  if [ -n "$target" ]; then
+    load_registry
+    module_exists "$target" || die "Unknown module: $target"
+    preflight_module "$target"
+    return $?
+  fi
+  log "aibox environment check"
+  case "${AIBOX_PROXY_SOURCE:-}" in
+    clash)    info "egress: clash pool (socks5://127.0.0.1:${CLASH_PORT:-7890})" ;;
+    config)   info "egress: static proxy $(mask_url "${AIBOX_PROXY_URL:-}")" ;;
+    env)      info "egress: environment proxy $(mask_url "${AIBOX_PROXY_URL:-}")" ;;
+    disabled) info "egress: direct (proxy configured but disabled)" ;;
+    *)        info "egress: direct" ;;
+  esac
+  local core="raw.githubusercontent.com api.github.com" d failed="" route still
+  for d in $core; do
+    if _preflight_probe_route current "$d"; then
+      info "  ✔ ${d}"
+    else
+      failed="${failed} ${d}"
+    fi
+  done
+  if [ -n "$failed" ]; then
+    warn "  ! unreachable via current route:${failed} — trying configured alternatives..."
+    for route in direct clash proxy; do
+      still=""
+      for d in $failed; do _preflight_probe_route "$route" "$d" || still="${still} ${d}"; done
+      if [ -z "$still" ]; then _preflight_adopt "$route"; failed=""; break; fi
+    done
+    [ -n "$failed" ] && bad "  ✘ core domains unreachable:${failed}"
+  fi
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    ok "docker daemon reachable"
+  else
+    warn "docker not available (needed by base/openmaic/windmill)"
+  fi
+  info "disk free at AIBOX_HOME: $(_disk_free_gb "$AIBOX_HOME")G"
+  info "module preflight: aibox check <module>"
+  [ -z "$failed" ]
+}
+
+# ---------- dependency check + auto-install ----------
+# deps field format: command name, optional @platform or :version.
+# deps examples: "docker@linux docker-compose python3" "node:22 npm" ""
+# @platform: only checked on that platform (docker@linux = check on Linux only)
+# :version: version constraint (node:22 = major version >= 22)
 # Check whether a dependency command is satisfied (incl. version constraint).
 dep_satisfied() {
   local cmd="$1" ver="${2:-}" cur
@@ -1045,15 +1324,21 @@ check_ports() {
 }
 
 cmd_install() {
-  local name="${1:-}"
-  [ -n "$name" ] || die "Usage: aibox install <module>"
+  local name="" a
+  for a in "$@"; do
+    case "$a" in
+      --skip-checks) PREFLIGHT_SKIP=1 ;;
+      *) [ -z "$name" ] && name="$a" ;;
+    esac
+  done
+  [ -n "$name" ] || die "Usage: aibox install <module> [--skip-checks]"
   download_module "$name"
   local dest="$AIBOX_LAST_DEST"
   local plat; plat="$(module_field "$name" platform)"
   if [ -n "$plat" ] && [ "$plat" != "$(uname -s | tr '[:upper:]' '[:lower:]')" ]; then
     warn "Module $name targets platform ${plat}, current is $(uname -s) (may error)"
   fi
-  check_deps "$name"
+  preflight_module "$name" || die "Install aborted by preflight (fix the issues above, or re-run with --skip-checks)"
   check_ports "$name"
   local inst; inst="$(module_field "$name" install)"
   log "Installing $name ..."
@@ -1121,6 +1406,7 @@ cmd_update() {
     case "$a" in
       --all)                  self_flag=1 ;;
       --restart|--no-restart) restart_arg="$a" ;;
+      --skip-checks)          PREFLIGHT_SKIP=1 ;;
       *)                      [ -z "$name" ] && name="$a" ;;
     esac
   done
@@ -1129,6 +1415,7 @@ cmd_update() {
     is_installed "${name}" || die "${name} not installed"
     log "Updating ${name} (re-fetching module scripts)..."
     download_module "${name}"
+    preflight_module "${name}" || die "Update aborted by preflight (fix the issues above, or re-run with --skip-checks)"
     local dest="$AIBOX_LAST_DEST" upd
     upd="$(module_field "${name}" update)"
     if [ -n "$upd" ] && [ -f "$dest/$upd" ]; then
@@ -1370,9 +1657,10 @@ aibox $AIBOX_VERSION — a lightweight, zero-dependency module manager for AI co
 Repo: https://github.com/lichengwu/aibox
 
 Usage:
-  aibox install <module>            install a module
+  aibox install <module> [--skip-checks]   install a module (preflight-gated)
   aibox uninstall <module>          uninstall a module
-  aibox update <module> [--restart|--no-restart] [--all] | --all   update modules; with --all also updates aibox itself
+  aibox update <module> [--restart|--no-restart] [--skip-checks] [--all] | --all   update modules; with --all also updates aibox itself
+  aibox check [module]              preflight: environment (no arg) or one module's readiness
   aibox list                        list installed modules
   aibox list-available             list available modules
   aibox ports                       show port assignments (declared + live)
@@ -1426,6 +1714,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   BYPASS_PROXY=0
   ASSUME_YES=0
   AIBOX_PROFILE="${AIBOX_PROFILE:-base}"
+  PREFLIGHT_SKIP="${AIBOX_SKIP_CHECKS:-0}"
   while [ $# -gt 0 ]; do
     case "$1" in
       --no-proxy) BYPASS_PROXY=1; shift ;;
@@ -1454,6 +1743,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     list)             cmd_list ;;
     list-available|available|search)
                       cmd_list_available ;;
+    check)            shift; cmd_check "$@" ;;
     ports)            cmd_ports ;;
     dashboard)        shift; cmd_dashboard "$@" ;;
     proxy)            shift; cmd_proxy "$@" ;;
