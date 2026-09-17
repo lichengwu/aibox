@@ -138,7 +138,13 @@ wm_deploy_root() {
 
 # Dashboard interface (called by aibox dashboard): outputs endpoint/credential/health
 dashboard_info() {
-  echo "endpoint=http://127.0.0.1:8080"
+  local port="8080" envf p
+  envf="$(wm_deploy_root)/.env"
+  if [ -f "$envf" ]; then
+    p="$(grep -E '^HTTP_PORT=' "$envf" 2>/dev/null | cut -d= -f2- | tr -d '"' || true)"
+    [ -n "$p" ] && port="$p"
+  fi
+  echo "endpoint=http://127.0.0.1:${port}"
   echo "credential=CREDENTIALS.txt + .env (POSTGRES_PASSWORD)"
-  echo "health=curl -s http://127.0.0.1:8080"
+  echo "health=curl -s http://127.0.0.1:${port}"
 }
