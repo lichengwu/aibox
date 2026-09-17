@@ -94,16 +94,17 @@ download_mihomo() {
   # Resumable retry loop: throttled release CDNs (measured: ~21KB/s on Aliyun
   # direct) cannot finish inside a single --max-time window; continue the
   # partial download across attempts instead of restarting from zero.
-  attempt=0; tries="${CLASH_DOWNLOAD_ATTEMPTS:-8}"
+  attempt=0
+  tries="${CLASH_DOWNLOAD_ATTEMPTS:-8}"
   until { [ -f "$tmp" ] && gunzip -t "$tmp" 2>/dev/null; } ||
-        curl -fsSL -C - --max-time "${CLASH_DOWNLOAD_TIMEOUT:-120}" "$url" -o "$tmp"; do
-    attempt=$((attempt+1))
+    curl -fsSL -C - --max-time "${CLASH_DOWNLOAD_TIMEOUT:-120}" "$url" -o "$tmp"; do
+    attempt=$((attempt + 1))
     if [ "$attempt" -ge "$tries" ]; then
-      die "Download failed after $((attempt+1)) attempts ($(du -h "$tmp" 2>/dev/null | cut -f1) downloaded so far): ${url}
+      die "Download failed after $((attempt + 1)) attempts ($(du -h "$tmp" 2>/dev/null | cut -f1) downloaded so far): ${url}
   Hint: GitHub release mirror →  CLASH_MIRROR=https://gh-proxy.com aibox install clash
         or an HTTP proxy      →  aibox proxy set <url>"
     fi
-    warn "  attempt $((attempt+1)) interrupted — resuming partial download ($((tries-attempt)) retries left)..."
+    warn "  attempt $((attempt + 1)) interrupted — resuming partial download ($((tries - attempt)) retries left)..."
   done
   gunzip -f "$tmp" || die "Decompress failed (mihomo .gz)"
   mv -f "${tmp%.gz}" "$KERNEL_DEST"
