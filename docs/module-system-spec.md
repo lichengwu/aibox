@@ -343,7 +343,7 @@ actions:
   - stop
   - restart
   - status
-  - createdb
+  - create
 ```
 
 **Refactor each deployment-type module's compose**:
@@ -577,7 +577,7 @@ dashboard:
 6. Skip `#` comments and blank lines
 7. Output `eval`-able assignments; the main CLI runs `eval "$(parse_yaml_module "$f" "$name")"`
 8. **files union (incremental)**: after parsing, union with the standard 5 files and dedupe (standard set first), backward-compatible with old yaml listing all
-9. **services/provides (incremental)**: parsed as new list fields as usual (space-separated scalars), for CI validation, `install` to decide createdb, and the compose wrapper to decide whether to add `--env-file base.env`
+9. **services/provides (incremental)**: parsed as new list fields as usual (space-separated scalars), for CI validation, `install` to decide `create, and the compose wrapper to decide whether to add `--env-file base.env`
 
 awk only handles the §2.2 subset; CI (yq) guarantees YAML compliance.
 
