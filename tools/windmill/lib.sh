@@ -2,7 +2,7 @@
 
 CLI_NAME="windmill"
 MODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLI_SRC="${MODULE_DIR}/${CLI_NAME}"
+CLI_SRC="${MODULE_DIR}/cli/${CLI_NAME}"
 
 # Install destination. Prefer WINDMILL_BIN_DIR (deploy hosts often need /usr/local/bin),
 # then AIBOX_BIN_DIR (must be exported to be visible), finally ~/.local/bin.

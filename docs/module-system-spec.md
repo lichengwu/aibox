@@ -2,7 +2,7 @@
 
 > Status: Design draft. This document collects enhancement requirements including port declaration, Dashboard, shared base components, module development guide, and the module.yaml declaration spec, as the basis for subsequent implementation.
 >
-> **Incremental revision (2026-09-16)**: module.yaml field de-duplication (implicit standard files set / common lifecycle contract for actions / slimmed-down dashboard) + shared-component dependency declaration and connection-info propagation (provider model + base.env + compose `--env-file` live injection, no generator). See [`docs/module-yaml-refactor-design.md`](module-yaml-refactor-design.md). §1 / §2.3 / §4 / §5 / Appendix B/C have been annotated accordingly.
+> **Incremental revision (2026-09-16)**: module.yaml field de-duplication (implicit standard files set / common lifecycle contract for actions / slimmed-down dashboard) + shared-component dependency declaration and connection-info propagation (provider model + base.env + compose `--env-file` live injection, no generator). See [`docs/design/module-yaml-refactor-design.md`](design/module-yaml-refactor-design.md). §1 / §2.3 / §4 / §5 / Appendix B/C have been annotated accordingly.
 >
 > Positioning: aibox is a lightweight module manager for local development + single-machine deployment and ops (pure bash, zero runtime dependencies, compatible with macOS bash 3.2). The terminal-state design as modules grow from the current 4 to dozens.
 
@@ -94,7 +94,7 @@ dashboard:                        # Optional. Only a static fallback when not in
   hint: "Username pi / password: see aibox pi-web status"
 ```
 
-### 2.3.1 Incremental Fields (2026-09-16, see [design doc](module-yaml-refactor-design.md))
+### 2.3.1 Incremental Fields (2026-09-16, see [design doc](design/module-yaml-refactor-design.md))
 
 | Field | Required | Description |
 | --- | --- | --- |
@@ -360,7 +360,7 @@ actions:
 
 The convention is written into module-spec.
 
-### 5.5 Implementation Notes (provider model + base.env injection, see [design doc](module-yaml-refactor-design.md) §5–§6)
+### 5.5 Implementation Notes (provider model + base.env injection, see [design doc](design/module-yaml-refactor-design.md) §5–§6)
 
 - `base` acts as a **provider**; the single source of truth = `tools/base/lib.sh` holds connection constants → `base start`/`restart` writes `$AIBOX_HOME/base.env` (`AIBOX_POSTGRES_*` / `AIBOX_REDIS_*`, full names). base.env is consistent with `base/docker-compose.yml` defaults, guarded by CI deps-lint.
 - Consuming modules declare dependencies in module.yaml `services: [base:postgres#<db>]` (full names).

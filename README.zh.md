@@ -162,7 +162,7 @@ aibox --no-proxy ...  # 单次绕过
 
 ### 捆绑的运维 CLI
 
-`tools/windmill/windmill` 与 `tools/openmaic/openmaic` 是为本仓库编写的完整单文件运维 CLI（分别约 3.6k 和 1.7k 行）—— 它们是运维 Windmill/OpenMAIC 部署的源头，不是第三方副本。它们之所以这么大，是因为掌管了整个生命周期（init/upgrade/rollback/backup/restore/migrate/drill/doctor，含 Docker 镜像源黑洞探测与拉取停滞处理）。核心 `aibox` 管理器不受其体积影响。
+`tools/windmill/cli/windmill` 与 `tools/openmaic/cli/openmaic` 是为本仓库编写的完整单文件运维 CLI（分别约 3.6k 和 1.7k 行）—— 它们是运维 Windmill/OpenMAIC 部署的源头，不是第三方副本。它们之所以这么大，是因为掌管了整个生命周期（init/upgrade/rollback/backup/restore/migrate/drill/doctor，含 Docker 镜像源黑洞探测与拉取停滞处理）。核心 `aibox` 管理器不受其体积影响。
 
 ## 开发新模块
 

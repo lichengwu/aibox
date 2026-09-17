@@ -89,7 +89,7 @@ grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[，。、；：！？（）「」]' <file>
 
 **Fix**: use a fixed fd (`exec 9>file` / `flock -n 9`). If you genuinely need bash 4+, ensure the script is only parsed on the target machine — don't let it appear in a path that gets sourced/executed on macOS.
 
-**Why "parseable" is worth the concession**: staying parseable lets you give a clear message on unsupported platforms ("this command requires a Linux deploy host") instead of throwing a syntax error. See `require_deploy_host` in `tools/openmaic/openmaic`.
+**Why "parseable" is worth the concession**: staying parseable lets you give a clear message on unsupported platforms ("this command requires a Linux deploy host") instead of throwing a syntax error. See `require_deploy_host` in `tools/openmaic/cli/openmaic`.
 
 ### #3 Proxy testing: status-code-only is always a false positive
 

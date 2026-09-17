@@ -14,7 +14,7 @@ ports:
   - 5432/tcp:postgres
 
 files:
-  - openmaic
+  - cli/openmaic
 
 services:
   - base:postgres#openmaic

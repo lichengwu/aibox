@@ -25,7 +25,7 @@
 - Deployment target: app root `$AIBOX_HOME/apps/windmill`; config `/etc/windmill/windmill.conf`
 - Autostart: mac launchd (backup/update-check timer, `cmd_launchd`) / linux systemd (`cmd_systemd`)
 - Dependencies: docker + docker-compose + python3
-- Customization points: the CLI is the in-repo `tools/windmill/windmill` (single-file bash, 3.2-compatible); has a Darwin platform branch (hostname/flock fallback)
+- Customization points: the CLI is the in-repo `tools/windmill/cli/windmill` (single-file bash, 3.2-compatible); has a Darwin platform branch (hostname/flock fallback)
 
 ## Upgrade Procedure
 

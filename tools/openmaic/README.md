@@ -2,7 +2,7 @@
 
 Distributes the unified ops CLI for [OpenMAIC](../..) (`openmaic`) to target hosts via aibox.
 
-The CLI itself is `tools/openmaic/openmaic` in the repo (a single-file bash script), and **this repo is its sole source of truth**: change it here, run `aibox update openmaic`, and everything stays in sync.
+The CLI itself is `tools/openmaic/cli/openmaic` in the repo (a single-file bash script), and **this repo is its sole source of truth**: change it here, run `aibox update openmaic`, and everything stays in sync.
 
 ## What it manages
 

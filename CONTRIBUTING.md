@@ -45,7 +45,7 @@ The CI lint gate enforces these. See AGENTS.md for the full pitfall log.
 
 ### Bash 3.2 is the floor
 
-macOS ships bash 3.2.57. Do not use bash 4+ syntax (e.g. `exec {fd}>file` auto-allocated FDs — pitfall #2). Scripts that are **dispatched to Linux only** may use bash 4 features, but must remain *parseable* on bash 3.2 so the macOS host can still source/inspect them — see `require_deploy_host` in `tools/openmaic/openmaic`.
+macOS ships bash 3.2.57. Do not use bash 4+ syntax (e.g. `exec {fd}>file` auto-allocated FDs — pitfall #2). Scripts that are **dispatched to Linux only** may use bash 4 features, but must remain *parseable* on bash 3.2 so the macOS host can still source/inspect them — see `require_deploy_host` in `tools/openmaic/cli/openmaic`.
 
 ## Adding a module
 

@@ -23,14 +23,14 @@ GitHub release notes are auto-generated from the previous tag; this file is the 
 
 - **TUI polish** — dashboard reworked (compact ✔/✘ status, truncated endpoint/credential
   cells so rows don't wrap, legend footer); `list-available`/`list` use a ✔ marker;
-  `ports` columns tightened; `info()` indent fixed (8, aligns under `[aibox] `).
+  `ports` columns tightened; `info()` indent fixed (8, aligns under `[aibox]`).
 - **DRY module output** — removed the 5× duplicated TTY/NO_COLOR color block across
   module `lib.sh`; modules inherit `C_*` + use `${AIBOX_MODULE:-<name>}` as prefix.
 
 ### Fixed
 
 - **CRITICAL: `save_config` corrupted `~/.aibox/config`.** The unquoted heredoc comment
-  `# ... maintained by `aibox proxy` ...` had backticks that EXECUTED `aibox proxy` on
+  `# ... maintained by`aibox proxy`...` had backticks that EXECUTED `aibox proxy` on
   every `proxy set/unset/toggle`, embedding the show-output into the config file
   (unparseable). Backticks → single quotes.
 - **Network `curl` calls lacked `--max-time`** — a packet-dropping/hanging proxy made

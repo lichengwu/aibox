@@ -261,7 +261,7 @@ Single DB: `<module>`; multiple DBs: `<module>_<usage>`. `aibox base createdb <m
 
 ### base module (spec §5)
 
-`tools/base/` ships shared PG18+Redis7 (compose + createdb). Deploy-type modules connect to the shared instance (.env DATABASE_URL + compose override network, see `tools/windmill/docker-compose.shared.yml`).
+`tools/base/` ships shared PG18+Redis7 (compose + createdb). Deploy-type modules connect to the shared instance (.env DATABASE_URL + compose override network, see `tools/openmaic/docker-compose.shared.yml`).
 
 ### hooks field parsing
 

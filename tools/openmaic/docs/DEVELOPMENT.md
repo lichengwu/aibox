@@ -25,7 +25,7 @@
 - Deployment target: app root `$AIBOX_HOME/apps/openmaic`; config `/etc/openmaic/openmaic.conf` (delivers `OPENMAIC_PROXY_URL` via proxy)
 - Autostart: none resident (svc passes through to the CLI)
 - Dependencies: docker + docker-compose + git (OS-agnostic, checked by `require_docker`; macOS Docker Desktop / Linux docker)
-- Customization points: the CLI is the in-repo `tools/openmaic/openmaic` (single-file bash, 3.2-compatible using fixed fd 9 instead of bash4 `exec {fd}>`)
+- Customization points: the CLI is the in-repo `tools/openmaic/cli/openmaic` (single-file bash, 3.2-compatible using fixed fd 9 instead of bash4 `exec {fd}>`)
 
 ## Upgrade Procedure
 

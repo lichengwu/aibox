@@ -259,6 +259,7 @@ download_module() {
   done
   for f in $dl; do
     log "  fetch $dir/$f"
+    mkdir -p "$(dirname "$AIBOX_LAST_DEST/$f")"   # nested entries (e.g. cli/openmaic) need their dir
     curl -fsSL --max-time 30 "$AIBOX_RAW/$dir/$f" -o "$AIBOX_LAST_DEST/$f" || die "Download $dir/$f failed (check branch/path)"
     chmod +x "$AIBOX_LAST_DEST/$f" 2>/dev/null || true
   done

@@ -160,7 +160,7 @@ The proxy is **process-level env vars**, affecting only tools that honor `*_prox
 
 ### Bundled ops CLIs
 
-The `tools/windmill/windmill` and `tools/openmaic/openmaic` files are full single-file ops CLIs (3.6k and 1.7k lines respectively) authored for this repo — they are the source of truth for operating Windmill/OpenMAIC deployments, not vendored third-party copies. They're large because they own the entire lifecycle (init/upgrade/rollback/backup/restore/migrate/drill/doctor, incl. Docker image-source blackhole detection and pull-stall handling). The core `aibox` manager is unaffected by their size.
+The `tools/windmill/cli/windmill` and `tools/openmaic/cli/openmaic` files are full single-file ops CLIs (3.6k and 1.7k lines respectively) authored for this repo — they are the source of truth for operating Windmill/OpenMAIC deployments, not vendored third-party copies. They're large because they own the entire lifecycle (init/upgrade/rollback/backup/restore/migrate/drill/doctor, incl. Docker image-source blackhole detection and pull-stall handling). The core `aibox` manager is unaffected by their size.
 
 ## Developing a new module
 

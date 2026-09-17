@@ -30,7 +30,7 @@ jobs:
               echo "::error file=${f}::bash -n syntax error"
               fail=1
             fi
-          done < <(git ls-files | grep -E '\.sh$|^(bin/aibox|tools/[^/]+/(openmaic|windmill))$')
+          done < <(git ls-files | grep -E '\.sh$|^(bin/aibox|tools/[^/]+/cli/(openmaic|windmill))$')
           exit $fail
 
   shellcheck:
@@ -43,7 +43,7 @@ jobs:
       - name: shellcheck
         run: |
           set -e
-          mapfile -t files < <(git ls-files | grep -E '\.sh$|^(bin/aibox|tools/[^/]+/(openmaic|windmill))$')
+          mapfile -t files < <(git ls-files | grep -E '\.sh$|^(bin/aibox|tools/[^/]+/cli/(openmaic|windmill))$')
           # --shell=bash: lib.sh is a sourced library (no shebang); specify the shell explicitly to avoid SC2148.
           shellcheck --severity=error --external-sources --shell=bash "${files[@]}"
 
@@ -56,7 +56,7 @@ jobs:
         run: |
           set -e
           fail=0
-          mapfile -t files < <(git ls-files | grep -E '\.sh$|^(bin/aibox|tools/[^/]+/(openmaic|windmill))$')
+          mapfile -t files < <(git ls-files | grep -E '\.sh$|^(bin/aibox|tools/[^/]+/cli/(openmaic|windmill))$')
           for f in "${files[@]}"; do
             m1="$(grep -nP '\$[A-Za-z_][A-Za-z0-9_]*[，。、；：！？（）「」]' "$f" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
             if [ -n "$m1" ]; then
@@ -171,6 +171,27 @@ jobs:
           done
           [ $fail -eq 0 ] && echo "✅ deps-lint passed"
           exit $fail
+
+  shared-override-sync:
+    name: shared override sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: openmaic docker-compose.shared.yml == CLI heredoc (no drift)
+        run: |
+          set -e
+          # The repo keeps tools/openmaic/docker-compose.shared.yml as a REFERENCE copy;
+          # the source of truth is the quoted heredoc in the CLI's _shared_override_write.
+          # Extract the heredoc body, strip comments/blank lines (the reference copy carries
+          # an extra explanatory header), and diff the functional content.
+          awk '/<<.OVERRIDE.$/{f=1;next} f&&/^OVERRIDE$/{f=0} f' tools/openmaic/cli/openmaic \
+            | grep -vE '^\s*#|^\s*$' > /tmp/generated.yml
+          grep -vE '^\s*#|^\s*$' tools/openmaic/docker-compose.shared.yml > /tmp/reference.yml
+          if ! diff -u /tmp/generated.yml /tmp/reference.yml; then
+            echo "::error file=tools/openmaic/docker-compose.shared.yml::reference copy drifted from the CLI _shared_override_write heredoc — sync them"
+            exit 1
+          fi
+          echo "✅ docker-compose.shared.yml matches the CLI heredoc"
 
   port-conflict:
     name: port conflict
