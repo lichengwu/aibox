@@ -39,7 +39,7 @@ The windmill compose db service has been changed to `replicas: 0 (hardcoded, con
 Configuration flow for connecting to the shared aibox base PG (avoiding a standalone PG per module):
 
 1. Start the shared base: `aibox base start` (PG 35432)
-2. Create the database: `aibox base createdb windmill`
+2. Create the database: `aibox base create postgres windmill`
 3. Configure windmill `.env`:
    - `DB_REPLICAS=0` (do not start the local db)
    - `DATABASE_URL=postgres://aibox:aibox@aibox-base-postgres:5432/windmill` (container connects to the shared PG service name via the aibox-base network)
@@ -49,7 +49,7 @@ Configuration flow for connecting to the shared aibox base PG (avoiding a standa
 ### Existing Data Migration (standalone PG → shared PG)
 
 1. `windmill backup` (pg_dumpall the standalone cluster)
-2. `aibox base start` + `aibox base createdb windmill`
+2. `aibox base start` + `aibox base create postgres windmill`
 3. Restore: `cat cluster.sql | docker exec -i aibox-base-postgres psql -U aibox`
 4. Edit `.env` (DB_REPLICAS=0 + shared DATABASE_URL) + `windmill up`
 5. Verify: `windmill status` + data is readable/writable

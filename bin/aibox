@@ -1248,7 +1248,7 @@ cmd_dev_guide() {
 
 # Dispatch a module action. NOTE: svc.sh is an "action entry point", NOT necessarily
 # a daemon. pi-web uses it to manage a launchd/systemd service; openmaic passes actions
-# through to the dispatched CLI; base implements createdb here. The contract is "the file
+# through to the dispatched CLI; base implements `create postgres` here. The contract is "the file
 # named by hooks.svc receives (action, args...)", nothing more. See docs/module-spec.md.
 cmd_module_action() {
   local name="${1:-}"

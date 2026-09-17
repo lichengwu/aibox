@@ -63,7 +63,7 @@ or manually delete `$APP_DIR/docker-compose.shared.yml`.
 ### Existing Data Migration (standalone PG → shared PG)
 
 1. `openmaic backup` (pg_dump the standalone PG)
-2. `aibox base start` + `aibox base createdb openmaic` (or `OPENMAIC_SHARED_PG=1 openmaic install` creates it automatically)
+2. `aibox base start` + `aibox base create postgres openmaic` (or `OPENMAIC_SHARED_PG=1 openmaic install` creates it automatically)
 3. Restore: `gunzip -c <backup> | docker exec -i aibox-base-postgres psql -U aibox -d openmaic`
    (equivalent to `openmaic restore <backup>` after switching to shared mode)
 4. `OPENMAIC_SHARED_PG=1 openmaic up` + verify data
