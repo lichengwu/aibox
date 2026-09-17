@@ -1125,7 +1125,7 @@ _preflight_docker_pull() {
 
 # services: base:<component>#<res> → base installed + running (or recoverable).
 _preflight_services() {
-  local name="$1" svcs svc component suffix cname prof fail=0 checked_ok="" checked_bad=""
+  local name="$1" svcs svc component suffix cname prof fail=0 checked_ok="" checked_bad="" missed=""
   svcs="$(module_field "$name" services)"
   [ -n "$svcs" ] || return 0
   prof="${AIBOX_PROFILE:-base}"; suffix=""
@@ -1134,7 +1134,12 @@ _preflight_services() {
     case "$svc" in base:*) ;; *) continue ;; esac
     component="${svc#base:}"; component="${component%%#*}"
     if ! is_installed base; then
-      bad "  ✘ service dep base not installed (fix: aibox${suffix:+ --profile ${prof}} install base)"
+      case " ${missed} " in
+        *" base "*) bad "  ✘ base:${component} not ready (base not installed — see above)" ;;
+        *)
+          bad "  ✘ service dep base not installed (fix: aibox${suffix:+ --profile ${prof}} install base)"
+          missed="${missed} base" ;;
+      esac
       fail=1
       continue
     fi
