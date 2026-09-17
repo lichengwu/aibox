@@ -1062,6 +1062,16 @@ _preflight_images_cached() {
   return 0
 }
 
+# Probe the CURRENT route with one immediate retry: transient hiccups are common
+# right after `clash on` (mihomo node health-checks still settling — measured live:
+# a single api.github.com probe failed, then 8/8 passed seconds later). One retry
+# prevents a blip from flipping the whole run onto a fallback route.
+_preflight_probe_current() {
+  _preflight_probe_route current "$1" && return 0
+  sleep 1
+  _preflight_probe_route current "$1"
+}
+
 # checks.domains — HOST-curl semantics (for git/npm/curl consumers), with the
 # docker_images cache short-circuit + configured-route fallback/adoption.
 # NOTE: do NOT declare registry domains whose consumer is the docker daemon —
@@ -1076,7 +1086,7 @@ _preflight_domains() {
     return 0
   fi
   for d in $doms; do
-    if _preflight_probe_route current "$d"; then
+    if _preflight_probe_current "$d"; then
       info "  ✔ ${d} reachable"
     else
       failed="${failed} ${d}"
@@ -1204,7 +1214,7 @@ cmd_check() {
   esac
   local core="raw.githubusercontent.com api.github.com" d failed="" route still
   for d in $core; do
-    if _preflight_probe_route current "$d"; then
+    if _preflight_probe_current "$d"; then
       info "  ✔ ${d}"
     else
       failed="${failed} ${d}"
@@ -1254,15 +1264,16 @@ dep_satisfied() {
 # Auto-install deps by platform. Lightweight / has a package manager -> install; needs sudo
 # or GUI interaction -> print the manual command.
 install_dep() {
-  local cmd="$1" os pm
+  local cmd="$1" os pm eng comp root
   os="$(uname -s)"
+  root=0; [ "$(id -u)" = "0" ] && root=1
   log "  Auto-installing ${cmd} ..."
   if [ "$os" = "Darwin" ]; then
     if command -v brew >/dev/null 2>&1; then pm="brew"
     else warn "  No Homebrew (install brew and retry: https://brew.sh)"; return 1; fi
   elif command -v apt-get >/dev/null 2>&1; then pm="apt-get"
-  elif command -v yum >/dev/null 2>&1; then pm="yum"
   elif command -v dnf >/dev/null 2>&1; then pm="dnf"
+  elif command -v yum >/dev/null 2>&1; then pm="yum"
   else warn "  No apt/yum/dnf; install ${cmd} manually"; return 1; fi
   case "$cmd" in
     docker|docker-compose)
@@ -1270,8 +1281,26 @@ install_dep() {
         log "  brew install --cask docker (Docker Desktop, includes compose v2)"
         brew install --cask docker || { warn "  Docker Desktop install failed (download manually: https://docker.com)"; return 1; }
         warn "  After install, start Docker.app and accept the license (can't be fully automated)"
+      elif [ "$root" = "1" ]; then
+        # Root: no privilege escalation needed — actually install (policy: never
+        # SILENTLY sudo; running as root is not sudo). Package-name fallbacks:
+        # docker-ce (get.docker.com repo) → moby-engine (RHEL9/AlibabaCloudLinux
+        # native, measured on AL4) → docker.io (Debian-family). Compose v2 comes
+        # from the plugin package (dep_satisfied accepts `docker compose`).
+        case "$pm" in
+          apt-get) eng="docker.io"; comp="docker-compose-v2" ;;
+          *)       eng="docker-ce"; comp="docker-compose-plugin" ;;
+        esac
+        log "  ${pm} install -y ${eng} ${comp} (running as root)"
+        ${pm} install -y "$eng" "$comp" 2>/dev/null \
+          || ${pm} install -y moby-engine docker-compose-plugin 2>/dev/null \
+          || ${pm} install -y docker.io docker-compose-v2 2>/dev/null \
+          || { warn "  package install failed (tried ${eng}+${comp}, moby-engine, docker.io variants)"; return 1; }
+        systemctl --now enable docker >/dev/null 2>&1 || service docker start >/dev/null 2>&1 \
+          || warn "  docker installed but the daemon didn't start — run: systemctl --now enable docker"
       else
         warn "  docker needs sudo, run: sudo ${pm} install -y docker.io docker-compose-v2 && sudo systemctl --now enable docker"
+        warn "  (RHEL-family without the docker-ce repo: sudo ${pm} install -y moby-engine docker-compose-plugin)"
         return 1
       fi ;;
     node)
@@ -1280,12 +1309,17 @@ install_dep() {
         . "$HOME/.nvm/nvm.sh"
         nvm install 22 && nvm use 22 >/dev/null
       elif [ "$pm" = "brew" ]; then brew install node@22
+      elif [ "$root" = "1" ]; then
+        ${pm} install -y nodejs 2>/dev/null || warn "  distro nodejs may be < 22; prefer nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash"
+        return 1
       else warn "  Install node via nvm (curl nvm | bash) or: sudo ${pm} install nodejs"; return 1; fi ;;
     python3)
       if [ "$os" = "Darwin" ]; then warn "  macOS ships python3 (/usr/bin/python3); if missing install Xcode CLT: xcode-select --install"
+      elif [ "$root" = "1" ]; then ${pm} install -y python3 || { warn "  python3 install failed"; return 1; }
       else warn "  Run: sudo ${pm} install -y python3"; return 1; fi ;;
     git)
       if [ "$os" = "Darwin" ]; then warn "  macOS ships git (Xcode CLT); if missing: xcode-select --install"
+      elif [ "$root" = "1" ]; then ${pm} install -y git || { warn "  git install failed"; return 1; }
       else warn "  Run: sudo ${pm} install -y git"; return 1; fi ;;
     *) warn "  Unknown dependency ${cmd}; install manually"; return 1 ;;
   esac

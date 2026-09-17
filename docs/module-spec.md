@@ -237,7 +237,7 @@ section's presence and its field formats.
 ### What gets checked (in order)
 
 | Check | Source | Semantics |
-|-------|--------|-----------|
+| ------- | -------- | ----------- |
 | deps | `deps:` field | strict: missing after an auto-install attempt → **FAIL** (the old warn-and-continue behavior is gone) |
 | commands | `checks.commands` | binary must exist (`cmd@platform` supported; no auto-install — these are OS facilities like `systemctl@linux` / `launchctl@darwin`) |
 | disk | `checks.disk_gb` | free space at `$AIBOX_HOME`'s filesystem ≥ N GB → else **FAIL** |
@@ -286,7 +286,7 @@ pre-staged dependencies. A failed preflight aborts install/update **before** any
 ### Per-module check matrix (current modules)
 
 | module | disk_gb | domains (host-probed) | docker_pull (daemon-probed) | docker_images | commands | services |
-|--------|:---:|---------|---------|---------------|----------|----------|
+| -------- | :---: | --------- | --------- | --------------- | ---------- | ---------- |
 | base | 5 | — | hello-world | postgres:18, redis:7 (cached → skip probes) | — | — |
 | clash | 1 | api.github.com, github.com (mihomo release; `CLASH_MIRROR` overrides the download base) | — | — | — | — |
 | pi-web | 2 | registry.npmjs.org | — | — | launchctl@darwin, systemctl@linux | — |

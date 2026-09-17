@@ -76,7 +76,7 @@ installed_kernel_version() {
 }
 
 download_mihomo() {
-  local ver asset url tmp mirror
+  local ver asset url tmp mirror attempt tries
   ver="${1:-$(latest_mihomo_tag)}"
   [ -n "$ver" ] || die "Cannot get the latest mihomo version (network? proxy? set a proxy (run: aibox proxy set) and retry)"
   asset="$(detect_asset)-v${ver}.gz"
@@ -88,9 +88,25 @@ download_mihomo() {
   log "Downloading mihomo v${ver} -> ${asset}"
   [ -n "$mirror" ] && log "  via mirror: ${mirror}"
   mkdir -p "${CLASH_BIN_DIR}"
-  tmp="${KERNEL_DEST}.gz"
-  curl -fsSL --max-time 120 "$url" -o "$tmp" || die "Download failed: ${url}${mirror:+ (try a different CLASH_MIRROR or: aibox proxy set)}"
+  # Versioned temp file: a stale partial of a DIFFERENT version must never be
+  # resumed into corruption (curl -C - would request a bogus byte range).
+  tmp="${CLASH_BIN_DIR}/mihomo-${ver}.gz"
+  # Resumable retry loop: throttled release CDNs (measured: ~21KB/s on Aliyun
+  # direct) cannot finish inside a single --max-time window; continue the
+  # partial download across attempts instead of restarting from zero.
+  attempt=0; tries="${CLASH_DOWNLOAD_ATTEMPTS:-5}"
+  until { [ -f "$tmp" ] && gunzip -t "$tmp" 2>/dev/null; } ||
+        curl -fsSL -C - --max-time "${CLASH_DOWNLOAD_TIMEOUT:-120}" "$url" -o "$tmp"; do
+    attempt=$((attempt+1))
+    if [ "$attempt" -ge "$tries" ]; then
+      die "Download failed after $((attempt+1)) attempts ($(du -h "$tmp" 2>/dev/null | cut -f1) downloaded so far): ${url}
+  Hint: GitHub release mirror →  CLASH_MIRROR=https://gh-proxy.com aibox install clash
+        or an HTTP proxy      →  aibox proxy set <url>"
+    fi
+    warn "  attempt $((attempt+1)) interrupted — resuming partial download ($((tries-attempt)) retries left)..."
+  done
   gunzip -f "$tmp" || die "Decompress failed (mihomo .gz)"
+  mv -f "${tmp%.gz}" "$KERNEL_DEST"
   chmod 0755 "${KERNEL_DEST}"
   "${KERNEL_DEST}" -v >/dev/null 2>&1 || die "Downloaded binary won't run (arch mismatch?)"
   log "Placed mihomo v${ver} -> ${KERNEL_DEST}"
