@@ -202,6 +202,14 @@ cmd_createdb() {
     dbname="$module"
   fi
   ensure_compose
+  # Wait for PG readiness (a fresh `base start` needs a few seconds; createdb right after
+  # start used to fail on live hosts — observed on the Debian test machine, needed sleep 5).
+  local _i=0
+  while [ $_i -lt 30 ]; do
+    docker exec "$POSTGRES_CONTAINER" pg_isready -U "$PG_USER" >/dev/null 2>&1 && break
+    sleep 1
+    _i=$((_i + 1))
+  done
   # Idempotent: skip if it already exists.
   if docker exec "$POSTGRES_CONTAINER" psql -U "$PG_USER" -tAc "SELECT 1 FROM pg_database WHERE datname='${dbname}'" 2>/dev/null | grep -q 1; then
     log "Database ${dbname} already exists (shared PG ${PG_HOST}:${PG_PORT})"

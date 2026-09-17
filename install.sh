@@ -108,7 +108,10 @@ elif [ "${AIBOX_VERIFY:-0}" = "1" ]; then
   if curl -fsSL "$_sums_url" -o "$_sums_tmp" 2>/dev/null; then
     _want=$(awk '$2=="bin/aibox"{print $1}' "$_sums_tmp" 2>/dev/null)
     if [ -n "$_want" ]; then
-      verify_sha256 "$_TMP_BIN" "$_want" || { rm -f "$_sums_tmp"; die "Checksum verification failed"; }
+      verify_sha256 "$_TMP_BIN" "$_want" || {
+        rm -f "$_sums_tmp"
+        die "Checksum verification failed"
+      }
     else
       warn "SHA256SUMS found but no bin/aibox entry; skipping verification"
     fi

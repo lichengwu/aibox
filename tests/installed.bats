@@ -73,7 +73,10 @@ load test_helper
   unmark_installed pi-web
   AIBOX_PROFILE=base
   is_installed pi-web
-  # and vice versa
+  # and vice versa: re-add prod, remove base → prod survives
+  AIBOX_PROFILE=prod
+  mark_installed pi-web "1.0.0"
+  AIBOX_PROFILE=base
   unmark_installed pi-web
   AIBOX_PROFILE=prod
   is_installed pi-web
