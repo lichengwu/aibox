@@ -70,3 +70,40 @@ networks:
 ```
 
 See `docs/module-spec.md` (the `services` / shared-component contract) and the [`windmill`](../windmill/) / [`openmaic`](../openmaic/) modules for working examples.
+
+## Mainland-China network deployment (measured recipes)
+
+`registry-1.docker.io` is commonly unreachable from CN hosts (measured: connection
+timeout on every host route, while the docker daemon may still work via its own
+config). The base preflight probes the **daemon** path (`docker pull hello-world`),
+not host curl — if it fails, apply the daemon-side recipe:
+
+```bash
+# 1. Registry mirror for docker.io (postgres:18 / redis:7 pulls)
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<'JSON'
+{ "registry-mirrors": ["https://docker.m.daocloud.io"] }
+JSON
+
+# 2. (Optional) HTTP proxy for the daemon — e.g. via the aibox clash pool.
+#    NO_PROXY MUST keep domestic mirrors direct, or they get routed overseas.
+mkdir -p /etc/systemd/system/docker.service.d
+printf '[Service]\nEnvironment="HTTP_PROXY=socks5://127.0.0.1:7890"\nEnvironment="HTTPS_PROXY=socks5://127.0.0.1:7890"\nEnvironment="NO_PROXY=localhost,127.0.0.1,::1,*.aliyuncs.com,*.daocloud.io"\n' \
+  > /etc/systemd/system/docker.service.d/proxy.conf
+systemctl daemon-reload
+
+systemctl restart docker   # containers with a restart policy survive
+aibox check base           # re-run the preflight to confirm
+```
+
+Notes from the field (Alibaba Cloud Linux 4, 2026-09):
+
+- `aibox`'s proxy/clash settings affect **host** tools only (git/npm/curl); the
+  docker daemon has its own egress — hence the drop-in above.
+- AL4's `moby-engine` package ships without the `docker` group while
+  `docker.socket` has `SocketGroup=docker` → the socket fails (216/GROUP) and
+  docker.service cascades. `aibox`'s root auto-install creates the group; on a
+  manual install run `groupadd docker` before `systemctl enable --now docker`.
+- ghcr.io images (windmill) are NOT covered by docker.io mirrors; the windmill
+  CLI probes and auto-selects a public ghcr mirror (`WM_GHCR_MIRROR`) — see
+  `tools/windmill/docs/DEVELOPMENT.md`.

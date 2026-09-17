@@ -337,7 +337,8 @@ probe_via_clash() {
   code="${out%% *}"
   used="${out##* }"
   if [ "$code" = "200" ] || [ "$code" = "204" ]; then
-    log "Via mihomo    ${code} (proxy_used=${used})"
+    # curl <8.4 leaves %{proxy_used} empty — omit the field rather than print "proxy_used="
+    log "Via mihomo    ${code}${used:+ (proxy_used=${used})}"
   else
     warn "Via mihomo    ${code} (proxy may be unavailable)"
   fi
