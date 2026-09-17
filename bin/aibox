@@ -1296,8 +1296,13 @@ install_dep() {
           || ${pm} install -y moby-engine docker-compose-plugin 2>/dev/null \
           || ${pm} install -y docker.io docker-compose-v2 2>/dev/null \
           || { warn "  package install failed (tried ${eng}+${comp}, moby-engine, docker.io variants)"; return 1; }
-        systemctl --now enable docker >/dev/null 2>&1 || service docker start >/dev/null 2>&1 \
-          || warn "  docker installed but the daemon didn't start — run: systemctl --now enable docker"
+        # AL4/RHEL-family moby-engine ships WITHOUT the docker group, but
+        # docker.socket has SocketGroup=docker → socket fails → service fails
+        # in a dependency cascade (measured live on Alibaba Cloud Linux 4).
+        getent group docker >/dev/null 2>&1 || groupadd docker 2>/dev/null || true
+        if ! { systemctl --now enable docker >/dev/null 2>&1 || service docker start >/dev/null 2>&1; }; then
+          warn "  docker installed but the daemon didn't start — run: systemctl --now enable docker"
+        fi
       else
         warn "  docker needs sudo, run: sudo ${pm} install -y docker.io docker-compose-v2 && sudo systemctl --now enable docker"
         warn "  (RHEL-family without the docker-ce repo: sudo ${pm} install -y moby-engine docker-compose-plugin)"
