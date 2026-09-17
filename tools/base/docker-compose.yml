@@ -1,7 +1,8 @@
-# aibox 共享基础组件：PostgreSQL 18 + Redis 7
-# 各模块连共享实例（network aibox-base + env 指向 aibox-base-postgres），
-# init 时建自己的库（<module> 或 <module>_<用途>）。
-# 连接信息由 base start 写入 $AIBOX_HOME/base.env，消费模块经 compose --env-file 注入。
+# aibox shared base components: PostgreSQL 18 + Redis 7
+# Modules connect to the shared instance (network aibox-base + env pointing at
+# aibox-base-postgres) and create their own DB (<module> or <module>_<usage>) at init.
+# Connection info is written to $AIBOX_HOME/base.env by `base start`; consuming modules
+# inject it via compose --env-file.
 services:
   postgres:
     image: postgres:18
@@ -14,6 +15,9 @@ services:
     ports:
       - "35432:5432"
     volumes:
+      # Mounted at the PARENT dir on purpose: postgres:17+ images use
+      # PGDATA=/var/lib/postgresql/<ver>/docker and declare VOLUME /var/lib/postgresql,
+      # so a named volume here covers the real data dir across major-version layout changes.
       - pg_data:/var/lib/postgresql
     networks:
       - aibox-base
@@ -30,8 +34,13 @@ services:
       - aibox-base
 
 volumes:
+  # Explicit names: deterministic regardless of the deploy dir / compose project name
+  # (implicit names would be <project>_pg_data — tied to the directory name), and they
+  # match what uninstall/README tell users to `docker volume rm`.
   pg_data:
+    name: aibox_pg_data
   redis_data:
+    name: aibox_redis_data
 
 networks:
   aibox-base:

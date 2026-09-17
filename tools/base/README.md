@@ -29,7 +29,9 @@ consuming module's compose (--env-file base.env)
 
 - **`base.env` is the single source of connection info** — host (container service name `aibox-base-postgres`/`aibox-base-redis`), internal ports (5432/6379), user, password. Consuming modules read it via compose `--env-file`; they never hardcode `aibox:aibox@`.
 - **DB naming**: `<module>` (single DB) or `<module>_<usage>` (multiple). The prefix avoids cross-module clashes. `aibox base createdb windmill` / `aibox base createdb openmaic backup` (→ `openmaic_backup`).
-- **Data volumes** (`pg_data`, `redis_data`) are retained on `stop`/`uninstall` — they outlast the manager. To clear: `docker volume rm aibox_pg_data aibox_redis_data`.
+- **Data volumes** are retained on `stop`/`uninstall` — they outlast the manager. They carry **explicit names** (`aibox_pg_data`, `aibox_redis_data`) so they're deterministic regardless of the deploy dir / compose project name. To clear: `docker volume rm aibox_pg_data aibox_redis_data`.
+  > **Migrating from a pre-explicit-naming deploy?** Your data lives in `base_pg_data` / `base_redis_data` (named after the deploy dir by compose's implicit project prefix). Copy it over before `aibox base restart`:
+  > `docker run --rm -v base_pg_data:/from -v aibox_pg_data:/to alpine cp -a /from/. /to/` (same for the redis pair). The old volumes are left untouched — remove them once verified.
 
 ## Configuration (env overrides)
 
