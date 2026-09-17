@@ -598,7 +598,8 @@ _ghcr_speed_kbps() {
 # Opt out: WM_GHCR_PROBE=0; override candidates: WM_GHCR_CANDIDATES="host1 host2".
 auto_ghcr_mirror() {
   local cand best="" best_kbps=0 direct_kbps=-1 min_kbps="${WM_GHCR_MIN_KBPS:-1024}"
-  local img probe_img="" k ref
+  local img probe_img="" k ref force=0 need
+  [ "${1:-}" = "--force" ] && { force=1; shift; }   # post-failure escalation: ignore the keep-direct rule
   [ "${WM_GHCR_PROBE:-1}" = "1" ] || return 0
   [ -n "${WM_GHCR_MIRROR:-}" ] && return 0          # explicitly configured: respect it
   [ -d /var/lib/docker ] || return 0                 # Docker Desktop: no growth signal
@@ -611,7 +612,7 @@ auto_ghcr_mirror() {
   direct_kbps=$(_ghcr_speed_kbps "$probe_img" 8)
   if [ "$direct_kbps" = "-2" ]; then return 0; fi
   log "    direct ghcr.io: ~${direct_kbps} KB/s"
-  if [ "$direct_kbps" -ge "$min_kbps" ]; then return 0; fi
+  if [ "$direct_kbps" -ge "$min_kbps" ] && [ "$force" != "1" ]; then return 0; fi
   for cand in ${WM_GHCR_CANDIDATES:-ghcr.nju.edu.cn ghcr.dockerproxy.net}; do
     ref="$(ghcr_mirror_ref "$probe_img" "$cand")"
     [ -n "$ref" ] || continue
@@ -621,7 +622,9 @@ auto_ghcr_mirror() {
     if [ "$k" != "-1" ] && [ "$k" -gt "$best_kbps" ]; then best_kbps="$k"; best="$cand"; fi
     [ "$best_kbps" -ge 8192 ] && break               # ≥8MB/s: good enough, stop probing
   done
-  if [ -n "$best" ] && [ "$best_kbps" -ge "$min_kbps" ] && [ "$best_kbps" -ge $((direct_kbps * 2 + 1)) ]; then
+  need=$((direct_kbps * 2 + 1))
+  [ "$force" = "1" ] && need="$min_kbps"   # direct already FAILED; any viable mirror wins
+  if [ -n "$best" ] && [ "$best_kbps" -ge "$min_kbps" ] && [ "$best_kbps" -ge "$need" ]; then
     WM_GHCR_MIRROR="$best"
     # set_env dies when .env is missing — guard instead of relying on || true
     if [ -n "${ENV_FILE:-}" ] && [ -f "$ENV_FILE" ]; then
@@ -653,9 +656,27 @@ pull_images() {
   else
     # Per-image direct pull (skip-if-present + stall detection + retries) — a bare
     # `compose pull` has none of those and silently crawls on throttled links.
+    local ghcr_failed=0
     for img in "${WM_REPO}:${ver}" "${WM_EXTRA_REPO}:${ver}" "$CADDY_IMAGE"; do
-      direct_pull "$img" || missing=1
+      direct_pull "$img" || ghcr_failed=1
     done
+    if [ "$ghcr_failed" = 1 ]; then
+      # Failure-driven escalation: the upfront probe measures an 8s burst and can
+      # misjudge a stall-prone direct route (measured live: probe ~3MB/s, then the
+      # sustained pull stalled twice and exhausted retries). Re-probe mirrors now;
+      # completed layers stay cached, so mirror pulls resume where direct stopped.
+      warn "  direct ghcr pull failed — probing mirrors for a fallback route..."
+      auto_ghcr_mirror --force "${WM_REPO}:${ver}" "${WM_EXTRA_REPO}:${ver}" "$CADDY_IMAGE"
+      gm="${WM_GHCR_MIRROR:-}"
+      if [ -n "$gm" ]; then
+        log "  ghcr mirror: $gm"
+        for img in "${WM_REPO}:${ver}" "${WM_EXTRA_REPO}:${ver}" "$CADDY_IMAGE"; do
+          mirror_pull_one ghcr "$gm" "$img" || missing=1
+        done
+      else
+        missing=1
+      fi
+    fi
   fi
 
   if [ -n "$hm" ]; then
