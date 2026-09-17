@@ -94,7 +94,7 @@ download_mihomo() {
   # Resumable retry loop: throttled release CDNs (measured: ~21KB/s on Aliyun
   # direct) cannot finish inside a single --max-time window; continue the
   # partial download across attempts instead of restarting from zero.
-  attempt=0; tries="${CLASH_DOWNLOAD_ATTEMPTS:-5}"
+  attempt=0; tries="${CLASH_DOWNLOAD_ATTEMPTS:-8}"
   until { [ -f "$tmp" ] && gunzip -t "$tmp" 2>/dev/null; } ||
         curl -fsSL -C - --max-time "${CLASH_DOWNLOAD_TIMEOUT:-120}" "$url" -o "$tmp"; do
     attempt=$((attempt+1))
