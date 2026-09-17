@@ -1705,6 +1705,10 @@ cmd_self_update() {
   before="$AIBOX_VERSION"
   log "aibox self-update: currently ${before}, re-bootstrapping ..."
   if curl -fsSL --max-time 30 "$AIBOX_RAW/install.sh" | AIBOX_VERIFY="${AIBOX_VERIFY:-0}" AIBOX_SHA256="${AIBOX_SHA256:-}" bash; then
+    # New CLI and new module metadata go together: drop the registry cache so the
+    # next load_registry refetches (measured live: `aibox ports` kept showing a
+    # stale declared port for up to the 1h TTL after self-update).
+    rm -f "$AIBOX_REGISTRY_CACHE" 2>/dev/null || true
     after="$("$AIBOX_BIN_DIR/aibox" version 2>/dev/null | awk '{print $2}')"
     [ -z "$after" ] && after="unknown"
     if [ "$before" = "$after" ]; then
