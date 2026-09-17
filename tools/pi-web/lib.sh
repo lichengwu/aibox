@@ -315,6 +315,22 @@ EOF
 }
 
 # ---------- status display (shared by install/status/diagnose) ----------
+# Print the listeners on a TCP port; returns non-zero when none.
+# lsof is absent on minimal Linux installs (measured: Alibaba Cloud Linux 4) —
+# fall back to ss (iproute2). PIDs need root with ss -p; best-effort.
+port_listen_lines() {
+  local port="$1" out
+  if command -v lsof >/dev/null 2>&1; then
+    out="$(lsof -iTCP:"$port" -sTCP:LISTEN 2>/dev/null)"
+  elif command -v ss >/dev/null 2>&1; then
+    out="$(ss -Htlnp "sport = :$port" 2>/dev/null)"
+  else
+    return 1
+  fi
+  [ -n "$out" ] || return 1
+  printf '%s\n' "$out"
+}
+
 show_status() {
   resolve_password
   if [ "$OS_KIND" = "Darwin" ]; then
@@ -331,7 +347,7 @@ show_status() {
     fi
   fi
   echo "---"
-  lsof -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || echo "[port $PORT not listening]"
+  port_listen_lines "$PORT" || echo "[port $PORT not listening]"
   echo "---"
   curl -s -o /dev/null --max-time 3 -w "HTTP %{http_code} (pi/${PASSWORD})\n" -u "pi:${PASSWORD}" "http://127.0.0.1:${PORT}/" || echo "curl probe failed"
 }

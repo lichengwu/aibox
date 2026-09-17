@@ -70,7 +70,7 @@ diagnose)
   echo "== stderr tail =="
   tail -20 "$LOG_DIR/pi-web.err.log" 2>/dev/null || echo "no err log"
   echo "== port =="
-  lsof -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || echo "not listening"
+  port_listen_lines "$PORT" || echo "not listening"
   ;;
 *)
   die "Usage: aibox pi-web {start|stop|restart|status|logs|diagnose}"
