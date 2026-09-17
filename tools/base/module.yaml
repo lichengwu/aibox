@@ -31,7 +31,6 @@ actions:
   - restart
   - status
   - logs
-  - createdb
 
 upstream:
   homepage: https://www.postgresql.org/
