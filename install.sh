@@ -50,8 +50,17 @@ fi
 
 mkdir -p "$BIN_DIR" "$HOME_DIR"
 
+# Download to a TEMP file in $BIN_DIR (same filesystem) and atomically mv into place.
+# NEVER overwrite a running bin/aibox in-place: the old bash process holds an open fd at a
+# byte offset into the file; truncating the same inode (curl -o) makes it execute fragments
+# of the NEW file as garbage when it next reads (observed during self-update:
+# "line 1442: ugh: command not found" — a shard of e.g. "thro*ugh*"). rename(2) leaves the
+# running process on the old inode, safely.
+_TMP_BIN="$(mktemp "$BIN_DIR/.aibox.download.XXXXXX")"
+trap 'rm -f "$_TMP_BIN"' EXIT
+
 log "Downloading bin/aibox -> $BIN_DIR/aibox"
-curl -fsSL "$RAW/bin/aibox" -o "$BIN_DIR/aibox"
+curl -fsSL --max-time 60 "$RAW/bin/aibox" -o "$_TMP_BIN"
 
 # ---------- checksum verification (defense in depth) ----------
 # Two modes, both optional and graceful:
@@ -61,7 +70,8 @@ curl -fsSL "$RAW/bin/aibox" -o "$BIN_DIR/aibox"
 # NOTE: this verifies the payload bin/aibox, NOT install.sh itself — a curl|bash MITM
 # can serve a malicious install.sh that skips the check. Inherent to curl|bash; for
 # full assurance pin AIBOX_SHA256 from a trusted channel or use AIBOX_RAW=file://.
-# Verified BEFORE chmod; on failure the file is removed so no tampered executable is left on PATH.
+# Verified BEFORE the file ever lands at the final path; on failure the temp is removed
+# (trap) and the existing install is left untouched.
 # When AIBOX_VERIFY=1 fetches from releases/latest but AIBOX_RAW points at raw `main`
 # (ahead of the latest release), a mismatch may occur — reliable right after a release.
 verify_sha256() {
@@ -90,10 +100,7 @@ verify_sha256() {
 }
 
 if [ -n "${AIBOX_SHA256:-}" ]; then
-  verify_sha256 "$BIN_DIR/aibox" "$AIBOX_SHA256" || {
-    rm -f "$BIN_DIR/aibox"
-    die "Checksum verification failed"
-  }
+  verify_sha256 "$_TMP_BIN" "$AIBOX_SHA256" || die "Checksum verification failed"
 elif [ "${AIBOX_VERIFY:-0}" = "1" ]; then
   # Best-effort: fetch the release's SHA256SUMS sidecar and check bin/aibox against it.
   _sums_url="https://github.com/${REPO}/releases/latest/download/SHA256SUMS"
@@ -101,10 +108,7 @@ elif [ "${AIBOX_VERIFY:-0}" = "1" ]; then
   if curl -fsSL "$_sums_url" -o "$_sums_tmp" 2>/dev/null; then
     _want=$(awk '$2=="bin/aibox"{print $1}' "$_sums_tmp" 2>/dev/null)
     if [ -n "$_want" ]; then
-      verify_sha256 "$BIN_DIR/aibox" "$_want" || {
-        rm -f "$_sums_tmp" "$BIN_DIR/aibox"
-        die "Checksum verification failed"
-      }
+      verify_sha256 "$_TMP_BIN" "$_want" || { rm -f "$_sums_tmp"; die "Checksum verification failed"; }
     else
       warn "SHA256SUMS found but no bin/aibox entry; skipping verification"
     fi
@@ -114,7 +118,9 @@ elif [ "${AIBOX_VERIFY:-0}" = "1" ]; then
   rm -f "$_sums_tmp"
 fi
 
-chmod 0755 "$BIN_DIR/aibox"
+chmod 0755 "$_TMP_BIN"
+mv -f "$_TMP_BIN" "$BIN_DIR/aibox"
+trap - EXIT
 
 # PATH check & auto-write
 if ! echo ":$PATH:" | grep -q ":$BIN_DIR:"; then
