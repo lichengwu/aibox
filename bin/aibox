@@ -1366,6 +1366,19 @@ install_dep() {
 
 # ---------- commands ----------
 # List all modules' port assignments (from module.yaml ports) + live listen probes.
+# Is a TCP port being listened on? lsof → ss fallback (minimal Linux installs
+# like Alibaba Cloud Linux 4 ship no lsof; ss/iproute2 is ubiquitous).
+_port_is_listening() {
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+  elif command -v ss >/dev/null 2>&1; then
+    [ -n "$(ss -Htln "sport = :$port" 2>/dev/null)" ]
+  else
+    return 1
+  fi
+}
+
 cmd_ports() {
   load_registry
   echo "Port assignments:"
@@ -1377,7 +1390,7 @@ cmd_ports() {
       proto_usage="${p#*/}"
       proto="${proto_usage%%:*}"
       usage="${proto_usage#*:}"
-      if command -v lsof >/dev/null 2>&1 && lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      if _port_is_listening "$port"; then
         status="listening"
       else
         status="—"
@@ -1387,7 +1400,7 @@ cmd_ports() {
   done
 }
 
-# Probe declared ports for external occupation (lsof) at install time; warn if taken (env-overridable).
+# Probe declared ports for external occupation (lsof/ss) at install time; warn if taken (env-overridable).
 check_ports() {
   local name="$1" ports p port pid
   ports="$(module_field "$name" ports)"
@@ -1395,15 +1408,13 @@ check_ports() {
   command -v lsof >/dev/null 2>&1 || command -v ss >/dev/null 2>&1 || return 0
   for p in $ports; do
     port="${p%%/*}"
+    _port_is_listening "$port" || continue
     pid=""
     if command -v lsof >/dev/null 2>&1; then
-      lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 || continue
       pid="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | head -1)"
     else
-      # Minimal Linux installs (measured: Alibaba Cloud Linux 4) ship no lsof;
-      # ss (iproute2) is the fallback. -p PIDs need root; best-effort.
-      ss -Htln "sport = :$port" 2>/dev/null | grep -q . || continue
-      pid="$(ss -Htlp "sport = :$port" 2>/dev/null | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)"
+      # ss -p PIDs need root; best-effort.
+      pid="$(ss -Htlnp "sport = :$port" 2>/dev/null | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)"
     fi
     warn "Port ${port} already in use${pid:+ (PID ${pid})}; overridable via env var"
   done
