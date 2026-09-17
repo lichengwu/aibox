@@ -272,17 +272,26 @@ compose_files() {
   return 0
 }
 
-# In shared mode, append --env-file $AIBOX_HOME/base.env (single source of connection info;
+# Profile-aware base integration (aibox --profile <name>): named profiles use
+# base-<profile>.env + aibox-base-<profile>-postgres; the default profile "base" keeps the
+# unsuffixed names. Standalone (no aibox) → AIBOX_PROFILE unset → base.
+_AIBOX_PROF="${AIBOX_PROFILE:-base}"
+_BASE_SUFFIX=""
+[ "$_AIBOX_PROF" != "base" ] && _BASE_SUFFIX="-${_AIBOX_PROF}"
+BASE_ENV_FILE="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/base${_BASE_SUFFIX}.env"
+BASE_PG_CONTAINER="aibox-base${_BASE_SUFFIX}-postgres"
+
+# In shared mode, append --env-file <base[-profile].env> (single source of connection info;
 # compose interpolates ${AIBOX_POSTGRES_*}).
 # base.env is written by aibox base start; if missing it warns (app cannot connect; visible in doctor)
 # but does not block compose itself.
 compose_env_file() {
   shared_pg_active || return 0
-  if [ ! -f "${AIBOX_HOME}/base.env" ]; then
-    warn "shared mode but ${AIBOX_HOME}/base.env does not exist (run first: aibox base start)"
+  if [ ! -f "$BASE_ENV_FILE" ]; then
+    warn "shared mode but $BASE_ENV_FILE does not exist (run first: aibox${_BASE_SUFFIX:+ --profile ${_AIBOX_PROF}} base start)"
     return 0
   fi
-  printf -- '--env-file %s' "${AIBOX_HOME}/base.env"
+  printf -- '--env-file %s' "$BASE_ENV_FILE"
 }
 
 compose() {
@@ -309,7 +318,7 @@ shared_pg_active() { [ "$SHARED_PG" = 1 ] || [ -f "$SHARED_OVERRIDE" ]; }
 # otherwise it checks the local postgres service.
 pg_running() {
   if shared_pg_active; then
-    docker ps --format '{{.Names}}' 2>/dev/null | grep -qx aibox-base-postgres
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$BASE_PG_CONTAINER"
   else
     compose ps --status running --services 2>/dev/null | grep -qx postgres
   fi
@@ -320,8 +329,8 @@ pg_running() {
 pg_psql() {
   local mode="$1"; shift
   if shared_pg_active; then
-    [ "$mode" = tty ] && docker exec -it aibox-base-postgres psql -U aibox -d openmaic "$@" \
-                      || docker exec -i  aibox-base-postgres psql -U aibox -d openmaic "$@"
+    [ "$mode" = tty ] && docker exec -it "$BASE_PG_CONTAINER" psql -U aibox -d openmaic "$@" \
+                      || docker exec -i  "$BASE_PG_CONTAINER" psql -U aibox -d openmaic "$@"
   else
     [ "$mode" = tty ] && compose exec    postgres psql -U "$DB_USER" -d "$DB_NAME" "$@" \
                       || compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" "$@"
@@ -331,7 +340,7 @@ pg_psql() {
 # pg_dump entry point (shared mode goes through aibox-base-postgres).
 pg_dump_cmd() {
   if shared_pg_active; then
-    docker exec aibox-base-postgres pg_dump -U aibox -d openmaic "$@"
+    docker exec "$BASE_PG_CONTAINER" pg_dump -U aibox -d openmaic "$@"
   else
     compose exec -T postgres pg_dump -U "$DB_USER" -d "$DB_NAME" "$@"
   fi
@@ -441,7 +450,7 @@ ensure_shared_pg_override() {
 
 _shared_override_write() {
   [ -f "$APP_DIR/docker-compose.yml" ] || { warn "upstream docker-compose.yml not checked out, skipping shared override"; return 0; }
-  if [ -f "$SHARED_OVERRIDE" ] && grep -q 'aibox-base-postgres' "$SHARED_OVERRIDE" 2>/dev/null; then
+  if [ -f "$SHARED_OVERRIDE" ] && grep -q 'AIBOX_POSTGRES_HOST' "$SHARED_OVERRIDE" 2>/dev/null; then
     dim "  shared PG override already in place, skipping"
     return 0
   fi
@@ -481,12 +490,13 @@ services:
     networks:
       - default
       - render
-      - aibox-base
+      - aiboxbasenet
     environment:
-      - DATABASE_URL=postgres://${AIBOX_POSTGRES_USER}:${AIBOX_POSTGRES_PASSWORD}@aibox-base-postgres:${AIBOX_POSTGRES_PORT}/openmaic
+      - DATABASE_URL=postgres://${AIBOX_POSTGRES_USER}:${AIBOX_POSTGRES_PASSWORD}@${AIBOX_POSTGRES_HOST}:${AIBOX_POSTGRES_PORT}/openmaic
 
 networks:
-  aibox-base:
+  aiboxbasenet:
+    name: ${AIBOX_BASE_NETWORK:-aibox-base}
     external: true
 OVERRIDE
   ok "shared PG override is in place (${SHARED_OVERRIDE})"

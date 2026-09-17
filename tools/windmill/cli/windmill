@@ -77,7 +77,15 @@ PG_IMAGE="postgres:18"
 CADDY_IMAGE="ghcr.io/windmill-labs/caddy-l4:2.11.4-1"
 # Shared base PG: compose sets the db service to replicas:0, and DATABASE_URL points to the base PG.
 # DB operations use a fixed container name + business user aibox (standalone mode uses the compose db / postgres).
-SHARED_PG_CONTAINER="aibox-base-postgres"
+# Profile-aware (aibox --profile <name>): named profiles use aibox-base-<name>-postgres and the
+# matching network; default profile "base" keeps the unsuffixed names. Standalone → base.
+_AIBOX_PROF="${AIBOX_PROFILE:-base}"
+_BASE_SUFFIX=""
+[ "$_AIBOX_PROF" != "base" ] && _BASE_SUFFIX="-${_AIBOX_PROF}"
+SHARED_PG_CONTAINER="aibox-base${_BASE_SUFFIX}-postgres"
+# Exported so docker compose interpolates ${AIBOX_BASE_NETWORK} in the generated compose
+# (the quoted heredoc writes it literally; compose resolves it from this process env at up-time).
+export AIBOX_BASE_NETWORK="aibox-base${_BASE_SUFFIX}"
 SHARED_PG_USER="aibox"
 # ghcr registry mirror (acceleration in China). Empty = direct ghcr.io.
 # Direct connection measures ~0.5 MB/s, while windmill-extra alone is 1.99 GiB compressed,
@@ -1221,7 +1229,7 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - MODE=server
     depends_on: []
-    networks: [default, aibox-base]
+    networks: [default, aiboxbasenet]
     volumes:
       - worker_logs:/tmp/windmill/logs
 
@@ -1249,7 +1257,7 @@ services:
       # add: - HOME=/tmp
       - FAVOR_UNSHARE_PID=true
     depends_on: []
-    networks: [default, aibox-base]
+    networks: [default, aiboxbasenet]
     # to mount the worker folder to debug, KEEP_JOB_DIR=true and mount /tmp/windmill
     volumes:
       - worker_dependency_cache:/tmp/windmill/cache
@@ -1286,7 +1294,7 @@ services:
       - NATIVE_MODE=true
       - SLEEP_QUEUE=200
     depends_on: []
-    networks: [default, aibox-base]
+    networks: [default, aiboxbasenet]
     volumes:
       - worker_logs:/tmp/windmill/logs
     logging: *default-logging
@@ -1305,7 +1313,7 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - MODE=indexer
     depends_on: []
-    networks: [default, aibox-base]
+    networks: [default, aiboxbasenet]
     volumes:
       - windmill_index:/tmp/windmill/search
       - worker_logs:/tmp/windmill/logs
@@ -1366,7 +1374,8 @@ volumes:
 
 networks:
   default:
-  aibox-base:
+  aiboxbasenet:
+    name: ${AIBOX_BASE_NETWORK:-aibox-base}
     external: true
 WMEOF
   chmod 0644 "$COMPOSE_FILE"
@@ -1434,7 +1443,7 @@ render_env() {
 # --- Database (connects to the shared aibox base PG; db replicas:0, no local PG) ---
 # Precondition: aibox base start && aibox base createdb windmill
 # Credentials: AIBOX_BASE_POSTGRES_USER/AIBOX_BASE_POSTGRES_PASSWORD (default aibox/aibox)
-DATABASE_URL=postgres://${AIBOX_BASE_POSTGRES_USER:-aibox}:${AIBOX_BASE_POSTGRES_PASSWORD:-aibox}@aibox-base-postgres:5432/windmill
+DATABASE_URL=postgres://${AIBOX_BASE_POSTGRES_USER:-aibox}:${AIBOX_BASE_POSTGRES_PASSWORD:-aibox}@${SHARED_PG_CONTAINER}:5432/windmill
 # POSTGRES_PASSWORD is kept for standalone-mode db volume init (shared mode db replicas:0, no local PG)
 POSTGRES_PASSWORD=${dbpass}
 

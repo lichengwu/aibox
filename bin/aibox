@@ -212,8 +212,20 @@ module_exists() {
   return 1
 }
 
-# Normalize a module name to the installed-state variable key (pi-web -> pi_web).
-_ikey() { printf 'AIBOX_INSTALLED_%s' "${1//-/_}"; }
+# Normalize a module name to the installed-state key (pi-web -> pi_web), SCOPED to the
+# active profile: base → AIBOX_INSTALLED_<mod>; named → AIBOX_INSTALLED_<mod>__<profile>.
+# Per-profile state keeps multi-profile installs/uninstalls from clobbering each other.
+_ikey() {
+  local k="AIBOX_INSTALLED_${1//-/_}" p="${AIBOX_PROFILE:-base}"
+  if [ "$p" != "base" ]; then k="${k}__${p//-/_}"; fi
+  printf '%s' "$k"
+}
+
+# Is this module installed under ANY profile? (guards the shared script-cache deletion)
+_installed_any_profile() {
+  [ -f "$AIBOX_INSTALLED" ] || return 1
+  grep -q "^AIBOX_INSTALLED_${1//-/_}\(__[A-Za-z0-9_]*\)\?=" "$AIBOX_INSTALLED"
+}
 
 # ---------- installed state (file-backed, plain vars, no source needed) ----------
 is_installed() {
@@ -237,8 +249,16 @@ unmark_installed() {
 
 installed_names() {
   [ -f "$AIBOX_INSTALLED" ] || return 0
-  grep -oE "^AIBOX_INSTALLED_[a-z0-9_]+=" "$AIBOX_INSTALLED" 2>/dev/null \
-    | sed -E 's/^AIBOX_INSTALLED_//; s/=$//' | tr '_' '-'
+  local p="${AIBOX_PROFILE:-base}"
+  if [ "$p" = "base" ]; then
+    # base profile: keys WITHOUT the __<profile> suffix
+    grep -oE "^AIBOX_INSTALLED_[a-z0-9_]+=" "$AIBOX_INSTALLED" 2>/dev/null | grep -v '__' \
+      | sed -E 's/^AIBOX_INSTALLED_//; s/=$//' | tr '_' '-'
+  else
+    local suf="__${p//-/_}"
+    grep -oE "^AIBOX_INSTALLED_[a-z0-9_]+${suf}=" "$AIBOX_INSTALLED" 2>/dev/null \
+      | sed -E "s/^AIBOX_INSTALLED_//; s/${suf}=\$//" | tr '_' '-'
+  fi
 }
 
 # Download module scripts to the local cache (result path in AIBOX_LAST_DEST).
@@ -1084,9 +1104,15 @@ cmd_uninstall() {
   else
     warn "No uninstall hook; cleaning cache only"
   fi
-  rm -rf "$dest"
   unmark_installed "$name"
-  log "Uninstalled $name"
+  # The script cache is shared across profiles: delete it only when no OTHER profile
+  # still has this module installed (else a prod uninstall would break the default install).
+  if _installed_any_profile "$name"; then
+    log "Uninstalled $name (profile: ${AIBOX_PROFILE:-base}; script cache retained — still installed under another profile)"
+  else
+    rm -rf "$dest"
+    log "Uninstalled $name"
+  fi
 }
 
 cmd_update() {
@@ -1128,20 +1154,28 @@ cmd_update() {
 }
 
 cmd_list() {
-  if [ ! -f "$AIBOX_INSTALLED" ]; then
-    echo "(no modules installed yet)"
+  local names; names="$(installed_names)"
+  if [ ! -f "$AIBOX_INSTALLED" ] || [ -z "$names" ]; then
+    if [ "${AIBOX_PROFILE:-base}" != "base" ]; then
+      echo "(no modules installed for profile '${AIBOX_PROFILE}' yet)"
+    else
+      echo "(no modules installed yet)"
+    fi
     echo "Available: aibox list-available"
     return
   fi
-  echo "Installed modules:"
-  local key val name
-  while IFS='=' read -r key val; do
-    [ -n "$key" ] || continue
-    name="${key#AIBOX_INSTALLED_}"
-    name="${name//_/-}"
+  if [ "${AIBOX_PROFILE:-base}" != "base" ]; then
+    echo "Installed modules (profile: ${AIBOX_PROFILE}):"
+  else
+    echo "Installed modules:"
+  fi
+  local m key val
+  for m in $names; do
+    key="$(_ikey "$m")"
+    val="$(grep "^${key}=" "$AIBOX_INSTALLED" 2>/dev/null | head -1 | cut -d= -f2-)"
     val="${val%\"}"; val="${val#\"}"
-    printf '  %s✔%s %-14s %s\n' "$C_GRN" "$C_RST" "$name" "$val"
-  done < "$AIBOX_INSTALLED"
+    printf '  %s✔%s %-14s %s\n' "$C_GRN" "$C_RST" "$m" "$val"
+  done
 }
 
 cmd_list_available() {
@@ -1224,7 +1258,7 @@ cmd_dashboard_detail() {
         code=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "$endpoint" 2>/dev/null) || code="000"
         [ -n "$code" ] || code="000"
         case "$code" in
-          200|204|301|302|401) ok "health: ok HTTP $code" ;;
+          200|204|301|302|307|308|401) ok "health: ok HTTP $code" ;;
           000) bad "health: unreachable" ;;
           *) warn "health: HTTP $code" ;;
         esac ;;

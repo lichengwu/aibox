@@ -51,3 +51,41 @@ load test_helper
   [[ "$names" == *"base "* ]]
   [[ "$names" == *"pi-web "* ]]
 }
+
+@test "installed state is profile-scoped (multi-profile isolation)" {
+  # base profile (AIBOX_PROFILE unset)
+  mark_installed pi-web "1.0.0"
+  # named profile
+  AIBOX_PROFILE=prod
+  mark_installed pi-web "1.0.0"
+  AIBOX_PROFILE=base
+  # both keys in the file
+  grep -q '^AIBOX_INSTALLED_pi_web=' "$AIBOX_INSTALLED"
+  grep -q '^AIBOX_INSTALLED_pi_web__prod=' "$AIBOX_INSTALLED"
+  # base profile sees exactly pi-web (no prod-suffix leakage into installed_names)
+  [ "$(installed_names)" = "pi-web" ]
+  is_installed pi-web
+  # prod sees its own
+  AIBOX_PROFILE=prod
+  is_installed pi-web
+  [ "$(installed_names)" = "pi-web" ]
+  # the live-machine bug: uninstalling prod's marker must leave base's intact
+  unmark_installed pi-web
+  AIBOX_PROFILE=base
+  is_installed pi-web
+  # and vice versa
+  unmark_installed pi-web
+  AIBOX_PROFILE=prod
+  is_installed pi-web
+}
+
+@test "_installed_any_profile sees markers from any profile (cache-delete guard)" {
+  AIBOX_PROFILE=prod
+  mark_installed clash "1.0.0"
+  AIBOX_PROFILE=base
+  _installed_any_profile clash
+  AIBOX_PROFILE=prod
+  unmark_installed clash
+  AIBOX_PROFILE=base
+  ! _installed_any_profile clash
+}

@@ -26,6 +26,7 @@ teardown() {
   bash -c ". '$ENV_FILE'; [ \"\$AIBOX_POSTGRES_PORT\" = '5432' ]"
   bash -c ". '$ENV_FILE'; [ \"\$AIBOX_REDIS_HOST\" = 'aibox-base-redis' ]"
   bash -c ". '$ENV_FILE'; [ \"\$AIBOX_REDIS_PORT\" = '6379' ]"
+  bash -c ". '$ENV_FILE'; [ \"\$AIBOX_BASE_NETWORK\" = 'aibox-base' ]"
 }
 
 @test "write_base_env: file contains ONLY comments + KEY=VALUE (no command output leaked)" {
@@ -49,6 +50,7 @@ teardown() {
   write_base_env
   [ -f "$AIBOX_HOME/base-prod.env" ]
   bash -c "set -u; . '$AIBOX_HOME/base-prod.env'; [ \"\$AIBOX_POSTGRES_HOST\" = 'aibox-base-prod-postgres' ]"
+  bash -c "set -u; . '$AIBOX_HOME/base-prod.env'; [ \"\$AIBOX_BASE_NETWORK\" = 'aibox-base-prod' ]"
   # Profile config auto-created; hash("prod")=1073 is deterministic (same on every machine).
   [ -f "$AIBOX_HOME/profiles/prod.conf" ]
   grep -q 'PROFILE_HASH=1073' "$AIBOX_HOME/profiles/prod.conf"
