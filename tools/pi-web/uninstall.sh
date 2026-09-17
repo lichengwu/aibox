@@ -6,5 +6,9 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$DIR/lib.sh"
 
 cleanup_old
-[ -f "$PLIST" ] && mv -n "$PLIST" "$HOME/.Trash/${LABEL}.plist-$(date +%s)" 2>/dev/null || true
-log "Uninstalled the launchd service (plist moved to Trash). To remove the npm package: npm uninstall -g @agegr/pi-web"
+if [ "$OS_KIND" = "Darwin" ]; then
+  [ -f "$PLIST" ] && mv -n "$PLIST" "$HOME/.Trash/${LABEL}.plist-$(date +%s)" 2>/dev/null || true
+  log "Uninstalled the launchd service (plist moved to Trash). To remove the npm package: npm uninstall -g @agegr/pi-web"
+else
+  log "Uninstalled the systemd service. To remove the npm package: npm uninstall -g @agegr/pi-web"
+fi
