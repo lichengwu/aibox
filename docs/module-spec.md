@@ -257,11 +257,11 @@ Each module's `lib.sh` implements `dashboard_info()`, outputting key=value: endp
 
 ### DB naming convention (shared base, spec §5.4)
 
-Single DB: `<module>`; multiple DBs: `<module>_<usage>`. `aibox base createdb <module> [usage]` creates the DB.
+Single DB: `<module>`; multiple DBs: `<module>_<usage>`. `aibox base create postgres <module> [usage]` creates the DB.
 
 ### base module (spec §5)
 
-`tools/base/` ships shared PG18+Redis7 (compose + createdb). Deploy-type modules connect to the shared instance (.env DATABASE_URL + compose override network, see `tools/openmaic/docker-compose.shared.yml`).
+`tools/base/` ships shared PG18+Redis7 (compose + create). Deploy-type modules connect to the shared instance (.env DATABASE_URL + compose override network, see `tools/openmaic/docker-compose.shared.yml`).
 
 ### hooks field parsing
 

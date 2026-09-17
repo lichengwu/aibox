@@ -100,7 +100,7 @@ dashboard:                        # Optional. Only a static fallback when not in
 | --- | --- | --- |
 | `files` | No | List only **extra** files; the standard 5 files are implicit (awk union, old yaml listing all still works). CI verifies that listed items exist. |
 | `actions` | No | List all actions. **Containing `start` means service-type** and must satisfy the lifecycle contract (start/stop/restart/status/logs); without `start` means distribution-type, not enforced. The CLI lists actions as help when running `aibox <module>` (no action), and does not validate on every invocation. |
-| `services` | No | Shared-component dependencies, compact string `provider:component[#dbname]`. component is the **full name** (`postgres`/`redis`, `pg` forbidden). `postgres` should provide `#dbname`; `redis` is usually omitted. Declaration drives: CI validation, `install` auto-runs `base createdb`, compose scheduling auto-injects `--env-file base.env`. Multiple DBs: `base:postgres#windmill_jobs`. |
+| `services` | No | Shared-component dependencies, compact string `provider:component[#dbname]`. component is the **full name** (`postgres`/`redis`, `pg` forbidden). `postgres` should provide `#dbname`; `redis` is usually omitted. Declaration drives: CI validation, `install` auto-runs `base create postgres`, compose scheduling auto-injects `--env-file base.env`. Multiple DBs: `base:postgres#windmill_jobs`. |
 | `provides` | No | Only filled by provider modules (e.g. base). Declares the full names of components exposed to others. A consuming module's `services` reference must match a provider's `provides`. |
 | `dashboard` | No | Only `endpoints[]` + `hint`, as static fallback when not installed; at runtime goes through `dashboard_info()`. |
 
@@ -367,7 +367,7 @@ The convention is written into module-spec.
 - When aibox schedules compose, for modules declaring `services` it automatically appends `--env-file "$AIBOX_HOME/base.env"` (compose v2.24+ merges multiple `--env-file`s) → `${AIBOX_POSTGRES_*}` can be interpolated inside the module compose.
 - Modules **hand-write one stable** `docker-compose.shared.yml` (network join + `replicas:0` + `environment: DATABASE_URL=postgres://${AIBOX_POSTGRES_USER}:${AIBOX_POSTGRES_PASSWORD}@aibox-base-postgres:${AIBOX_POSTGRES_PORT}/${AIBOX_POSTGRES_DB}`), **zero hard-coded credentials**; the module's `.env` sets `AIBOX_POSTGRES_DB=<module>` (the DB name belongs to the module).
 - Changing base credentials/ports → `base restart` rewrites base.env → each module `aibox <module> restart` (compose up) interpolates the new values and reconnects automatically. **No generator, no extra files, no sync-deps command.**
-- `tools/base/lib.sh` still manages the shared compose lifecycle (start/stop/status) + DB creation tool (`base createdb <module> [purpose]`); `aibox <module> install` sees `services` → ensures base is up + `base createdb <module>` creates the DB.
+- `tools/base/lib.sh` still manages the shared compose lifecycle (start/stop/status) + DB creation tool (`base create postgres <module> [purpose]`); `aibox <module> install` sees `services` → ensures base is up + `base create postgres <module>` creates the DB.
 - Version compatibility: module.yaml can declare `deps` containing `postgres:16` (base manages versions, modules declare compatible versions; **full name**)
 - Network: the shared compose creates the docker network `aibox-base`; each module hand-writes an override to join
 
