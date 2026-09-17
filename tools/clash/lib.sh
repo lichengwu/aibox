@@ -63,7 +63,7 @@ detect_asset() {
 }
 
 latest_mihomo_tag() {
-  curl -fsSL https://api.github.com/repos/MetaCubeX/mihomo/releases/latest 2>/dev/null |
+  curl -fsSL --max-time 15 https://api.github.com/repos/MetaCubeX/mihomo/releases/latest 2>/dev/null |
     grep -oE '"tag_name": *"v[^"]+"' | head -1 | sed -E 's/.*"v([^"]+)".*/\1/'
 }
 
@@ -84,7 +84,7 @@ download_mihomo() {
   log "Downloading mihomo v${ver} -> ${asset}"
   mkdir -p "${CLASH_BIN_DIR}"
   tmp="${KERNEL_DEST}.gz"
-  curl -fsSL "$url" -o "$tmp" || die "Download failed: ${url}"
+  curl -fsSL --max-time 120 "$url" -o "$tmp" || die "Download failed: ${url}"
   gunzip -f "$tmp" || die "Decompress failed (mihomo .gz)"
   chmod 0755 "${KERNEL_DEST}"
   "${KERNEL_DEST}" -v >/dev/null 2>&1 || die "Downloaded binary won't run (arch mismatch?)"
