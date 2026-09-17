@@ -721,6 +721,15 @@ wait_server_healthy() {
 all_running() {
   local want=(db windmill_server windmill_worker windmill_worker_native windmill_extra caddy)
   local s n bad
+  # Shared-PG mode: the db service is replicas:0 by design (never has a container).
+  # Requiring it made every health gate fail on an otherwise-healthy shared-mode deploy
+  # (found via live prod-profile init: UI 200 + server healthy, but init died with
+  # "Service db has no running container" → "Deploy did not pass the health check").
+  if shared_pg_active; then
+    local _want2=()
+    for s in "${want[@]}"; do [ "$s" = "db" ] || _want2+=("$s"); done
+    want=("${_want2[@]}")
+  fi
   for s in "${want[@]}"; do
     n=$( { compose ps -q "$s" 2>/dev/null || true; } | wc -l )
     if [ "$n" -lt 1 ]; then warn "Service $s has no running container"; return 1; fi
