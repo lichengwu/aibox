@@ -264,10 +264,21 @@ times out on every host route while `docker pull` succeeds in 8s. Therefore:
 
 When domains are unreachable via the current egress, the engine tries the **configured**
 alternatives in order — `direct` (bypass proxies), `clash` (the clash pool's mixed port, if a
-clash state exists), `proxy` (the static `AIBOX_PROXY_URL`, even when disabled) — and **adopts the
+clash state exists), `mirror` (GitHub-family domains via a gh-proxy-style URL-prefix mirror when
+`CLASH_MIRROR`/`AIBOX_GH_MIRROR` is set — this solves the bootstrap paradox: on CN networks
+github.com may be unreachable while the clash module that would fix it downloads FROM GitHub),
+`proxy` (the static `AIBOX_PROXY_URL`, even when disabled) — and **adopts the
 first route that makes ALL failed domains reachable**, for this run only. The warning tells you how
-to make it permanent (`aibox clash on` / `aibox proxy on` / `aibox proxy off`). Nothing is tried
+to make it permanent (`aibox clash on` / `aibox proxy on` / `aibox proxy off`); the mirror route
+adopts nothing (modules honoring `CLASH_MIRROR` just work). Nothing is tried
 that isn't already configured; global config is never changed silently.
+
+Bootstrap pattern on a blocked network (before clash exists):
+
+```bash
+CLASH_MIRROR=https://gh-proxy.com aibox install clash   # preflight passes via the mirror route
+aibox clash set <subscription-url> && aibox clash on    # real egress from here on
+```
 
 ### CLI surface
 

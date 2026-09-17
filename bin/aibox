@@ -947,6 +947,18 @@ _preflight_probe_route() {
     proxy)
       [ -n "${AIBOX_PROXY_URL:-}" ] || return 1
       code="$(curl -s -x "$AIBOX_PROXY_URL" -o /dev/null --max-time "$t" -w '%{http_code}' "$url" 2>/dev/null)" ;;
+    mirror)
+      # GitHub-family domains via a gh-proxy-style URL-prefix mirror (CLASH_MIRROR /
+      # AIBOX_GH_MIRROR). Bootstrap paradox solver: on CN networks github.com may be
+      # unreachable while the mirror is fine — and clash (the network fixer) itself
+      # downloads from GitHub. Prefix mirrors fetch ANY https URL as <mirror>/<url>.
+      local mp="${CLASH_MIRROR:-${AIBOX_GH_MIRROR:-}}"
+      [ -n "$mp" ] || return 1
+      case "$url" in
+        https://github.com/*|https://raw.githubusercontent.com/*|https://objects.githubusercontent.com/*|https://release-assets.githubusercontent.com/*) ;;
+        *) return 1 ;;
+      esac
+      code="$(curl -s -o /dev/null --max-time "$t" -w '%{http_code}' "${mp%/}/${url}" 2>/dev/null)" ;;
     *) return 1 ;;
   esac
   [ -n "$code" ] && [ "$code" != "000" ]
@@ -971,6 +983,10 @@ _preflight_adopt() {
       export http_proxy="$AIBOX_PROXY_URL" https_proxy="$AIBOX_PROXY_URL" all_proxy="$AIBOX_PROXY_URL" \
              HTTP_PROXY="$AIBOX_PROXY_URL" HTTPS_PROXY="$AIBOX_PROXY_URL"
       warn "  → adopting static proxy $(mask_url "$AIBOX_PROXY_URL") for this run. Persist: aibox proxy on" ;;
+    mirror)
+      # Nothing to export: a prefix mirror is not a proxy. Modules must honor
+      # CLASH_MIRROR themselves (the clash module's downloader does).
+      warn "  → GitHub-family domains reachable only via mirror ${CLASH_MIRROR:-${AIBOX_GH_MIRROR:-}} — module downloads must honor CLASH_MIRROR/AIBOX_GH_MIRROR (clash does)" ;;
   esac
   AIBOX_PROXY_SOURCE="preflight-${route}"
 }
@@ -1094,7 +1110,7 @@ _preflight_domains() {
   done
   [ -z "$failed" ] && return 0
   warn "  ! unreachable via current route:${failed} — trying configured alternatives (direct/clash/static proxy)..."
-  for route in direct clash proxy; do
+  for route in direct clash mirror proxy; do
     still=""
     for d in $failed; do
       _preflight_probe_route "$route" "$d" || still="${still} ${d}"
@@ -1222,7 +1238,7 @@ cmd_check() {
   done
   if [ -n "$failed" ]; then
     warn "  ! unreachable via current route:${failed} — trying configured alternatives..."
-    for route in direct clash proxy; do
+    for route in direct clash mirror proxy; do
       still=""
       for d in $failed; do _preflight_probe_route "$route" "$d" || still="${still} ${d}"; done
       if [ -z "$still" ]; then _preflight_adopt "$route"; failed=""; break; fi

@@ -99,6 +99,23 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+@test "_preflight_probe_route: mirror route prefixes GitHub URLs via CLASH_MIRROR" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 unavailable"
+  python3 -m http.server 18097 --bind 127.0.0.1 >/dev/null 2>&1 &
+  local srv=$!
+  sleep 1
+  # probe fetches http://127.0.0.1:18097/https://github.com/ → any HTTP response = reachable
+  run bash -c "source '$REPO_ROOT/bin/aibox'; AIBOX_CHECK_TIMEOUT=2; CLASH_MIRROR=http://127.0.0.1:18097; _preflight_probe_route mirror 'https://github.com/'"
+  [ "$status" -eq 0 ] || echo "$output"
+  # non-GitHub-family URLs are refused on the mirror route
+  run bash -c "source '$REPO_ROOT/bin/aibox'; AIBOX_CHECK_TIMEOUT=2; CLASH_MIRROR=http://127.0.0.1:18097; _preflight_probe_route mirror 'https://example.com/'"
+  [ "$status" -ne 0 ]
+  # no mirror configured → refused
+  run bash -c "source '$REPO_ROOT/bin/aibox'; AIBOX_CHECK_TIMEOUT=2; CLASH_MIRROR=; AIBOX_GH_MIRROR=; _preflight_probe_route mirror 'https://github.com/'"
+  [ "$status" -ne 0 ]
+  kill "$srv" 2>/dev/null || true; wait "$srv" 2>/dev/null || true
+}
+
 @test "_preflight_domains: reachable domains pass; dead domain fails after trying alternatives" {
   command -v python3 >/dev/null 2>&1 || skip "python3 unavailable"
   python3 -m http.server 18098 --bind 127.0.0.1 >/dev/null 2>&1 &
