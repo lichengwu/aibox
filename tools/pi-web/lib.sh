@@ -36,8 +36,8 @@ resolve_password() {
     PASSWORD="$PI_WEB_PASSWORD"
     return 0
   fi
-  # Reuse the password in the installed plist (update/re-install keeps the same password).
-  if [ -f "$PLIST" ]; then
+  # Reuse the password in the installed plist (macOS only; update/re-install keeps the same password).
+  if [ "$OS_KIND" = "Darwin" ] && [ -f "$PLIST" ]; then
     local prev
     prev="$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:PI_WEB_PASSWORD' "$PLIST" 2>/dev/null || true)"
     if [ -n "$prev" ]; then
