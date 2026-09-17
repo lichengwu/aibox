@@ -16,7 +16,7 @@
 
 - Self-check: `windmill doctor`
 - Status: `windmill status`
-- Credentials: `windmill credentials show`
+- Credentials: `windmill credentials`
 
 ## Module Configuration
 

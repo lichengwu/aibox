@@ -796,7 +796,7 @@ cmd_doctor() {
   avail_k=$(awk '/MemAvailable/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
   total_k=$(awk '/MemTotal/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
   swap_k=$(awk '/SwapTotal/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
-  disk_k=$(df -k "$BASE_DIR" 2>/dev/null | awk 'NR==2{print $4}' || echo 0)
+  local _dfr="/"; [ -d "${BASE_DIR:-}" ] && _dfr="$BASE_DIR"; disk_k=$(df -k "$_dfr" 2>/dev/null | awk 'NR==2{print $4}' || echo 0)
   [ "$avail_k" -gt 2000000 ] && chk_ok "available memory" "$(human_size "$avail_k") / $(human_size "$total_k")" \
                              || chk_warn "available memory" "$(human_size "$avail_k") (low)"
   [ "$swap_k" -gt 1000000 ]  && chk_ok "Swap" "$(human_size "$swap_k")" \
