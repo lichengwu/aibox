@@ -225,8 +225,19 @@ cleanup_old() {
 
 # ---------- generate service unit (mac plist / linux systemd, branched by platform) ----------
 write_service() {
-  local pi_bin="$NODE_DIR/pi-web"
-  [ ! -x "$pi_bin" ] && die "Not found: ${pi_bin}; confirm npm i -g @agegr/pi-web succeeded"
+  # npm's global prefix decides where `npm i -g` puts the binary — it is NOT
+  # always node's own dir (measured on Alibaba Cloud Linux 4: node lives in
+  # /usr/bin but npm prefix -g is /usr/local → /usr/local/bin/pi-web).
+  local pi_bin="" npm_prefix
+  npm_prefix="$(npm prefix -g 2>/dev/null || true)"
+  if [ -n "$npm_prefix" ] && [ -x "${npm_prefix}/bin/pi-web" ]; then
+    pi_bin="${npm_prefix}/bin/pi-web"
+  elif [ -x "$NODE_DIR/pi-web" ]; then
+    pi_bin="$NODE_DIR/pi-web"
+  else
+    pi_bin="$(command -v pi-web 2>/dev/null || true)"
+  fi
+  { [ -n "$pi_bin" ] && [ -x "$pi_bin" ]; } || die "pi-web binary not found (looked in ${npm_prefix:-?}/bin, ${NODE_DIR}, PATH); confirm npm i -g @agegr/pi-web succeeded"
   if [ "$OS_KIND" = "Darwin" ]; then
     write_plist "$pi_bin"
   else

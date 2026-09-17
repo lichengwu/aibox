@@ -1011,7 +1011,7 @@ _preflight_deps() {
       if dep_satisfied "$cmd" "$ver"; then
         info "  ✔ ${cmd} (auto-installed)"
       else
-        bad "  ✘ ${cmd} missing (required by ${name})"
+        bad "  ✘ ${cmd}${ver:+ (>=${ver})} not satisfied (required by ${name})"
         fail=1
       fi
     fi
@@ -1240,6 +1240,17 @@ cmd_check() {
 }
 
 # ---------- dependency check + auto-install ----------
+# One-retry package install: the Aliyun internal mirror was measured throwing
+# transient "Empty reply" (curl error 52) on individual .rpm files — an
+# immediate retry succeeded (nodejs-22 installed on attempt 1 of the retry).
+_pm_install() {
+  local pm="$1"; shift
+  ${pm} install -y "$@" && return 0
+  warn "  ${pm} install failed (transient mirror error?) — retrying once..."
+  sleep 2
+  ${pm} install -y "$@"
+}
+
 # deps field format: command name, optional @platform or :version.
 # deps examples: "docker@linux docker-compose python3" "node:22 npm" ""
 # @platform: only checked on that platform (docker@linux = check on Linux only)
@@ -1292,7 +1303,7 @@ install_dep() {
           *)       eng="docker-ce"; comp="docker-compose-plugin" ;;
         esac
         log "  ${pm} install -y ${eng} ${comp} (running as root)"
-        ${pm} install -y "$eng" "$comp" 2>/dev/null \
+        _pm_install "$pm" "$eng" "$comp" 2>/dev/null \
           || ${pm} install -y moby-engine docker-compose-plugin 2>/dev/null \
           || ${pm} install -y docker.io docker-compose-v2 2>/dev/null \
           || { warn "  package install failed (tried ${eng}+${comp}, moby-engine, docker.io variants)"; return 1; }
@@ -1308,23 +1319,24 @@ install_dep() {
         warn "  (RHEL-family without the docker-ce repo: sudo ${pm} install -y moby-engine docker-compose-plugin)"
         return 1
       fi ;;
-    node)
+    node|npm)
       if [ -s "$HOME/.nvm/nvm.sh" ]; then
         # shellcheck disable=SC1091
         . "$HOME/.nvm/nvm.sh"
         nvm install 22 && nvm use 22 >/dev/null
       elif [ "$pm" = "brew" ]; then brew install node@22
       elif [ "$root" = "1" ]; then
-        ${pm} install -y nodejs 2>/dev/null || warn "  distro nodejs may be < 22; prefer nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash"
-        return 1
+        _pm_install "$pm" nodejs npm || ${pm} install -y nodejs \
+          || warn "  distro nodejs unavailable; prefer nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash"
+        return 1   # preflight rechecks the version (distro nodejs may be < 22)
       else warn "  Install node via nvm (curl nvm | bash) or: sudo ${pm} install nodejs"; return 1; fi ;;
     python3)
       if [ "$os" = "Darwin" ]; then warn "  macOS ships python3 (/usr/bin/python3); if missing install Xcode CLT: xcode-select --install"
-      elif [ "$root" = "1" ]; then ${pm} install -y python3 || { warn "  python3 install failed"; return 1; }
+      elif [ "$root" = "1" ]; then _pm_install "$pm" python3 || { warn "  python3 install failed"; return 1; }
       else warn "  Run: sudo ${pm} install -y python3"; return 1; fi ;;
     git)
       if [ "$os" = "Darwin" ]; then warn "  macOS ships git (Xcode CLT); if missing: xcode-select --install"
-      elif [ "$root" = "1" ]; then ${pm} install -y git || { warn "  git install failed"; return 1; }
+      elif [ "$root" = "1" ]; then _pm_install "$pm" git || { warn "  git install failed"; return 1; }
       else warn "  Run: sudo ${pm} install -y git"; return 1; fi ;;
     *) warn "  Unknown dependency ${cmd}; install manually"; return 1 ;;
   esac
