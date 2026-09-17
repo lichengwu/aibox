@@ -76,15 +76,20 @@ installed_kernel_version() {
 }
 
 download_mihomo() {
-  local ver asset url tmp
+  local ver asset url tmp mirror
   ver="${1:-$(latest_mihomo_tag)}"
   [ -n "$ver" ] || die "Cannot get the latest mihomo version (network? proxy? set a proxy (run: aibox proxy set) and retry)"
   asset="$(detect_asset)-v${ver}.gz"
   url="https://github.com/MetaCubeX/mihomo/releases/download/v${ver}/${asset}"
+  # Optional GitHub mirror (CLASH_MIRROR=<prefix>), for networks where github release
+  # downloads are reset/blocked. Convention: <mirror>/<full github url> (gh-proxy style).
+  mirror="${CLASH_MIRROR:-}"
+  [ -n "$mirror" ] && url="${mirror}/${url}"
   log "Downloading mihomo v${ver} -> ${asset}"
+  [ -n "$mirror" ] && log "  via mirror: ${mirror}"
   mkdir -p "${CLASH_BIN_DIR}"
   tmp="${KERNEL_DEST}.gz"
-  curl -fsSL --max-time 120 "$url" -o "$tmp" || die "Download failed: ${url}"
+  curl -fsSL --max-time 120 "$url" -o "$tmp" || die "Download failed: ${url}${mirror:+ (try a different CLASH_MIRROR or: aibox proxy set)}"
   gunzip -f "$tmp" || die "Decompress failed (mihomo .gz)"
   chmod 0755 "${KERNEL_DEST}"
   "${KERNEL_DEST}" -v >/dev/null 2>&1 || die "Downloaded binary won't run (arch mismatch?)"
