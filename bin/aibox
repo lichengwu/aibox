@@ -557,6 +557,10 @@ cmd_proxy_test() {
   local url
   url=$(normalize_proxy_url "${1:-}")
   [ -n "$url" ] || url="$AIBOX_PROXY_URL"
+  # No static proxy — fall back to the clash pool (local mihomo) if it's active.
+  if [ -z "$url" ] && clash_active; then
+    url="socks5://127.0.0.1:${CLASH_PORT}"
+  fi
   [ -n "$url" ] || die "No proxy configured. Usage: aibox proxy test [url]"
 
   log "Proxy test"
@@ -804,6 +808,10 @@ cmd_proxy_check() {
   if [ -z "$url" ] && [ -f "$AIBOX_CONFIG" ]; then
     url="$(grep '^AIBOX_PROXY_URL=' "$AIBOX_CONFIG" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')"
     url="$(normalize_proxy_url "$url")"
+  fi
+  # No static proxy configured — fall back to the clash pool (local mihomo) if it's active.
+  if [ -z "$url" ] && clash_active; then
+    url="socks5://127.0.0.1:${CLASH_PORT}"
   fi
   [ -n "$url" ] || die "No proxy configured. Usage: aibox proxy check [url]"
 
