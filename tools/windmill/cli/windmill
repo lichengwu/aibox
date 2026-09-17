@@ -564,13 +564,85 @@ mirror_pull_one() {
 #                          no further `compose pull`, to avoid re-fetching freshly
 #                          pulled images from upstream. compose uses pull_policy:
 #                          missing, so startup hits the local image directly.
+# Throughput probe: pull $1 for $2 seconds, measure /var/lib/docker growth → integer KB/s.
+# Echoes -1 when there is no growth signal (Docker Desktop), -2 when the image is
+# already local (no probe needed). A kill mid-pull is safe: layers are cached by
+# digest, so the later real pull resumes instead of restarting.
+_ghcr_speed_kbps() {
+  local img="$1" secs="${2:-8}" s0 s1 pid delta
+  [ -d /var/lib/docker ] || { printf '%s' "-1"; return 0; }
+  docker image inspect "$img" >/dev/null 2>&1 && { printf '%s' "-2"; return 0; }
+  s0=$(_docker_usage_mb)
+  docker pull "$img" >/dev/null 2>&1 &
+  pid=$!
+  sleep "$secs"
+  s1=$(_docker_usage_mb)
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
+    sleep 1
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  else
+    wait "$pid" 2>/dev/null || true
+  fi
+  delta=$((s1 - s0)); [ "$delta" -lt 0 ] && delta=0
+  printf '%s' "$((delta * 1024 / secs))"
+}
+
+# Auto ghcr route selection for CN networks. Measured on a fresh Aliyun Beijing
+# host: direct ghcr blobs crawl at 14–90 KB/s (≈ a day for the ~6 GiB set) while
+# ghcr.nju.edu.cn sustains tens of MB/s. A slow pull is NOT a stall (layers keep
+# growing), so stall detection never fires — probe throughput up front instead:
+# pull the smallest missing image for a few seconds per candidate route, adopt
+# the fastest viable one, persist WM_GHCR_MIRROR into .env (upgrade/up reuse it).
+# Opt out: WM_GHCR_PROBE=0; override candidates: WM_GHCR_CANDIDATES="host1 host2".
+auto_ghcr_mirror() {
+  local cand best="" best_kbps=0 direct_kbps=-1 min_kbps="${WM_GHCR_MIN_KBPS:-1024}"
+  local img probe_img="" k ref
+  [ "${WM_GHCR_PROBE:-1}" = "1" ] || return 0
+  [ -n "${WM_GHCR_MIRROR:-}" ] && return 0          # explicitly configured: respect it
+  [ -d /var/lib/docker ] || return 0                 # Docker Desktop: no growth signal
+  for img in "$@"; do
+    docker image inspect "$img" >/dev/null 2>&1 || { probe_img="$img"; break; }
+  done
+  [ -n "$probe_img" ] || return 0                     # everything local: nothing to speed up
+  [ "$DRY_RUN" = 1 ] && return 0
+  log "  Probing ghcr routes (direct vs public mirrors, ~8s each)..."
+  direct_kbps=$(_ghcr_speed_kbps "$probe_img" 8)
+  if [ "$direct_kbps" = "-2" ]; then return 0; fi
+  log "    direct ghcr.io: ~${direct_kbps} KB/s"
+  if [ "$direct_kbps" -ge "$min_kbps" ]; then return 0; fi
+  for cand in ${WM_GHCR_CANDIDATES:-ghcr.nju.edu.cn ghcr.dockerproxy.net}; do
+    ref="$(ghcr_mirror_ref "$probe_img" "$cand")"
+    [ -n "$ref" ] || continue
+    k=$(_ghcr_speed_kbps "$ref" 8)
+    [ "$k" = "-2" ] && k=999999
+    log "    ${cand}: ~${k} KB/s"
+    if [ "$k" != "-1" ] && [ "$k" -gt "$best_kbps" ]; then best_kbps="$k"; best="$cand"; fi
+    [ "$best_kbps" -ge 8192 ] && break               # ≥8MB/s: good enough, stop probing
+  done
+  if [ -n "$best" ] && [ "$best_kbps" -ge "$min_kbps" ] && [ "$best_kbps" -ge $((direct_kbps * 2 + 1)) ]; then
+    WM_GHCR_MIRROR="$best"
+    # set_env dies when .env is missing — guard instead of relying on || true
+    if [ -n "${ENV_FILE:-}" ] && [ -f "$ENV_FILE" ]; then
+      set_env WM_GHCR_MIRROR "$best" >/dev/null 2>&1 || true
+    fi
+    ok "  Auto-selected ghcr mirror: ${best} (~${best_kbps} KB/s vs direct ~${direct_kbps} KB/s) — persisted to .env"
+  else
+    warn "  ghcr direct is slow (~${direct_kbps} KB/s → hours for ~6GiB) and no fast mirror found;"
+    warn "  consider --ghcr-mirror <url>, a daemon HTTP proxy (systemd drop-in), or retry later"
+  fi
+  return 0
+}
+
 pull_images() {
   local ver="${1:-}" gm="${WM_GHCR_MIRROR:-}" hm="${WM_HUB_MIRROR:-}"
   local img missing=0
 
-  if [ -z "$gm" ] && [ -z "$hm" ]; then
-    crun compose pull || return 1
-    return 0
+  # No mirror configured? Probe routes first (CN networks: direct ghcr often crawls).
+  if [ -z "$gm" ]; then
+    auto_ghcr_mirror "${WM_REPO}:${ver}" "${WM_EXTRA_REPO}:${ver}" "$CADDY_IMAGE"
+    gm="${WM_GHCR_MIRROR:-}"
   fi
 
   if [ -n "$gm" ]; then
@@ -579,6 +651,8 @@ pull_images() {
       mirror_pull_one ghcr "$gm" "$img" || missing=1
     done
   else
+    # Per-image direct pull (skip-if-present + stall detection + retries) — a bare
+    # `compose pull` has none of those and silently crawls on throttled links.
     for img in "${WM_REPO}:${ver}" "${WM_EXTRA_REPO}:${ver}" "$CADDY_IMAGE"; do
       direct_pull "$img" || missing=1
     done

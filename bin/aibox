@@ -1240,15 +1240,21 @@ cmd_check() {
 }
 
 # ---------- dependency check + auto-install ----------
-# One-retry package install: the Aliyun internal mirror was measured throwing
-# transient "Empty reply" (curl error 52) on individual .rpm files — an
-# immediate retry succeeded (nodejs-22 installed on attempt 1 of the retry).
+# Retry-with-backoff package install: the Aliyun internal mirror was measured
+# throwing transient "Empty reply" (curl error 52) on individual .rpm files AND
+# repomd.xml, with flaky windows lasting minutes — a single immediate retry can
+# land in the same window. 3 attempts (0s/5s/20s backoff) rode through it live.
 _pm_install() {
-  local pm="$1"; shift
-  ${pm} install -y "$@" && return 0
-  warn "  ${pm} install failed (transient mirror error?) — retrying once..."
-  sleep 2
-  ${pm} install -y "$@"
+  local pm="$1" n=0 wait_s
+  shift
+  while :; do
+    ${pm} install -y "$@" && return 0
+    n=$((n+1))
+    [ "$n" -ge 3 ] && return 1
+    wait_s=$((n*n*5))
+    warn "  ${pm} install failed (transient mirror error?) — retry ${n}/2 in ${wait_s}s..."
+    sleep "$wait_s"
+  done
 }
 
 # deps field format: command name, optional @platform or :version.
