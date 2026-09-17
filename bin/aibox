@@ -1048,25 +1048,26 @@ cmd_install() {
 # Handle a module's services deps (module.yaml services field):
 # for base:postgres#<db> -> ensure base is running + write base.env + create db <db>. Best-effort, non-blocking.
 ensure_services() {
-  local name="$1" svc db
+  local name="$1" svc component resource
   local services; services="$(module_field "$name" services)"
   [ -n "$services" ] || return 0
   for svc in $services; do
     case "$svc" in
-      base:postgres#*) ;;
+      base:*#*) ;;
       *) continue ;;
     esac
-    db="${svc#*#}"
+    component="${svc#base:}"; component="${component%%#*}"
+    resource="${svc#*#}"
     if ! is_installed base; then
-      warn "Module ${name} depends on base:postgres, but base isn't installed (first: aibox install base)"
+      warn "Module ${name} depends on base:${component}, but base isn't installed (first: aibox install base)"
       continue
     fi
-    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx aibox-base-postgres; then
-      log "  Starting shared base (${name} depends on it)..."
-      AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" start || { warn "base start failed (start manually: aibox base start)"; continue; }
-    fi
-    log "  Creating db ${db} (shared PG)..."
-    AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" createdb "${db}" || warn "base createdb ${db} failed (create manually: aibox base createdb ${db})"
+    # `base start` is idempotent (compose up -d no-ops if already running);
+    # the container name is profile-dependent, so we don't hardcode it here.
+    log "  Starting shared base (${name} depends on it)…"
+    AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" start || { warn "base start failed (start manually: aibox base start)"; continue; }
+    log "  Creating ${component} resource '${resource}' (shared base)…"
+    AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" create "${component}" "${resource}" || warn "base create ${component} ${resource} failed (create manually: aibox base create ${component} ${resource})"
   done
   return 0
 }
@@ -1360,6 +1361,8 @@ Proxy (set once; covers aibox itself and module hooks):
   aibox proxy unset                clear the config
   aibox proxy env [--remote]       print export statements / remote-ship format
   aibox --no-proxy <command>       bypass the proxy for this invocation
+  aibox --profile <name> <command>  use a named profile (default: base; named profiles derive
+                                    ports/containers/volumes deterministically from the name)
 
   The site list is overridable via AIBOX_PROBE_SITES, format: "label|url|group" per line.
 
@@ -1388,14 +1391,18 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   # --no-proxy: bypass the proxy for this invocation (must precede the command)
   BYPASS_PROXY=0
   ASSUME_YES=0
+  AIBOX_PROFILE="${AIBOX_PROFILE:-base}"
   while [ $# -gt 0 ]; do
     case "$1" in
       --no-proxy) BYPASS_PROXY=1; shift ;;
+      --profile)  AIBOX_PROFILE="${2:-base}"; shift 2 ;;
+      --profile=*) AIBOX_PROFILE="${1#--profile=}"; shift ;;
       --yes | -y) ASSUME_YES=1; shift ;;
       --)         shift; break ;;
       *)          break ;;
     esac
   done
+  export AIBOX_PROFILE
 
   # Load config and apply the proxy (covers layer 1: this process; layer 2: spawned module hooks)
   load_config

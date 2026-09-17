@@ -27,6 +27,64 @@ die() {
   exit 1
 }
 
+# ---------- profile ----------
+# AIBOX_PROFILE defaults to "base" (exported by aibox's --profile flag).
+# profile="base" → no override (PORT=30141, LABEL=pi-web, current behavior).
+# profile=<name>  → hash-derived PORT (37100 range) + LABEL suffixed with profile name.
+# Same profile name → same PORT/LABEL on every machine (deterministic).
+# Shares the profile config ($AIBOX_HOME/profiles/<name>.conf) with base — each module
+# derives its own vars from PROFILE_HASH + PROFILE_NAME in the config.
+
+_profile_hash() {
+  local name="$1" sum=0 i=0 ch
+  while [ $i -lt ${#name} ]; do
+    ch="${name:$i:1}"
+    sum=$((sum + $(printf '%d' "'$ch") * (i + 1)))
+    i=$((i + 1))
+  done
+  printf '%d' "$sum"
+}
+
+_profile_create() {
+  local name="$1" pf="$2" h
+  h=$(_profile_hash "$name")
+  mkdir -p "$(dirname "$pf")"
+  cat >"$pf" <<EOF
+# aibox profile: $name
+# Auto-generated deterministically from the profile name.
+# Same name → same values on every machine. Edit to override.
+PROFILE_NAME=$name
+PROFILE_HASH=$h
+EOF
+  log "Created profile '$name' (hash=$h)"
+}
+
+_profile_load() {
+  [ -z "${AIBOX_PROFILE:-}" ] && return 0
+  [ "$AIBOX_PROFILE" = "base" ] && return 0
+  local pf="${AIBOX_HOME:-${HOME:+${HOME}/.aibox}}/profiles/${AIBOX_PROFILE}.conf"
+  if [ ! -f "$pf" ]; then
+    _profile_create "$AIBOX_PROFILE" "$pf"
+  fi
+  # shellcheck disable=SC1090
+  . "$pf" 2>/dev/null || {
+    warn "Profile config unparseable: $pf"
+    return 1
+  }
+  local _h="${PROFILE_HASH:-0}" _n="${PROFILE_NAME:-$AIBOX_PROFILE}"
+  PORT=$((37100 + _h % 100))
+  LABEL="pi-web-${_n}"
+  if [ "$OS_KIND" = "Darwin" ]; then
+    PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
+  else
+    UNIT_FILE="${UNIT_DIR}/${LABEL}.service"
+    LOG_DIR="$HOME/.local/share/${LABEL}/logs"
+  fi
+}
+
+# Load profile (overrides PORT + LABEL for named profiles).
+_profile_load
+
 # ---------- access password ----------
 # Priority: PI_WEB_PASSWORD env > password in the installed plist (idempotent: re-install/update
 # doesn't rotate) > random on first install. Avoids a fixed weak default on a host service

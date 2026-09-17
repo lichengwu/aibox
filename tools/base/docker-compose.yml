@@ -3,45 +3,48 @@
 # aibox-base-postgres) and create their own DB (<module> or <module>_<usage>) at init.
 # Connection info is written to $AIBOX_HOME/base.env by `base start`; consuming modules
 # inject it via compose --env-file.
+#
+# All names/ports are parameterized via ${VAR:-default}. The "base" profile (default)
+# uses the defaults below; named profiles (AIBOX_PROFILE=<name>) override via env vars
+# exported by lib.sh's _profile_load.
 services:
   postgres:
     image: postgres:18
-    container_name: aibox-base-postgres
+    container_name: ${AIBOX_BASE_PG_CONTAINER:-aibox-base-postgres}
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${AIBOX_BASE_POSTGRES_USER:-aibox}
       POSTGRES_PASSWORD: ${AIBOX_BASE_POSTGRES_PASSWORD:-aibox}
       POSTGRES_DB: aibox
     ports:
-      - "35432:5432"
+      - "${AIBOX_BASE_POSTGRES_PORT:-35432}:5432"
     volumes:
       # Mounted at the PARENT dir on purpose: postgres:17+ images use
       # PGDATA=/var/lib/postgresql/<ver>/docker and declare VOLUME /var/lib/postgresql,
       # so a named volume here covers the real data dir across major-version layout changes.
       - pg_data:/var/lib/postgresql
     networks:
-      - aibox-base
+      - default
 
   redis:
     image: redis:7
-    container_name: aibox-base-redis
+    container_name: ${AIBOX_BASE_REDIS_CONTAINER:-aibox-base-redis}
     restart: unless-stopped
     ports:
-      - "36379:6379"
+      - "${AIBOX_BASE_REDIS_PORT:-36379}:6379"
     volumes:
       - redis_data:/data
     networks:
-      - aibox-base
+      - default
 
 volumes:
-  # Explicit names: deterministic regardless of the deploy dir / compose project name
-  # (implicit names would be <project>_pg_data — tied to the directory name), and they
-  # match what uninstall/README tell users to `docker volume rm`.
+  # Explicit names: deterministic regardless of deploy dir / compose project name.
+  # "base" profile → aibox_pg_data; named profile → aibox_pg_data_<name> (via env var).
   pg_data:
-    name: aibox_pg_data
+    name: ${AIBOX_BASE_PG_VOLUME:-aibox_pg_data}
   redis_data:
-    name: aibox_redis_data
+    name: ${AIBOX_BASE_REDIS_VOLUME:-aibox_redis_data}
 
 networks:
-  aibox-base:
-    name: aibox-base
+  default:
+    name: ${AIBOX_BASE_NETWORK:-aibox-base}

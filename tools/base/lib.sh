@@ -2,9 +2,108 @@
 # Shared PostgreSQL 18 + Redis 7: modules connect to the shared instance + use their own DB
 # (<module> or <module>_<usage>).
 
-export CLI_NAME="base"
+CLI_NAME="base"
 
-# Deploy root (module-spec deploy-type convention).
+# ---------- output helpers ----------
+# Colors are inherited from aibox via the exported C_* env vars (single source of truth);
+# ${C_*:-} falls back to empty when this lib is sourced standalone.
+# Prefix uses AIBOX_MODULE (injected by aibox) with the module name as a fallback.
+log() { printf '%s[%s]%s %s\n' "${C_CYA:-}" "${AIBOX_MODULE:-base}" "${C_RST:-}" "${*}"; }
+warn() { printf '%s[!]%s %s\n' "${C_YEL:-}" "${C_RST:-}" "${*}" >&2; }
+die() {
+  printf '%s[x]%s %s\n' "${C_RED:-}" "${C_RST:-}" "${*}" >&2
+  exit 1
+}
+
+# ---------- profile ----------
+# AIBOX_PROFILE defaults to "base" (exported by aibox's --profile flag, or set in env).
+# profile="base" → no override; compose ${VAR:-default} → repo defaults (35432/36379, etc.).
+# profile=<name>  → hash-derived ports/containers/volumes/network, auto-generated config.
+# Same profile name → same hash → same values on every machine (deterministic, no coordination).
+
+# Deterministic hash from a profile name (weighted sum of char codes × position).
+# bash 3.2 compatible (while loop, no for((..))).
+_profile_hash() {
+  local name="$1" sum=0 i=0 ch
+  while [ $i -lt ${#name} ]; do
+    ch="${name:$i:1}"
+    sum=$((sum + $(printf '%d' "'$ch") * (i + 1)))
+    i=$((i + 1))
+  done
+  printf '%d' "$sum"
+}
+
+# Auto-create the profile config on first use (deterministic, copyable across machines).
+_profile_create() {
+  local name="$1" pf="$2" h
+  h=$(_profile_hash "$name")
+  mkdir -p "$(dirname "$pf")"
+  cat >"$pf" <<EOF
+# aibox profile: $name
+# Auto-generated deterministically from the profile name.
+# Same name → same values on every machine. Edit to override.
+PROFILE_NAME=$name
+PROFILE_HASH=$h
+EOF
+  log "Created profile '$name' (hash=$h)"
+}
+
+# Load (or auto-create) the profile config + derive all module-specific vars.
+# Called early in lib.sh; overrides defaults for named profiles.
+_profile_load() {
+  [ -z "${AIBOX_PROFILE:-}" ] && return 0
+  [ "$AIBOX_PROFILE" = "base" ] && return 0
+
+  local pf="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/profiles/${AIBOX_PROFILE}.conf"
+  if [ ! -f "$pf" ]; then
+    _profile_create "$AIBOX_PROFILE" "$pf"
+  fi
+  # shellcheck disable=SC1090
+  . "$pf" 2>/dev/null || {
+    warn "Profile config unparseable: $pf"
+    return 1
+  }
+
+  local _h="${PROFILE_HASH:-0}" _n="${PROFILE_NAME:-$AIBOX_PROFILE}"
+  _PROFILE_SUFFIX="-${_n}"
+
+  # Derive base-specific vars (deterministic from hash + name).
+  PG_PORT=$((35100 + _h % 332))
+  REDIS_PORT=$((36100 + _h % 279))
+  POSTGRES_CONTAINER="aibox-base-${_n}-postgres"
+  REDIS_CONTAINER="aibox-base-${_n}-redis"
+  ENV_FILE="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/base-${_n}.env"
+
+  # Export for compose ${VAR:-default} expansion.
+  export AIBOX_BASE_PG_CONTAINER="$POSTGRES_CONTAINER"
+  export AIBOX_BASE_REDIS_CONTAINER="$REDIS_CONTAINER"
+  export AIBOX_BASE_POSTGRES_PORT="$PG_PORT"
+  export AIBOX_BASE_REDIS_PORT="$REDIS_PORT"
+  export AIBOX_BASE_PG_VOLUME="aibox_pg_data_${_n}"
+  export AIBOX_BASE_REDIS_VOLUME="aibox_redis_data_${_n}"
+  export AIBOX_BASE_NETWORK="aibox-base-${_n}"
+}
+
+# List all profiles + their derived ports.
+_profile_list() {
+  local pf_dir="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/profiles"
+  echo "Profiles:"
+  echo "  base       PG=35432  Redis=36379  (default, from project)"
+  if [ -d "$pf_dir" ]; then
+    for f in "$pf_dir"/*.conf; do
+      [ -f "$f" ] || continue
+      PROFILE_NAME="" PROFILE_HASH=0
+      # shellcheck disable=SC1090
+      . "$f" 2>/dev/null || continue
+      [ -n "$PROFILE_NAME" ] || continue
+      printf '  %-10s PG=%-6d Redis=%-6d\n' "$PROFILE_NAME" \
+        $((35100 + PROFILE_HASH % 332)) $((36100 + PROFILE_HASH % 279))
+    done
+  fi
+}
+
+# ---------- paths + config ----------
+# Deploy root (module-spec deploy-type convention). Profile suffix applied for named profiles.
 base_deploy_root() {
   if [ -n "${BASE_DIR:-}" ]; then
     printf '%s' "${BASE_DIR}"
@@ -14,29 +113,24 @@ base_deploy_root() {
   if [ -z "$b" ]; then
     b="${AIBOX_HOME:-${HOME:+${HOME}/.aibox}}/apps"
   fi
-  printf '%s/base' "$b"
+  printf '%s/base%s' "$b" "${_PROFILE_SUFFIX:-}"
 }
 
-COMPOSE_FILE="$(base_deploy_root)/docker-compose.yml"
+# Defaults (profile="base" or unset). _profile_load overrides these for named profiles.
 PG_HOST="127.0.0.1"
 PG_PORT="${AIBOX_BASE_POSTGRES_PORT:-35432}"
 PG_USER="${AIBOX_BASE_POSTGRES_USER:-aibox}"
 PG_PASSWORD="${AIBOX_BASE_POSTGRES_PASSWORD:-aibox}"
 REDIS_HOST="127.0.0.1"
 REDIS_PORT="${AIBOX_BASE_REDIS_PORT:-36379}"
-# Docker container/service names (consuming modules connect via this name; base.env's host is the same).
-POSTGRES_CONTAINER="aibox-base-postgres"
-REDIS_CONTAINER="aibox-base-redis"
+POSTGRES_CONTAINER="${AIBOX_BASE_PG_CONTAINER:-aibox-base-postgres}"
+REDIS_CONTAINER="${AIBOX_BASE_REDIS_CONTAINER:-aibox-base-redis}"
+ENV_FILE="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/base.env"
 
-# Output helpers: colors are inherited from aibox via the exported C_* env vars (single
-# source of truth); ${C_*:-} falls back to empty when this lib is sourced standalone.
-# Prefix uses AIBOX_MODULE (injected by aibox) with the module name as a fallback.
-log() { printf '%s[%s]%s %s\n' "${C_CYA:-}" "${AIBOX_MODULE:-base}" "${C_RST:-}" "${*}"; }
-warn() { printf '%s[!]%s %s\n' "${C_YEL:-}" "${C_RST:-}" "${*}" >&2; }
-die() {
-  printf '%s[x]%s %s\n' "${C_RED:-}" "${C_RST:-}" "${*}" >&2
-  exit 1
-}
+# Load profile (overrides the defaults above for named profiles).
+_profile_load
+
+COMPOSE_FILE="$(base_deploy_root)/docker-compose.yml"
 
 # docker compose wrapper (selects the compose file with -f).
 compose() {
@@ -48,14 +142,13 @@ ensure_compose() {
 }
 
 # ---------- lifecycle ----------
-# Writes $AIBOX_HOME/base.env — consuming modules inject it via compose --env-file (single source).
+# Writes $ENV_FILE — consuming modules inject it via compose --env-file (single source).
 # Holds only instance-level shared info (host/port/user/password, from the container's perspective:
 # service name + internal port); the DB name <module> is each module's own, not here.
 write_base_env() {
-  local env_file="${AIBOX_HOME}/base.env"
-  mkdir -p "${AIBOX_HOME}"
-  cat >"$env_file" <<EOF
-# Generated by aibox base start — do not edit by hand; re-run base restart after changing base.
+  mkdir -p "$(dirname "$ENV_FILE")"
+  cat >"$ENV_FILE" <<EOF
+# Generated by $(aibox base start) — do not edit by hand; re-run $(base restart) after changing base.
 AIBOX_POSTGRES_HOST=${POSTGRES_CONTAINER}
 AIBOX_POSTGRES_PORT=5432
 AIBOX_POSTGRES_USER=${PG_USER}
@@ -63,7 +156,7 @@ AIBOX_POSTGRES_PASSWORD=${PG_PASSWORD}
 AIBOX_REDIS_HOST=${REDIS_CONTAINER}
 AIBOX_REDIS_PORT=6379
 EOF
-  log "Wrote ${env_file} (consumed by modules via compose --env-file)"
+  log "Wrote ${ENV_FILE} (consumed by modules via compose --env-file)"
 }
 
 cmd_start() {
@@ -87,8 +180,19 @@ cmd_status() {
   log "PG: ${PG_HOST}:${PG_PORT} (user=${PG_USER})  Redis: ${REDIS_HOST}:${REDIS_PORT}"
 }
 
-# ---------- createdb <module> [usage] ----------
-# Create a module's DB on the shared PG: <module> or <module>_<usage> (prefix=module name, avoids cross-module clashes).
+# ---------- create <component> <resource> [usage] ----------
+# Generic provision: dispatches by component. PG creates a database; Redis is a no-op.
+_create() {
+  local component="$1" resource="$2" usage="${3:-}"
+  case "$component" in
+  postgres) cmd_createdb "$resource" "$usage" ;;
+  redis) log "Redis: no resource creation needed (uses numeric DB indices)" ;;
+  *) die "base: no 'create' handler for component '${component}'" ;;
+  esac
+}
+
+# ---------- createdb <module> [usage] (PG-specific, called by _create) ----------
+# Create a module's DB on the shared PG: <module> or <module>_<usage>.
 cmd_createdb() {
   local module="$1" usage="${2:-}" dbname
   if [ -n "$usage" ]; then
@@ -110,6 +214,6 @@ cmd_createdb() {
 # ---------- Dashboard interface ----------
 dashboard_info() {
   echo "endpoint=pg://${PG_HOST}:${PG_PORT} (user=${PG_USER}) + redis://${REDIS_HOST}:${REDIS_PORT}"
-  echo "credential=PG user/password ${PG_USER}/* (override via AIBOX_BASE_POSTGRES_PASSWORD; consuming modules see ${AIBOX_HOME}/base.env)"
+  echo "credential=PG user/password ${PG_USER}/* (override via AIBOX_BASE_POSTGRES_PASSWORD; consuming modules see ${ENV_FILE})"
   echo "health=docker exec ${POSTGRES_CONTAINER} pg_isready -U ${PG_USER}"
 }

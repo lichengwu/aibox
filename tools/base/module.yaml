@@ -31,6 +31,8 @@ actions:
   - restart
   - status
   - logs
+  - create
+  - profile
 
 upstream:
   homepage: https://www.postgresql.org/
@@ -39,4 +41,4 @@ upstream:
 dashboard:
   endpoints:
     - "postgres: postgres://127.0.0.1:35432  redis: redis://127.0.0.1:36379"
-  hint: "aibox base createdb <module> to create a DB; connection info in $AIBOX_HOME/base.env"
+  hint: "aibox base create postgres <module> to create a DB; connection info in $AIBOX_HOME/base.env"

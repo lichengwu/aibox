@@ -20,9 +20,17 @@ logs)
   ensure_compose
   compose logs -f
   ;;
-createdb)
-  [ $# -ge 1 ] || die "Usage: aibox base createdb <module> [usage]"
-  cmd_createdb "$@"
+create)
+  [ $# -ge 2 ] || die "Usage: aibox base create <component> <resource> [usage]"
+  _create "$1" "$2" "${3:-}"
   ;;
-*) die "Usage: aibox base {start|stop|restart|status|logs|createdb <module> [usage]}" ;;
+createdb)
+  warn "'createdb' is deprecated; use 'create postgres <name>'"
+  [ $# -ge 1 ] || die "Usage: aibox base createdb <module> [usage] (deprecated)"
+  _create postgres "$1" "${2:-}"
+  ;;
+profile)
+  _profile_list
+  ;;
+*) die "Usage: aibox base {start|stop|restart|status|logs|create <component> <resource>|profile}" ;;
 esac
