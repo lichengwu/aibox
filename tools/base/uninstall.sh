@@ -15,4 +15,4 @@ if [ -f "$COMPOSE_FILE" ]; then
 else
   log "No compose file; nothing to uninstall"
 fi
-warn "Data volumes (pg_data/redis_data) are retained in docker; to clear them: docker volume rm aibox_pg_data aibox_redis_data"
+warn "Data volumes are retained in docker; to clear them: docker volume rm ${AIBOX_BASE_PG_VOLUME:-aibox_pg_data} ${AIBOX_BASE_REDIS_VOLUME:-aibox_redis_data}"

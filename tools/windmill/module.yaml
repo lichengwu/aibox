@@ -10,7 +10,8 @@ deps:
   - python3
 
 ports:
-  - 8080/tcp:http
+  # windmill CLI default HTTP_PORT=80 (env-overridable at init)
+  - 80/tcp:http
 
 files:
   - cli/windmill
