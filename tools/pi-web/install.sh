@@ -35,9 +35,17 @@ echo
 log "Bind       : ${BIND}:${PORT}"
 log "Local URL  : http://127.0.0.1:${PORT}"
 if [ "$BIND" = "0.0.0.0" ]; then
-  lan_ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo '<lan-ip>')"
-  log "LAN URL    : http://${lan_ip}:${PORT}"
+  if [ "$OS_KIND" = "Darwin" ]; then
+    lan_ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo '<lan-ip>')"
+  else
+    lan_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  [ -n "${lan_ip:-}" ] && log "LAN URL    : http://${lan_ip}:${PORT}"
 fi
 log "Auth       : pi / ${PASSWORD}"
-log "Plist      : $PLIST"
+if [ "$OS_KIND" = "Darwin" ]; then
+  log "Plist      : $PLIST"
+else
+  log "Unit       : $UNIT_FILE"
+fi
 log "Logs       : $LOG_DIR/pi-web{.log,.err.log}"
