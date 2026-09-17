@@ -7,6 +7,46 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.5.0] — 2026-09-17
+
+### Added
+
+- **`CLASH_MIRROR` env** for the clash module — opt-in GitHub mirror prefix for
+  `download_mihomo`, for networks where github release downloads are reset/blocked.
+- **Global TTY/NO_COLOR color scheme** — `bin/aibox` exports the `C_*` color vars so
+  module hooks (child processes) inherit the scheme (single source of truth); module
+  `lib.sh` no longer carry a per-module color block.
+- **bats tests for `save_config`/`load_config`** (`tests/config.bats`) — guard the
+  backtick-corruption regression + round-trip + no-leak + mode 600.
+
+### Changed
+
+- **TUI polish** — dashboard reworked (compact ✔/✘ status, truncated endpoint/credential
+  cells so rows don't wrap, legend footer); `list-available`/`list` use a ✔ marker;
+  `ports` columns tightened; `info()` indent fixed (8, aligns under `[aibox] `).
+- **DRY module output** — removed the 5× duplicated TTY/NO_COLOR color block across
+  module `lib.sh`; modules inherit `C_*` + use `${AIBOX_MODULE:-<name>}` as prefix.
+
+### Fixed
+
+- **CRITICAL: `save_config` corrupted `~/.aibox/config`.** The unquoted heredoc comment
+  `# ... maintained by `aibox proxy` ...` had backticks that EXECUTED `aibox proxy` on
+  every `proxy set/unset/toggle`, embedding the show-output into the config file
+  (unparseable). Backticks → single quotes.
+- **Network `curl` calls lacked `--max-time`** — a packet-dropping/hanging proxy made
+  `list-available`/`list`/`ports`/`dashboard` hang indefinitely. Added `--max-time`.
+- **`proxy check`/`proxy test` didn't fall back to the clash pool** — died "No proxy
+  configured" when clash was providing a working proxy. Added a `clash_active()` fallback.
+- **pi-web on Linux** (4 bugs, same class: `$PLIST` unbound under `set -u`, PLIST only
+  assigned on Darwin) — `resolve_password` crash + a password-reuse regression,
+  `install.sh` crash (`Plist: $PLIST` + macOS-only `ipconfig`), `uninstall.sh` crash.
+  All OS-branched; `resolve_password` now reuses the installed password from the
+  systemd unit on Linux.
+- **windmill `dashboard_info` hardcoded port 8080** but the deploy uses `HTTP_PORT=80` →
+  wrong endpoint + health false-negative. Now reads `HTTP_PORT` from the deploy `.env`.
+- **openmaic `doctor` disk check reported 0K** pre-deploy (`df -k $BASE_DIR` failed when
+  BASE_DIR didn't exist). Falls back to `/`.
+
 ## [0.4.0] — 2026-09-16
 
 ### Added

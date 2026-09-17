@@ -41,11 +41,17 @@ resolve_password() {
   if [ "$OS_KIND" = "Darwin" ] && [ -f "$PLIST" ]; then
     local prev
     prev="$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:PI_WEB_PASSWORD' "$PLIST" 2>/dev/null || true)"
-    [ -n "$prev" ] && { PASSWORD="$prev"; return 0; }
+    [ -n "$prev" ] && {
+      PASSWORD="$prev"
+      return 0
+    }
   elif [ -n "${UNIT_FILE:-}" ] && [ -f "$UNIT_FILE" ]; then
     local prev
     prev="$(grep -E '^Environment="PI_WEB_PASSWORD=' "$UNIT_FILE" 2>/dev/null | sed -E 's/^Environment="PI_WEB_PASSWORD=([^"]*)".*/\1/' || true)"
-    [ -n "$prev" ] && { PASSWORD="$prev"; return 0; }
+    [ -n "$prev" ] && {
+      PASSWORD="$prev"
+      return 0
+    }
   fi
   # First install: random 16-hex.
   if command -v openssl >/dev/null 2>&1; then
