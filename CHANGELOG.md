@@ -7,6 +7,63 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.7.0] — 2026-09-18
+
+### Added
+
+- **`aibox upgrade <module> [--check] [--to <version>] [--yes]`** — upstream component
+  upgrades WITHOUT an aibox release. The repo pins the install FLOOR (module.yaml +
+  compose `${VAR:-pinned}` + `checks.docker_images`; fresh installs stay reproducible);
+  the deploy `.env` image keys hold the LIVE version and float independently:
+  `aibox update` refreshes module scripts (floor), `aibox upgrade` bumps the component.
+  The engine (`cmd_upgrade`) is data-driven from the module.yaml `upgrade:` stanza (flat,
+  parser-compatible like `checks:`): resolve (`github-release` releases/latest |
+  `dockerhub-tags` filtered by `tag_pattern`, dotted-version max) → cross-major
+  guardrail (auto-latest refuses; `--to` pins) → **pairing, not guessing** (`mapping_url`
+  points at the upstream compose AT the target tag — dify's sandbox/plugin-daemon/
+  agent-backend pairing always matches what the target release ships) → pre-pull every
+  new image BEFORE touching anything (exit 4) → `.env.bak.<ts>` backup + rewrite only
+  the declared keys (missing keys appended, mode preserved) → recreate via the module's
+  own `svc.sh start` (health-wait) → auto-rollback on failed health (exit 20).
+  Resolver hardening (measured live on 192.168.50.88): raw.githubusercontent.com blocked
+  while api.github.com is reachable (same family, different blocking) → the fetch falls
+  back to the GitHub contents API (pure-bash base64 decode, BSD/GNU portable), then the
+  configured `CLASH_MIRROR`/`AIBOX_GH_MIRROR`. Live-verified end-to-end on that host:
+  `--to 1.17.0` (correct multi-image pairing extraction incl. unchanged companions;
+  backup; recreate; health gate) and back to 1.17.1; the installed marker follows the
+  live version. Spec: module-spec §Component upgrades; validator shape-checks the
+  stanza; 14 new offline bats tests (unit + mocked-resolver engine paths + gh-api decode).
+- **dify module** (new, 1.17.1): Dify self-hosted LLM app builder as a deploy-type
+  compose module — 14 core services on a curated single-file compose (named volumes
+  with explicit names, image refs `${DIFY_*_IMAGE:-floor}`), `nginx/` + `ssrf_proxy/`
+  config templates vendored VERBATIM from dify v1.17.1 (envsubst/ACL entrypoints run
+  inside the containers; aibox never sources them), `.env` written once by install.sh
+  with the FULL ported upstream key set, default port 8088 (dify's :80 collides with
+  windmill), optional shared-base mode (replicas 0 + aiboxbasenet + DB/REDIS remap;
+  the base redis is password-less so REDIS_PASSWORD is forced empty), residue-map
+  entries, dashboard reports the live version. Onboarded via the standard flow and
+  live-smoked on 192.168.50.88 — the smoke caught 6 real defects pre-release, all in
+  the unreleased module itself: incomplete `.env` port (DB_HOST/DB_PORT + 125 more
+  wiring/tuning keys — api hit localhost:5432 and plugin_daemon crash-looped; the
+  connection config lives in upstream `.env.example`, NOT the compose inline blocks),
+  bash-sourcing the `.env` (spaced values → `fg: no job control` — now parsed with
+  docker env_file semantics), the DIFY_PORT name collision (upstream: api gunicorn
+  port 5001 — reusing it for the web port made gunicorn bind 8088 and nginx 502; knob
+  renamed DIFY_WEB_PORT), restart-as-recreate (env changes don't apply on plain
+  compose restart), an API-inclusive health gate (probing `/` passes while the api
+  502s 30-60s behind the frontend; now probes /console/api/setup), and the shared-mode
+  live-proof (PG18: 144+13 tables, zero redis AUTH errors, the external aibox-base
+  network survives compose down).
+- **gitlab module 1.1.0**: declares the `upgrade:` stanza (dockerhub-tags resolver,
+  stable-tag regex `<dotted>-ce.0`); `aibox upgrade gitlab` auto-latest within a major,
+  cross-major requires `--to` (GitLab's staged upgrade paths). README upgrade section
+  rewritten around update-vs-upgrade.
+
+### Changed
+
+- Bumped `AIBOX_VERSION` 0.6.0 → 0.7.0 (two additive features; no CLI breaking changes).
+- Module versions: gitlab → 1.1.0; dify new at 1.17.1.
+
 ## [0.6.0] — 2026-09-18
 
 ### Added
