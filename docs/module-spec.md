@@ -114,6 +114,38 @@ See `docs/module-system-spec.md` §2.3 for the full field reference.
 - Start install paths from `${AIBOX_BIN_DIR:-$HOME/.local/bin}` and expose a module-specific override (deploy hosts often want `/usr/local/bin`).
 - Platform differences: warn, don't hard-block. Install is usually cross-platform; the real limit is reported by the script at execution time, which is less false-positive-prone than blocking at install.
 
+### Data-purge contract (`AIBOX_PURGE_DATA`) & self uninstall
+
+`aibox self uninstall` is a **three-layer selective teardown** (services / data / manager):
+
+```text
+aibox self uninstall [--services=ask|remove|keep] [--only=a,b|--except=a,b]
+                     [--data=keep|purge] [--no-rc] [--yes]
+```
+
+- `--services` — which installed modules' `uninstall.sh` hooks run, per (module, profile)
+  pair. `ask` (TTY default) prompts per module; non-TTY defaults to `keep`; `--yes`
+  resolves `ask` to the safe side (`keep`). `--only`/`--except` give headless selectivity.
+- `--data=purge` — passes `AIBOX_PURGE_DATA=1` to the hooks and drops `apps/`.
+  Requires `--services=remove` (never purge data of services left running).
+- Manager artifacts always go: `$AIBOX_BIN_DIR/aibox`, `$AIBOX_HOME` — **except `apps/`
+  which is preserved when `--data=keep`** so surviving deployments stay manageable —
+  plus the `# aibox` PATH block in shell rc files (`--no-rc` keeps it).
+- Hooks run from the module cache (`~/.aibox/modules/<m>/uninstall.sh`) — no registry
+  fetch, so uninstall works offline.
+
+**Hook obligations** (`uninstall.sh` receives `AIBOX_MODULE`, `AIBOX_PROFILE`,
+`AIBOX_PURGE_DATA`):
+
+- Default (`AIBOX_PURGE_DATA` unset/0): stop the service and remove the module's own
+  *program* artifacts (compose files, binaries, units). **Data is preserved** — volumes,
+  deploy roots, `/etc/<name>` — print the exact manual-removal commands.
+- `AIBOX_PURGE_DATA=1`: ALSO delete the module's *data*: docker volumes, deploy-root
+  contents, `/etc/<name>` config, scheduled units. The module knows its own volume
+  names/paths — the manager never guesses them.
+- Missing binaries must not short-circuit the hook (purge/retention of the deploy root
+  still runs): no early `exit 0` before the data branch.
+
 ## Deploy directory & config path conventions
 
 Modules fall into two classes, **judged by "is there runtime data that lives and dies with the deploy instance"**:

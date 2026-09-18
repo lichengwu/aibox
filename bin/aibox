@@ -1725,31 +1725,189 @@ cmd_self_update() {
 # volume mounts) whose lifecycle outlasts aibox itself — removing the manager does NOT
 # mean removing them. A bare `rm -rf "$AIBOX_HOME"` with a prompt line is not protection;
 # it must actually block.
+# Is $1 an exact member of the comma-separated list $2?
+_in_csv() {
+  local needle="$1" csv="$2" t old_ifs="$IFS"
+  IFS=','
+  for t in $csv; do
+    if [ "$t" = "$needle" ]; then IFS="$old_ifs"; return 0; fi
+  done
+  IFS="$old_ifs"
+  return 1
+}
+
+# Print "<module> <profile>" for every installed (module, profile) pair —
+# installed.sh keys are AIBOX_INSTALLED_<mu>[__<profile>]=<version>.
+_self_uninstall_entries() {
+  [ -f "$AIBOX_INSTALLED" ] || return 0
+  sed -nE 's/^AIBOX_INSTALLED_([a-z0-9_]+)(__[A-Za-z0-9_]+)?=.*/\1\2/p' "$AIBOX_INSTALLED" 2>/dev/null |
+    while IFS= read -r key; do
+      [ -n "$key" ] || continue
+      mu="${key%%__*}"
+      prof="base"
+      case "$key" in *__*) prof="${key#*__}" ;; esac
+      printf '%s %s\n' "$(printf '%s' "$mu" | tr '_' '-')" "$prof"
+    done
+}
+
+# Run one module's cached uninstall hook for a profile. Offline-safe: uses the
+# module cache directly (no load_registry / network). AIBOX_PURGE_DATA=1 asks
+# the hook to also delete the module's DATA (volumes/state//etc config) per the
+# hook contract in docs/module-spec.md.
+_self_teardown_one() {
+  local m="$1" p="$2" dm="$3"
+  local dest="$AIBOX_MOD_DIR/$m" purge_env=0
+  [ "$dm" = "purge" ] && purge_env=1
+  if [ -f "$dest/uninstall.sh" ]; then
+    log "  removing ${m}@${p} via its uninstall hook$( [ "$purge_env" = 1 ] && printf ' (PURGE: hook will delete data)' ) ..."
+    ( AIBOX_MODULE="$m" AIBOX_PROFILE="$p" AIBOX_PURGE_DATA="$purge_env" \
+      bash "$dest/uninstall.sh" ) || warn "  hook for ${m}@${p} exited non-zero (continuing)"
+  else
+    warn "  no cached uninstall hook for ${m}@${p} — remove its service manually if still running"
+  fi
+}
+
+# Remove the marked "# aibox" + export PATH block that install.sh appended.
+_self_rc_cleanup() {
+  local rc tmp n=0
+  for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
+    [ -f "$rc" ] || continue
+    grep -q '^# aibox$' "$rc" || continue
+    tmp="${rc}.aibox-remove.$$"
+    awk '
+      /^# aibox$/ { skip = 1; next }
+      skip == 1 && /^export PATH=/ { skip = 0; next }
+      { skip = 0; print }
+    ' "$rc" > "$tmp" && cat "$tmp" > "$rc" && rm -f "$tmp"
+    n=$((n + 1))
+    log "  removed the aibox PATH block from $rc"
+  done
+  [ "$n" = 0 ] && log "  no marked aibox PATH block found in shell rc files"
+  return 0
+}
+
+# Self uninstall — SELECTIVE teardown (three independent layers):
+#   --services=ask|remove|keep   run each installed module's uninstall hook
+#                                (stops containers/units/mihomo), per module+profile;
+#                                --only/--except filter the set (headless selectivity)
+#   --data=keep|purge            purge sets AIBOX_PURGE_DATA=1 for the hooks (they
+#                                delete their OWN volumes/state//etc dirs — module
+#                                knowledge stays in modules) and drops apps/;
+#                                requires --services=remove (never purge data of
+#                                services left running)
+#   manager artifacts always go: $AIBOX_BIN_DIR/aibox + $AIBOX_HOME (apps/ is
+#   PRESERVED when --data=keep so surviving deployments stay manageable — the old
+#   rm-everything flow orphaned running services with no compose files) + the
+#   shell-rc PATH block (--no-rc to keep).
+# Defaults: TTY → services=ask; non-TTY → services=keep (fail-safe); data=keep.
+# --yes skips confirms and resolves 'ask' to the SAFE side (keep).
+# Full teardown one-liner:  aibox self uninstall --services=remove --data=purge --yes
 cmd_self_uninstall() {
-  local apps_root="$AIBOX_HOME/apps" deploys=""
-  if [ -d "$apps_root" ]; then
-    deploys="$(find "$apps_root" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort || true)"
+  local services="" data_mode="keep" rc_cleanup=1 only="" except="" 
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --services=*) services="${1#--services=}" ;;
+      --services)   services="${2:-}"; shift ;;
+      --only=*)     only="${1#--only=}" ;;
+      --only)       only="${2:-}"; shift ;;
+      --except=*)   except="${1#--except=}" ;;
+      --except)     except="${2:-}"; shift ;;
+      --data=*)     data_mode="${1#--data=}" ;;
+      --data)       data_mode="${2:-}"; shift ;;
+      --no-rc)      rc_cleanup=0 ;;
+      --rc)         rc_cleanup=1 ;;
+      -h|--help)    printf 'usage: aibox self uninstall [--services=ask|remove|keep] [--only=a,b|--except=a,b] [--data=keep|purge] [--no-rc] [--yes]\n'; return 0 ;;
+      *)            die "unknown option for self uninstall: $1 (try: aibox self uninstall --help)" ;;
+    esac
+    shift
+  done
+  if [ -z "$services" ]; then
+    if [ -t 0 ]; then services="ask"; else services="keep"; fi
+  fi
+  case "$services" in ask|remove|keep) ;; *) die "--services must be ask|remove|keep (got: $services)" ;; esac
+  case "$data_mode" in keep|purge) ;; *) die "--data must be keep|purge (got: $data_mode)" ;; esac
+  if [ "$services" = "ask" ] && [ "${ASSUME_YES:-0}" = "1" ]; then
+    services="keep"
+    warn "--yes with --services=ask resolves to the safe side: keep (use --services=remove to tear services down)"
+  fi
+  if [ "$data_mode" = "purge" ] && [ "$services" != "remove" ]; then
+    die "--data=purge requires --services=remove (refusing to purge data of services left running)"
   fi
 
-  if [ -n "$deploys" ]; then
-    warn "Deploy instances found under $apps_root:"
-    printf '%s\n' "$deploys" | while IFS= read -r d; do
-      warn "  - $d"
+  # ---- inventory ----
+  local entries d ctrs
+  entries="$(_self_uninstall_entries)"
+  log "aibox self uninstall — inventory"
+  log "  manager : $AIBOX_BIN_DIR/aibox + $AIBOX_HOME"
+  if [ -n "$entries" ]; then
+    log "  installed (module@profile):"
+    printf '%s\n' "$entries" | while IFS=' ' read -r em ep; do
+      [ -n "$em" ] && log "    - ${em}@${ep}"
     done
-    warn "They belong to \"this deployment\", not \"aibox state\". Deleting them is irreversible."
-    if [ "${ASSUME_YES:-0}" != "1" ]; then
-      ask_confirm "Delete these deployments too?" || {
-        warn "Cancelled, nothing changed"
-        return 2
-      }
+  else
+    log "  installed modules: none"
+  fi
+  if [ -d "$AIBOX_HOME/apps" ]; then
+    for d in "$AIBOX_HOME"/apps/*/; do
+      [ -d "$d" ] && log "  deploy  : ${d%/}"
+    done
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    # || true: under `set -o pipefail` a grep with no matches (exit 1) would
+    # otherwise poison the assignment's status and kill the whole command.
+    ctrs="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^(aibox-|windmill|gitlab|app-|openmaic)' | tr '\n' ' ' || true)"
+    if [ -n "$ctrs" ]; then log "  running containers: ${ctrs}"; fi
+  fi
+  log "  plan    : services=${services}${only:+ only=${only}}${except:+ except=${except}}, data=${data_mode}, rc-cleanup=$( [ "$rc_cleanup" = 1 ] && echo yes || echo no )"
+
+  # ---- confirm ----
+  if [ "${ASSUME_YES:-0}" != "1" ]; then
+    if [ "$services" = "remove" ] || [ "$data_mode" = "purge" ]; then
+      ask_confirm "Tear down the selected services$( [ "$data_mode" = "purge" ] && printf ' and PURGE their data (irreversible)' )?" || { warn "Cancelled, nothing changed"; return 2; }
+    else
+      ask_confirm "Remove the aibox manager? (services and deployments are kept)" || { warn "Cancelled, nothing changed"; return 2; }
     fi
   fi
 
-  warn "Removing $AIBOX_HOME and $AIBOX_BIN_DIR/aibox"
-  warn "Uninstall installed modules' own artifacts first: aibox uninstall <module>"
-  rm -rf "$AIBOX_HOME"
+  # ---- selective teardown (hooks from the module cache; offline-safe) ----
+  if [ -n "$entries" ] && [ "$services" != "keep" ]; then
+    local m p sel
+    while IFS=' ' read -r m p; do
+      [ -n "$m" ] || continue
+      sel=1
+      [ -n "$only" ]   && { _in_csv "$m" "$only"   || sel=0; }
+      [ -n "$except" ] && { _in_csv "$m" "$except" && sel=0; }
+      if [ "$sel" = 1 ] && [ "$services" = "ask" ]; then
+        ask_confirm "Remove service: ${m} (profile: ${p})?" || sel=0
+      fi
+      if [ "$sel" = 1 ]; then _self_teardown_one "$m" "$p" "$data_mode"; fi
+    done <<ENTRIES
+$entries
+ENTRIES
+  fi
+
+  # ---- manager artifacts ----
+  if [ "$data_mode" = "purge" ]; then
+    rm -rf "$AIBOX_HOME"
+  else
+    # Keep apps/ (deploy data + compose files) so surviving services stay manageable.
+    if [ -d "$AIBOX_HOME" ]; then
+      find "$AIBOX_HOME" -mindepth 1 -maxdepth 1 ! -name apps -exec rm -rf {} + 2>/dev/null || true
+      rmdir "$AIBOX_HOME/apps" 2>/dev/null || true
+      rmdir "$AIBOX_HOME" 2>/dev/null || true
+    fi
+  fi
   rm -f "$AIBOX_BIN_DIR/aibox"
-  log "aibox uninstalled"
+  if [ "$rc_cleanup" = 1 ]; then _self_rc_cleanup; fi
+
+  # ---- summary ----
+  ok "aibox manager removed (binary + state$([ "$rc_cleanup" = 1 ] && printf ' + rc PATH block'))"
+  if [ "$data_mode" != "purge" ] && [ -d "$AIBOX_HOME/apps" ]; then
+    warn "kept deployments under $AIBOX_HOME/apps"
+    [ "$services" = "keep" ] && warn "their services were NOT touched — manage them directly (docker compose -f <apps>/<module>/docker-compose.yml, systemctl --user, ...)"
+    warn "data volumes (if any) were retained — see each module's uninstall output for exact 'docker volume rm' commands"
+  fi
+  return 0
 }
 
 usage() {
@@ -1768,7 +1926,12 @@ Usage:
   aibox dashboard [module]          overview table, or single-module detail + health
   aibox <module> <action> [args]   invoke a module action (e.g. aibox pi-web start)
   aibox self update                 update aibox itself (idempotent re-bootstrap)
-  aibox self uninstall [--yes]      uninstall aibox (needs --yes if apps/ has deploy instances)
+  aibox self uninstall [--services=ask|remove|keep] [--only=a,b|--except=a,b]
+                       [--data=keep|purge] [--no-rc] [--yes]
+                               uninstall aibox: choose per module whether to also tear
+                               down services (their uninstall hooks) and/or PURGE data
+                               (volumes/state//etc); apps/ survives unless --data=purge.
+                               Full teardown: --services=remove --data=purge --yes
   aibox self version                print aibox version
   aibox version | -v | --version
   aibox help | -h | --help
@@ -1863,7 +2026,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
       set -- ${_self_kept[@]+"${_self_kept[@]}"}
       case "${1:-}" in
         update)       cmd_self_update ;;
-        uninstall)   cmd_self_uninstall ;;
+        uninstall)    shift; cmd_self_uninstall "$@" ;;
         version)     echo "aibox $AIBOX_VERSION" ;;
         *)           die "Usage: aibox self {update|uninstall|version} [--yes]" ;;
       esac ;;

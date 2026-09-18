@@ -12,3 +12,17 @@ if [ "$OS_KIND" = "Darwin" ]; then
 else
   log "Uninstalled the systemd service. To remove the npm package: npm uninstall -g @agegr/pi-web"
 fi
+
+# Purge contract (docs/module-spec.md): pi-web has no data volumes — its "data"
+# is the globally installed npm package; AIBOX_PURGE_DATA=1 removes it too.
+if [ "${AIBOX_PURGE_DATA:-0}" = "1" ]; then
+  if command -v npm >/dev/null 2>&1; then
+    if npm uninstall -g @agegr/pi-web >/dev/null 2>&1; then
+      log "purged npm package @agegr/pi-web"
+    else
+      warn "npm uninstall failed; run manually: npm uninstall -g @agegr/pi-web"
+    fi
+  else
+    warn "npm not found; remove the package manually: npm uninstall -g @agegr/pi-web"
+  fi
+fi

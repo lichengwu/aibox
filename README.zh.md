@@ -43,7 +43,11 @@ aibox ports                      端口分配表（声明 + 实际监听）
 aibox dashboard [module]          总览表，或单模块详情 + 健康
 aibox <module> <action> [args]   调用模块动作（如 aibox pi-web start）
 aibox self update                 更新 aibox 主程序（幂等重装）
-aibox self uninstall [--yes]      卸载 aibox（apps/ 下有部署实例时需 --yes）
+aibox self uninstall [--services=ask|remove|keep] [--only=a,b|--except=a,b]
+                     [--data=keep|purge] [--no-rc] [--yes]
+                              卸载 aibox：逐模块选择是否拆除服务（跑各自 uninstall 钩子）
+                              及是否清除数据（卷/状态//etc）；除非 --data=purge，apps/ 保留。
+                              彻底卸载：--services=remove --data=purge --yes
 aibox self version | version | help
 
 安装/更新前会强制跑 preflight（各模块 module.yaml 的 checks: 声明：磁盘/域名可达/命令/base 服务就绪）；

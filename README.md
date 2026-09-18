@@ -47,7 +47,12 @@ On network failure it tries the configured alternatives (direct / clash pool / s
 adopts a working route for that run. `aibox check [module]` runs it proactively;
 `--skip-checks` (or `AIBOX_SKIP_CHECKS=1`) bypasses it.
 aibox self update                 update aibox itself (idempotent re-bootstrap)
-aibox self uninstall [--yes]      uninstall aibox (needs --yes if apps/ has deploy instances)
+aibox self uninstall [--services=ask|remove|keep] [--only=a,b|--except=a,b]
+                     [--data=keep|purge] [--no-rc] [--yes]
+                              uninstall aibox: per-module choice to tear down services
+                              (their hooks) and/or PURGE data (volumes/state//etc).
+                              apps/ survives unless --data=purge; full teardown:
+                              --services=remove --data=purge --yes
 aibox self version | version | help
 
 aibox proxy                       show proxy config and state
