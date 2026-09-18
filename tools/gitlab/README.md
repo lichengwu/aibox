@@ -38,12 +38,23 @@ windmill (:80) and sshd (:22). The deploy root is `$AIBOX_HOME/apps/gitlab`
 
 ## Upgrades (read before bumping)
 
+Two verbs, two concerns:
+
+- **`aibox update gitlab`** — refreshes the module's own scripts (compose/templates) from
+  the aibox repo; the version stays on the repo-pinned floor.
+- **`aibox upgrade gitlab`** — bumps the deployed GitLab **version** without an aibox
+  release: resolves the latest stable `gitlab/gitlab-ce` tag from Docker Hub
+  (`<dotted>-ce.0` only), pre-pulls, rewrites `GITLAB_IMAGE` in the deploy `.env`
+  (backup kept), recreates + health-waits, auto-rolls-back on failure.
+  `--check` is a dry run. Requires hub.docker.com reachable from the host
+  (proxy/mirror), or pin directly: `aibox upgrade gitlab --to 19.3.0-ce.0`.
+
 GitLab requires a **staged upgrade path** across major versions (e.g.
-18.x → 19.0 → 19.2 — see <https://docs.gitlab.com/update/#upgrade-paths>).
-To upgrade: set `GITLAB_IMAGE` in the deploy `.env` to the next stop on the
-path, then `aibox gitlab restart`, watch `aibox gitlab status` until
-healthy, take a backup (`docker exec aibox-gitlab gitlab-backup create`),
-and only then continue to the next version.
+18.x → 19.0 → 19.2 — see <https://docs.gitlab.com/upgrade-paths/>), so
+`aibox upgrade` auto-latest **refuses to cross a major** (16→17→…): step
+explicitly with `--to <next-stop>`, watch `aibox gitlab status` until healthy,
+take a backup (`docker exec aibox-gitlab gitlab-backup create`), then continue.
+Same-major minor bumps are safe to auto-latest.
 
 ## Credentials
 

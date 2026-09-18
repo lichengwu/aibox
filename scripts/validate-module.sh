@@ -385,6 +385,30 @@ validate_module() {
   done
   [ -n "$dpl" ] && { printf '%s' "$dpl" | grep -qE '^[A-Za-z0-9._/-]+(:[A-Za-z0-9._-]+)?$' || err "checks.docker_pull must be an image reference: $dpl"; }
 
+  # --- S15.5: upgrade stanza (optional; shape-checked when present) ---
+  if grep -qE '^upgrade:' "$f"; then
+    local usrc urepo uimgs umap upat tok
+    usrc="$(module_field "$m" upgrade_source)"
+    urepo="$(module_field "$m" upgrade_repo)"
+    uimgs="$(module_field "$m" upgrade_images)"
+    umap="$(module_field "$m" upgrade_mapping_url)"
+    upat="$(module_field "$m" upgrade_tag_pattern)"
+    [ -n "$usrc" ] || err "upgrade: present but missing source (github-release | dockerhub-tags)"
+    printf '%s' "$usrc" | grep -qE '^(github-release|dockerhub-tags)$' || err "upgrade.source must be github-release or dockerhub-tags: $usrc"
+    printf '%s' "$urepo" | grep -qE '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || err "upgrade.repo must be <owner>/<repo>: $urepo"
+    [ -n "$uimgs" ] || err "upgrade: present but the images list is empty"
+    for tok in $uimgs; do
+      printf '%s' "$tok" | grep -qE '^[A-Z][A-Z0-9_]*=[A-Za-z0-9._/-]+:$' || err "upgrade.images entry malformed (want ENV_KEY=image:prefix:): $tok"
+    done
+    if [ -n "$umap" ]; then
+      printf '%s' "$umap" | grep -qE '^https?://' || err "upgrade.mapping_url must be an http(s) URL: $umap"
+      printf '%s' "$umap" | grep -q '<VER>' || err "upgrade.mapping_url must contain the <VER> placeholder: $umap"
+    fi
+    if [ "$usrc" = dockerhub-tags ]; then
+      [ -n "$upat" ] || err "upgrade: dockerhub-tags needs tag_pattern (unfiltered tags pick 'latest'/rc junk)"
+    fi
+  fi
+
   # --- S16: actions lifecycle completeness ---
   local acts
   acts="$(module_field "$m" actions)"

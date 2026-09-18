@@ -1573,6 +1573,263 @@ cmd_update() {
   fi
 }
 
+# ---------- component upgrades (upstream-driven; independent of aibox releases) ----------
+# Design (docs/module-spec.md §Component upgrades): the repo pins the install FLOOR
+# (module.yaml + compose `${VAR:-pinned}`); the deploy .env image keys hold the LIVE
+# version. `aibox upgrade <module>` floats the live version to a newer upstream release
+# WITHOUT an aibox release: it resolves the target (GitHub releases / DockerHub tags,
+# proxy-aware with mirror fallback), extracts the image-tag pairing from the upstream
+# compose at that tag (mapping_url — no guessing), pre-pulls, rewrites ONLY the declared
+# image keys in the deploy .env, recreates via the module's own svc.sh start (health
+# wait), and auto-rolls-back on failure. Modules opt in via the module.yaml `upgrade:`
+# stanza (flat shape — parser-compatible, same as `checks:`):
+#   upgrade:
+#     source: github-release        # or dockerhub-tags
+#     repo: langgenius/dify
+#     mapping_url: https://raw.githubusercontent.com/langgenius/dify/<VER>/docker/docker-compose.yaml
+#     tag_pattern: '^[0-9]+\.[0-9]+\.[0-9]+-ce\.0$'   # dockerhub-tags only
+#     images:
+#       - DIFY_API_IMAGE=langgenius/dify-api:      # .env key = upstream image prefix
+# Compare dotted versions (suffix after the first '-' ignored): prints -1 / 0 / 1.
+upgrade_ver_cmp() { # $1 $2
+  local a="${1%%-*}" b="${2%%-*}" i n va vb
+  local IFS='.'
+  # shellcheck disable=SC2206
+  local aa=($a) bb=($b)
+  n="${#aa[@]}"
+  [ "${#bb[@]}" -gt "$n" ] && n="${#bb[@]}"
+  for ((i = 0; i < n; i++)); do
+    va="${aa[$i]:-0}"; vb="${bb[$i]:-0}"
+    va="${va//[!0-9]/}"; vb="${vb//[!0-9]/}"
+    if [ "${va:-0}" -lt "${vb:-0}" ]; then printf -- '-1'; return 0; fi
+    if [ "${va:-0}" -gt "${vb:-0}" ]; then printf -- '1'; return 0; fi
+  done
+  printf -- '0'
+}
+
+# Highest version tag among the stdin lines (optional ERE filter in $1). Prints the tag.
+upgrade_pick_tag() {
+  local pat="${1:-}" line best=""
+  while IFS= read -r line; do
+    line="$(printf '%s' "${line}" | tr -d '[:space:]')"
+    [ -n "${line}" ] || continue
+    if [ -n "${pat}" ] && ! printf '%s\n' "${line}" | grep -qE "${pat}"; then continue; fi
+    if [ -z "${best}" ] || [ "$(upgrade_ver_cmp "${line}" "${best}")" = "1" ]; then best="${line}"; fi
+  done
+  [ -n "${best}" ] || return 1
+  printf '%s' "${best}"
+}
+
+# Extract the image tag for an upstream image prefix (stdin = upstream compose text).
+# $1 = prefix ENDING with ':' (e.g. langgenius/dify-api:). Prints the tag (e.g. 1.17.1).
+upgrade_extract_tag() {
+  local prefix="$1" hit
+  hit="$(grep -m1 -oE "image:[[:space:]]*${prefix}[^[:space:]'\"]+" || true)"
+  [ -n "${hit}" ] || return 1
+  printf '%s' "${hit##*"${prefix}"}"
+}
+
+# Default image for an env key from a compose file (the `image: ${KEY:-prefix:tag}` floor).
+upgrade_floor_image() { # $1=compose file, $2=env key
+  [ -f "$1" ] || return 1
+  grep -m1 -oE "image:[[:space:]]*[$][{]${2}:-[^}]+" "$1" 2>/dev/null | sed -e 's/^.*:-//'
+}
+
+# Rewrite KEY=VALUE lines in an env file in place (appends missing keys; atomic; mode kept).
+upgrade_env_rewrite() { # $1=envfile, rest=KEY=VALUE pairs
+  local envf="$1"; shift
+  local tmp mode kv k
+  mode="$(stat -f %Lp "$envf" 2>/dev/null || stat -c %a "$envf" 2>/dev/null || echo 600)"
+  tmp="$(mktemp "${envf}.upgrade.XXXXXX")" || return 1
+  local exprs=()
+  for kv in "$@"; do exprs+=(-e "s|^${kv%%=*}=.*|${kv}|"); done
+  # shellcheck disable=SC2068
+  sed ${exprs[@]+"${exprs[@]}"} "$envf" > "$tmp" || { rm -f "$tmp"; return 1; }
+  for kv in "$@"; do
+    k="${kv%%=*}"
+    grep -q "^${k}=" "$tmp" 2>/dev/null || printf '%s\n' "${kv}" >> "$tmp"
+  done
+  mv "$tmp" "$envf"
+  chmod "${mode}" "$envf" 2>/dev/null || true
+}
+
+# Fetch a URL honoring the run's proxy env; then, for GitHub-hosted files, the
+# api.github.com contents API (raw.githubusercontent.com is often blocked on
+# networks where the api host is reachable — same family, different blocking;
+# measured live); then the configured gh-proxy mirror as last resort.
+# Portability: base64 -d (GNU) / -D (BSD/mac), no jq/python (repo rule).
+_gh_api_fetch() { # $1 = https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>
+  local owner repo ref path api_json b
+  owner="$(printf '%s' "${1#https://raw.githubusercontent.com/}" | cut -d/ -f1)"
+  repo="$(printf '%s' "${1#https://raw.githubusercontent.com/}" | cut -d/ -f2)"
+  ref="$(printf '%s' "${1#https://raw.githubusercontent.com/}" | cut -d/ -f3)"
+  path="$(printf '%s' "${1#https://raw.githubusercontent.com/}" | cut -d/ -f4-)"
+  [ -n "${owner}" ] && [ -n "${repo}" ] && [ -n "${ref}" ] && [ -n "${path}" ] || return 1
+  api_json="$(curl -fsSL --max-time "${AIBOX_UPGRADE_TIMEOUT:-20}" \
+    "https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${ref}" 2>/dev/null)" || return 1
+  b="$(printf '%s' "${api_json}" | grep -oE '"content": *"[^"]*"' | cut -d'"' -f4 | sed 's/\\n//g')"
+  [ -n "${b}" ] || return 1
+  printf '%s' "${b}" | base64 -d 2>/dev/null || printf '%s' "${b}" | base64 -D 2>/dev/null
+}
+
+upgrade_fetch() {
+  local url="$1" mirror out
+  out="$(curl -fsSL --max-time "${AIBOX_UPGRADE_TIMEOUT:-20}" "${url}" 2>/dev/null)" && { printf '%s' "${out}"; return 0; }
+  case "${url}" in
+  https://raw.githubusercontent.com/*)
+    out="$(_gh_api_fetch "${url}")" && [ -n "${out}" ] && { printf '%s' "${out}"; return 0; }
+    ;;
+  esac
+  mirror="${CLASH_MIRROR:-${AIBOX_GH_MIRROR:-}}"
+  [ -n "${mirror}" ] || return 1
+  out="$(curl -fsSL --max-time "${AIBOX_UPGRADE_TIMEOUT:-20}" "${mirror%/}/${url}" 2>/dev/null)" && { printf '%s' "${out}"; return 0; }
+  return 1
+}
+
+cmd_upgrade() {
+  local name="" target="" check_only=0 pinned=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --check)      check_only=1; shift ;;
+      --to)         target="${2:-}"; [ -n "${target}" ] || die "--to needs a version (e.g. --to 1.17.2)"; pinned=1; shift 2 ;;
+      --yes | -y)   ASSUME_YES=1; shift ;;
+      -*)           die "unknown option for upgrade: $1 (usage: aibox upgrade <module> [--check] [--to <version>] [--yes])" ;;
+      *)            [ -z "${name}" ] && name="$1"; shift ;;
+    esac
+  done
+  [ -n "${name}" ] || die "Usage: aibox upgrade <module> [--check] [--to <version>] [--yes] — upstream component upgrade, independent of aibox releases (vs: aibox update = re-fetch module scripts)"
+  load_registry
+  module_exists "${name}" || die "Unknown module: ${name} (aibox dashboard --available shows available modules)"
+  is_installed "${name}" || die "${name} not installed (first: aibox install ${name})"
+
+  local src repo images mapping pattern
+  src="$(module_field "${name}" upgrade_source)"
+  repo="$(module_field "${name}" upgrade_repo)"
+  images="$(module_field "${name}" upgrade_images)"
+  mapping="$(module_field "${name}" upgrade_mapping_url)"
+  pattern="$(module_field "${name}" upgrade_tag_pattern)"
+  [ -n "${src}" ] || die "${name} does not declare upgrade support (module.yaml 'upgrade:' stanza — see docs/module-spec.md §Component upgrades)"
+  [ -n "${repo}" ] || die "${name} upgrade stanza missing repo"
+  [ -n "${images}" ] || die "${name} upgrade stanza missing the images list"
+
+  # Locate the deploy .env via the module's own lib.sh (same pattern as dashboard_info).
+  local mod_dir="${AIBOX_MOD_DIR}/${name}" envf root
+  [ -f "${mod_dir}/lib.sh" ] || die "Missing ${mod_dir}/lib.sh (try: aibox update ${name})"
+  root="$(AIBOX_MODULE="${name}" AIBOX_HOME="${AIBOX_HOME}" bash -c ". '${mod_dir}/lib.sh' 2>/dev/null; deploy_root 2>/dev/null" 2>/dev/null || true)"
+  [ -n "${root}" ] || die "cannot locate ${name} deploy root (lib.sh deploy_root)"
+  envf="${root}/.env"
+  [ -f "${envf}" ] || die "${name} deploy .env not found (${envf}; reinstall: aibox install ${name})"
+  local svc="${mod_dir}/svc.sh"
+
+  # Current live version: the first declared image key's tag (fallback: compose floor).
+  local first k prefix cur_img cur_ver
+  first="$(printf '%s' "${images}" | awk '{print $1}')"
+  k="${first%%=*}"
+  prefix="${first#*=}"
+  cur_img="$(grep -m1 "^${k}=" "${envf}" 2>/dev/null | cut -d= -f2-)"
+  [ -n "${cur_img}" ] || cur_img="$(upgrade_floor_image "${mod_dir}/docker-compose.yml" "${k}")"
+  [ -n "${cur_img}" ] || die "cannot determine the current image for ${k} (neither ${envf} nor the compose default)"
+  cur_ver="${cur_img#"${prefix}"}"
+
+  # Resolve the target version.
+  if [ -z "${target}" ]; then
+    case "${src}" in
+      github-release)
+        target="$(upgrade_fetch "https://api.github.com/repos/${repo}/releases/latest" \
+          | grep -m1 -oE '"tag_name": *"[^"]+"' | sed -e 's/.*"tag_name": *"//' -e 's/"$//' || true)"
+        ;;
+      dockerhub-tags)
+        target="$(upgrade_fetch "https://hub.docker.com/v2/repositories/${repo}/tags?page_size=100&ordering=last_updated" \
+          | grep -oE '"name": *"[^"]+"' | cut -d'"' -f4 \
+          | upgrade_pick_tag "${pattern}" || true)"
+        ;;
+      *)
+        die "${name}: unknown upgrade source '${src}' (github-release | dockerhub-tags)"
+        ;;
+    esac
+    target="${target#v}"
+  fi
+  [ -n "${target}" ] || die "cannot resolve the latest version for ${name} (network? try: aibox clash on / aibox proxy on; or pin explicitly: aibox upgrade ${name} --to <version>)"
+
+  if [ "$(upgrade_ver_cmp "${target}" "${cur_ver}")" = "0" ]; then
+    log "${name} is already at ${cur_ver}"
+    return 0
+  fi
+
+  # Guardrail: auto-latest refuses to cross a major version (migration/data risk).
+  if [ "${pinned}" = 0 ] && [ "${target%%.*}" != "${cur_ver%%.*}" ]; then
+    die "latest ${target} crosses a major version (current ${cur_ver}) — major upgrades can require migrations/data steps; pin explicitly: aibox upgrade ${name} --to ${target}"
+  fi
+
+  if [ "${check_only}" = 1 ]; then
+    log "current : ${cur_ver}"
+    log "target  : ${target}"
+    if [ "$(upgrade_ver_cmp "${target}" "${cur_ver}")" = "1" ]; then
+      log "status  : upgrade available (apply: aibox upgrade ${name} [--to ${target}] [--yes])"
+    else
+      log "status  : current is newer than the resolved target (downgrade only with --to)"
+    fi
+    return 0
+  fi
+
+  if [ "${ASSUME_YES:-0}" != 1 ]; then
+    ask_confirm "Upgrade ${name} ${cur_ver} → ${target}? (recreates containers; data volumes are preserved)" \
+      || { warn "declined (non-interactive? add --yes)"; return 2; }
+  fi
+
+  # The apply path recreates via the module's own svc start — require it before touching anything.
+  [ -f "${svc}" ] || die "Missing ${svc} (try: aibox update ${name})"
+
+  # Build the new image values: pairing comes from the upstream compose at the target tag
+  # (mapping_url), or tag == target when there is no mapping (dockerhub single-image).
+  local mapping_body="" newvals=() kv tag
+  if [ -n "${mapping}" ]; then
+    mapping_body="$(upgrade_fetch "${mapping//<VER>/${target}}")" \
+      || die "cannot fetch the image mapping at ${target} (${mapping//<VER>/<version>}) — bad tag, or network (aibox clash on)"
+  fi
+  # shellcheck disable=SC2086
+  for kv in $images; do
+    k="${kv%%=*}"
+    prefix="${kv#*=}"
+    if [ -n "${mapping}" ]; then
+      tag="$(printf '%s' "${mapping_body}" | upgrade_extract_tag "${prefix}")" \
+        || die "cannot extract the image tag for ${prefix} in the upstream mapping at ${target}"
+    else
+      tag="${target}"
+    fi
+    newvals+=("${k}=${prefix}${tag}")
+  done
+
+  # Fail fast: pull every new image BEFORE touching anything.
+  local img
+  for kv in "${newvals[@]}"; do
+    img="${kv#*=}"
+    log "pulling ${img} …"
+    docker pull "${img}" >/dev/null 2>&1 \
+      || { warn "docker pull failed: ${img}"; warn "precheck failed (daemon egress? run: aibox check ${name})"; return 4; }
+  done
+
+  # Back up, rewrite ONLY the declared image keys, recreate + health-wait via svc start.
+  local ts bak
+  ts="$(date +%Y%m%d%H%M%S)"
+  bak="${envf}.bak.${ts}"
+  cp "${envf}" "${bak}"
+  log "backed up ${envf} → ${bak}"
+  upgrade_env_rewrite "${envf}" "${newvals[@]}"
+  log "rewrote image tags in ${envf} (${cur_ver} → ${target})"
+
+  if ! AIBOX_MODULE="${name}" bash "${svc}" start; then
+    warn "upgrade failed the health check — rolling back to ${cur_ver}"
+    cp "${bak}" "${envf}"
+    AIBOX_MODULE="${name}" bash "${svc}" start || true
+    warn "rolled back to ${cur_ver} (inspect: aibox ${name} logs; retry once fixed: aibox upgrade ${name} --to ${target})"
+    return 20
+  fi
+  mark_installed "${name}" "${target}"
+  ok "${name} upgraded ${cur_ver} → ${target} (data volumes preserved; backup: ${bak})"
+  log "reclaim the old images: docker image prune"
+}
+
 cmd_list_available() {
   load_registry
   echo "Available modules (registry @ ${AIBOX_BRANCH}):"
@@ -2229,6 +2486,10 @@ Usage (one grammar: everything is a module — 'self' is the manager module):
                                     --purge, then manager + rc block)
   aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks]
                                     update modules; self = aibox itself; --all = modules + self
+  aibox upgrade <module> [--check] [--to <version>] [--yes]
+                                    upgrade the deployed COMPONENT to a newer upstream release
+                                    WITHOUT an aibox release (repo pins the install floor, the
+                                    deploy .env floats; auto-rollback on failed health check)
   aibox <module> <action> [args]    invoke a module action (e.g. aibox pi-web start)
 
   aibox check <module>|self         module preflight; 'self' = environment check
@@ -2310,6 +2571,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     install)          shift; cmd_install "$@" ;;
     uninstall)        shift; cmd_uninstall "$@" ;;
     update)           shift; cmd_update "$@" ;;
+    upgrade)          shift; cmd_upgrade "$@" ;;
     check)            shift; cmd_check "$@" ;;
     purge)            shift; cmd_purge "$@" ;;
     dashboard)        shift; cmd_dashboard "$@" ;;

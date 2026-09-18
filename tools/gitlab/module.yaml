@@ -39,6 +39,17 @@ dashboard:
   endpoints: http://127.0.0.1:8929
   hint: "Login root; initial password: aibox gitlab credentials (file auto-deletes 24h after first boot)"
 
+# Component upgrades WITHOUT an aibox release (docs/module-spec.md §Component upgrades):
+# `aibox upgrade gitlab` resolves the latest gitlab/gitlab-ce tag from Docker Hub
+# (stable `<dotted>-ce.0` only) and floats GITLAB_IMAGE in the deploy .env. Cross-major
+# (16→17→…) needs an explicit --to — GitLab requires stepping major versions.
+upgrade:
+  source: dockerhub-tags
+  repo: gitlab/gitlab-ce
+  tag_pattern: ^[0-9]+\.[0-9]+\.[0-9]+-ce\.0$
+  images:
+    - GITLAB_IMAGE=gitlab/gitlab-ce:
+
 # GitLab omnibus bundles its own PostgreSQL/Redis inside the container, so this
 # module does NOT consume the shared aibox base (documented in README/DEVELOPMENT).
 checks:

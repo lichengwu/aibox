@@ -280,8 +280,71 @@ Caveats:
 | --- | --- |
 | `aibox install <name>` | `install.sh` |
 | `aibox uninstall <name>` | `uninstall.sh` |
-| `aibox update <name>` | `update.sh` |
+| `aibox update <name>` | `update.sh` (manager re-fetches module scripts first) |
+| `aibox upgrade <name>` | manager engine — locates the deploy .env via the module's `lib.sh deploy_root`, rewrites image keys, then invokes `svc.sh start` (see §Component upgrades) |
 | `aibox <name> <action>` | `svc.sh <action>` |
+
+## Component upgrades (`aibox upgrade <module>` — upstream-driven, floor vs live)
+
+**Problem**: the repo pins component versions (compose `${VAR:-pinned}`, `module.yaml`), so a
+component release would otherwise wait for an aibox release. **Split the two concerns**:
+
+- **Install floor** (repo-owned, tested, reproducible): `module.yaml` + compose `${VAR:-pinned}`
+  defaults + `checks.docker_images`. Fresh installs always land on the floor.
+- **Live version** (deployment-owned, floats independently of aibox): the deploy `.env`
+  image keys (`DIFY_API_IMAGE`, `GITLAB_IMAGE`, …). Compose interpolation makes them authoritative
+  for running containers; `aibox update` never clobbers the `.env`.
+
+`aibox upgrade <module> [--check] [--to <version>] [--yes]` floats the live version to a newer
+upstream release **without any aibox release**:
+
+1. **Resolve** the target: `github-release` → `/releases/latest` of the declared repo;
+   `dockerhub-tags` → the tags API filtered by `tag_pattern`, max by dotted-version compare.
+   Fetches honor the run's proxy and fall back to the configured `CLASH_MIRROR`/`AIBOX_GH_MIRROR`.
+2. **Guardrail**: auto-latest refuses to cross a **major** version (migration/data risk) —
+   cross-major needs an explicit `--to`.
+3. **Pairing, not guessing**: when the app is multi-image, `mapping_url` points at the
+   upstream compose **at the target tag** (the `<VER>` placeholder is substituted); each
+   declared image key's tag is extracted from it. Dify's sandbox/plugin-daemon/agent-backend
+   pairing thus always matches what the target release itself ships.
+4. **Fail fast**: every new image is `docker pull`ed BEFORE anything is touched (daemon egress
+   probed the same way preflight does; failure → exit `4`, nothing changed).
+5. **Atomic-ish apply**: `.env` → `.env.bak.<ts>` backup; ONLY the declared image keys are
+   rewritten (missing keys appended, mode preserved); containers recreated via the module's own
+   `svc.sh start` (which health-waits per its normal contract).
+6. **Auto-rollback**: failed health check → restore the backup, recreate, exit `20` with the
+   retry hint.
+
+The current live version is reported by `--check`, shown by `dashboard` (module's
+`dashboard_info` may print `version=…` from its `.env`), and recorded in the installed-state
+marker after a successful upgrade (note: a subsequent `aibox update <module>` re-marks the
+floor — the `.env` keeps the live version; cosmetic only).
+
+### `upgrade:` stanza (module.yaml, flat shape — parser-compatible like `checks:`)
+
+```yaml
+upgrade:
+  source: github-release          # github-release | dockerhub-tags
+  repo: langgenius/dify            # github repo, or dockerhub repository
+  # Optional: upstream compose at the target tag — the image-tag pairing source.
+  # <VER> is substituted with the target version.
+  mapping_url: https://raw.githubusercontent.com/langgenius/dify/<VER>/docker/docker-compose.yaml
+  tag_pattern: '^[0-9]+\.[0-9]+\.[0-9]+-ce\.0$'   # dockerhub-tags: stable-tag filter
+  images:                          # .env key = upstream image prefix (prefix ends with ':')
+    - DIFY_API_IMAGE=langgenius/dify-api:
+```
+
+Rules:
+
+- **Opt-in**: no stanza → `aibox upgrade <module>` declines cleanly. Modules whose images
+  already float by design (base's `postgres:18`) or that own their own upgrade path
+  (windmill/openmaic CLIs, npm-based pi-web) don't need one.
+- **Infra images stay on the floor** (DB/Redis/vector-store): float them manually in the `.env`
+  only when you accept the data-compat implications (PG major upgrades need migration steps).
+- Declaring `upgrade:` opts into the standard deploy-root `.env` contract
+  (§Deploy directory) — the engine locates it via the module's own `lib.sh deploy_root()`.
+- `aibox upgrade dify --to 1.18.0` works WITHOUT any resolution network (direct pin) — the
+  escape hatch when registries are unreachable from the host.
 
 ## Exit code convention
 

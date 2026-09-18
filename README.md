@@ -40,6 +40,11 @@ aibox uninstall <module>|self [--purge] [--yes]
                                   --purge, then manager + rc block)
 aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks]
                                   update modules; self = aibox itself; --all = modules + self
+aibox upgrade <module> [--check] [--to <version>] [--yes]
+                                  upgrade the deployed COMPONENT to a newer upstream release
+                                  WITHOUT an aibox release: the repo pins the install floor,
+                                  the deploy .env floats (auto-rollback on failed health)
+                                  — `update` refreshes module scripts; `upgrade` bumps versions
 aibox check <module>|self         module preflight; 'self' = environment check
                                   (egress, core domains, docker, disk)
 aibox dashboard [--available] [<module>]

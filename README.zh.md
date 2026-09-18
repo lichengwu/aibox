@@ -40,6 +40,10 @@ aibox uninstall <module>|self [--purge] [--yes]
                                  --purge = 级联全拆：逐模块 uninstall --purge，再删管理器 + rc 块
 aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks]
                                  更新模块；self = aibox 自身；--all = 全部模块 + aibox 自身
+aibox upgrade <module> [--check] [--to <版本>] [--yes]
+                                 组件升级：不依赖 aibox 发版，把部署实例的组件升到上游新版本
+                                 （仓库钉安装地板，deploy .env 活版本浮动；失败自动回滚）
+                                 —— update 刷新模块脚本；upgrade 升组件版本
 aibox check <module>|self        前置检查：模块安装/更新就绪度；self = 环境检查（出口/核心域名/docker/磁盘）
 aibox dashboard [--available] [<module>]
                                  总览（模块+版本+端点+凭据+端口表）/ --available 全部可用 / <module> 详情+健康
