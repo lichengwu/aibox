@@ -166,6 +166,7 @@ aibox --no-proxy ...  # 单次绕过
 | [`clash`](tools/clash/README.md) | Clash 订阅代理池，编排本地 mihomo 内核（自动测速选最快 / 失败切换 / 超 1 周自动刷新） |
 | [`base`](tools/base/README.md) | 共享基础组件（PostgreSQL 18 + Redis 7），各模块独立数据库 |
 | [`gitlab`](tools/gitlab/README.md) | [GitLab CE](https://about.gitlab.com/) 自托管（omnibus docker）：Web UI + git over SSH，内置 PG/Redis |
+| [`dify`](tools/dify/README.md) | [Dify](https://github.com/langgenius/dify) 自托管（docker compose）：LLM 应用构建平台，api/worker/web/nginx + weaviate（v1.17.1） |
 
 ### 捆绑的运维 CLI
 

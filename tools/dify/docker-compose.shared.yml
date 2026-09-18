@@ -1,0 +1,142 @@
+# dify shared-base override — connect to the aibox shared base PG18 + Redis 7
+# instead of the bundled postgres:15-alpine / redis:6-alpine.
+#
+# Usage (mirrors tools/openmaic/docker-compose.shared.yml):
+#   1. aibox base start
+#   2. aibox base create postgres dify           # dify api/worker DB
+#      aibox base create postgres dify_plugin    # plugin_daemon DB
+#   3. Enable shared mode: set DIFY_SHARED_BASE=1 in the deploy .env (the
+#      install hook can do this when AIBOX_POSTGRES_HOST is present), then:
+#         aibox dify restart
+#      svc.sh detects DIFY_SHARED_BASE=1 and invokes compose with BOTH
+#      -f docker-compose.yml -f docker-compose.shared.yml --env-file base.env.
+#
+# What this file does:
+#   - db_postgres + redis: deploy.replicas: 0  (don't start the bundled ones)
+#   - the dify services that touch db/redis join the external aiboxbasenet so
+#     they can resolve the base container names, and their DB_*/REDIS_* env is
+#     remapped from the base.env vars (injected via compose --env-file).
+#
+# IMPORTANT — base Redis has NO password (the base module's redis:7 does not
+# run --requirepass). dify's redis client sends AUTH by default, which a
+# no-auth redis rejects ("ERR Client sent AUTH, but no password is set"). So
+# REDIS_PASSWORD is forced empty here, and CELERY_BROKER_URL /
+# DIFY_AGENT_REDIS_URL are built WITHOUT a password segment.
+#
+# CAVEAT — version skew: dify upstream ships postgres:15-alpine / redis:6-alpine;
+# the shared base provides postgres:18 / redis:7. This opt-in mode trades
+# per-module resources for sharing; it is NOT in dify's official test matrix.
+# If migrations or redis semantics misbehave, fall back to standalone
+# (DIFY_SHARED_BASE=0 + aibox dify restart) which uses the bundled versions.
+#
+# Verify the merged config:
+#   docker compose --env-file "$AIBOX_HOME/base.env" \
+#     -f docker-compose.yml -f docker-compose.shared.yml config
+services:
+  db_postgres:
+    deploy:
+      replicas: 0
+
+  redis:
+    deploy:
+      replicas: 0
+
+  api:
+    networks:
+      - ssrf_proxy_network
+      - default
+      - aiboxbasenet
+    environment:
+      - DB_TYPE=postgresql
+      - DB_HOST=${AIBOX_POSTGRES_HOST}
+      - DB_PORT=${AIBOX_POSTGRES_PORT}
+      - DB_USERNAME=${AIBOX_POSTGRES_USER}
+      - DB_PASSWORD=${AIBOX_POSTGRES_PASSWORD}
+      - DB_DATABASE=dify
+      - DB_SSL_MODE=disable
+      - REDIS_HOST=${AIBOX_REDIS_HOST}
+      - REDIS_PORT=${AIBOX_REDIS_PORT}
+      - REDIS_PASSWORD=
+      - REDIS_USE_SSL=false
+      - REDIS_DB=0
+      - CELERY_BROKER_URL=redis://@${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}/1
+
+  api_websocket:
+    networks:
+      - ssrf_proxy_network
+      - default
+      - aiboxbasenet
+    environment:
+      - REDIS_HOST=${AIBOX_REDIS_HOST}
+      - REDIS_PORT=${AIBOX_REDIS_PORT}
+      - REDIS_PASSWORD=
+      - REDIS_USE_SSL=false
+      - REDIS_DB=0
+      - CELERY_BROKER_URL=redis://@${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}/1
+
+  worker:
+    networks:
+      - ssrf_proxy_network
+      - default
+      - aiboxbasenet
+    environment:
+      - DB_TYPE=postgresql
+      - DB_HOST=${AIBOX_POSTGRES_HOST}
+      - DB_PORT=${AIBOX_POSTGRES_PORT}
+      - DB_USERNAME=${AIBOX_POSTGRES_USER}
+      - DB_PASSWORD=${AIBOX_POSTGRES_PASSWORD}
+      - DB_DATABASE=dify
+      - DB_SSL_MODE=disable
+      - REDIS_HOST=${AIBOX_REDIS_HOST}
+      - REDIS_PORT=${AIBOX_REDIS_PORT}
+      - REDIS_PASSWORD=
+      - REDIS_USE_SSL=false
+      - REDIS_DB=0
+      - CELERY_BROKER_URL=redis://@${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}/1
+
+  worker_beat:
+    networks:
+      - ssrf_proxy_network
+      - default
+      - aiboxbasenet
+    environment:
+      - DB_TYPE=postgresql
+      - DB_HOST=${AIBOX_POSTGRES_HOST}
+      - DB_PORT=${AIBOX_POSTGRES_PORT}
+      - DB_USERNAME=${AIBOX_POSTGRES_USER}
+      - DB_PASSWORD=${AIBOX_POSTGRES_PASSWORD}
+      - DB_DATABASE=dify
+      - DB_SSL_MODE=disable
+      - REDIS_HOST=${AIBOX_REDIS_HOST}
+      - REDIS_PORT=${AIBOX_REDIS_PORT}
+      - REDIS_PASSWORD=
+      - REDIS_USE_SSL=false
+      - REDIS_DB=0
+      - CELERY_BROKER_URL=redis://@${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}/1
+
+  plugin_daemon:
+    networks:
+      - ssrf_proxy_network
+      - default
+      - aiboxbasenet
+    environment:
+      - DB_TYPE=postgresql
+      - DB_HOST=${AIBOX_POSTGRES_HOST}
+      - DB_PORT=${AIBOX_POSTGRES_PORT}
+      - DB_USERNAME=${AIBOX_POSTGRES_USER}
+      - DB_PASSWORD=${AIBOX_POSTGRES_PASSWORD}
+      - DB_DATABASE=dify_plugin
+      - DB_SSL_MODE=disable
+      - SQLALCHEMY_DATABASE_URI_SCHEME=postgresql
+
+  agent_backend:
+    networks:
+      - default
+      - aiboxbasenet
+    environment:
+      - DIFY_AGENT_REDIS_URL=redis://@${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}/2
+
+networks:
+  aiboxbasenet:
+    name: ${AIBOX_BASE_NETWORK:-aibox-base}
+    external: true

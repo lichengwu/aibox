@@ -1,0 +1,97 @@
+name: dify
+version: 1.17.1
+description: "Dify self-hosted (docker compose): LLM app builder (api/worker/web/nginx + weaviate)"
+platform: ""
+dir: tools/dify
+
+# Runtime deps (strict-checked by the install/update preflight).
+deps:
+  - docker
+  - docker-compose
+
+# dify's official default is :80; windmill already owns 80 in this repo (CI
+# detects port conflicts), so this module defaults to 8088 (overridable via
+# DIFY_WEB_PORT in the deploy .env). All images are pulled by the docker DAEMON
+# (whose egress differs from the host's), so connectivity is probed daemon-routed
+# via docker_pull — no host-domain probes here.
+ports:
+  - 8088/tcp:http
+
+# Standard 5 hooks (lib.sh/install.sh/uninstall.sh/update.sh/svc.sh) are implicit;
+# these are the extras aibox must download alongside them. docker-compose.yml is
+# the curated single-file stack (core services + weaviate, named volumes); the
+# nginx/ and ssrf_proxy/ templates are vendored VERBATIM from dify v1.17.1's
+# docker/ tree to preserve upstream's envsubst/ACL config logic (the entrypoint
+# scripts run inside the containers — aibox never sources them).
+files:
+  - docker-compose.yml
+  - docker-compose.shared.yml
+  - nginx/nginx.conf.template
+  - nginx/proxy.conf.template
+  - nginx/https.conf.template
+  - nginx/conf.d/default.conf.template
+  - nginx/docker-entrypoint.sh
+  - ssrf_proxy/squid.conf.template
+  - ssrf_proxy/squid-common.conf.template
+  - ssrf_proxy/docker-entrypoint.sh
+
+hooks:
+  install: install.sh
+  uninstall: uninstall.sh
+  update: update.sh
+  svc: svc.sh
+
+# Service-type: actions contains start → the full lifecycle set is mandatory
+# (validator enforces stop/restart/status/logs). `credentials` surfaces the
+# generated admin INIT_PASSWORD / SECRET_KEY.
+actions:
+  - start
+  - stop
+  - restart
+  - status
+  - logs
+  - credentials
+
+upstream:
+  homepage: https://github.com/langgenius/dify
+  docs: https://docs.dify.ai/
+
+dashboard:
+  endpoints: http://127.0.0.1:8088
+  hint: "First visit sets the admin password (INIT_PASSWORD; see: aibox dify credentials). DB/Redis via deploy .env"
+
+# Component upgrades WITHOUT an aibox release (docs/module-spec.md §Component upgrades):
+# the repo pins the install floor; `aibox upgrade dify` floats the deploy .env's image
+# keys to a newer upstream release. The multi-image pairing (api/web/sandbox/plugin-daemon/
+# agent-backend) comes from dify's own docker-compose.yaml AT the target tag (mapping_url)
+# — never guessed. DB/Redis/weaviate stay on the floor (data-compat; manual .env bump if
+# you know what you're doing). Cross-major needs an explicit --to.
+upgrade:
+  source: github-release
+  repo: langgenius/dify
+  mapping_url: https://raw.githubusercontent.com/langgenius/dify/<VER>/docker/docker-compose.yaml
+  images:
+    - DIFY_API_IMAGE=langgenius/dify-api:
+    - DIFY_WEB_IMAGE=langgenius/dify-web:
+    - DIFY_SANDBOX_IMAGE=langgenius/dify-sandbox:
+    - DIFY_PLUGIN_DAEMON_IMAGE=langgenius/dify-plugin-daemon:
+    - DIFY_AGENT_BACKEND_IMAGE=langgenius/dify-agent-backend:
+
+# MANDATORY preflight (docs/module-spec.md §Preflight checks). All images come
+# from docker.io / cr.weaviate.io (daemon-pulled), so connectivity is probed
+# daemon-routed via hello-world; when every image below is already cached, the
+# pull probe is skipped and offline restarts pass. No host-curl consumers
+# (dify pulls nothing from github via curl), so no `domains:`. Disk floor
+# matches measured image weight (~5-6G) + runtime headroom.
+checks:
+  disk_gb: 10
+  docker_pull: hello-world
+  docker_images:
+    - langgenius/dify-api:1.17.1
+    - langgenius/dify-web:1.17.1
+    - langgenius/dify-sandbox:0.2.15
+    - langgenius/dify-plugin-daemon:0.6.10-local
+    - langgenius/dify-agent-backend:1.17.1
+    - postgres:15-alpine
+    - redis:6-alpine
+    - cr.weaviate.io/semitechnologies/weaviate:1.39.2

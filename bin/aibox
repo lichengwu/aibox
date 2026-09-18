@@ -1762,6 +1762,7 @@ residue_paths() { # $1=module → candidate paths (scan filters by existence)
     openmaic) printf '%s\n' "$AIBOX_HOME/apps/openmaic" "$AIBOX_BIN_DIR/openmaic" "$(_purge_etc_root)/openmaic" ;;
     windmill) printf '%s\n' "$AIBOX_HOME/apps/windmill" "$AIBOX_BIN_DIR/windmill" "$(_purge_etc_root)/windmill" ;;
     gitlab)   printf '%s\n' "$AIBOX_HOME/apps/gitlab" ;;
+    dify)     printf '%s\n' "$AIBOX_HOME/apps/dify" ;;
   esac
   return 0
 }
@@ -1771,6 +1772,7 @@ residue_volume_patterns() { # $1=module → docker volume name ERE (empty = none
     windmill) printf '%s' '^windmill_' ;;
     openmaic) printf '%s' '^app_openmaic' ;;
     gitlab)   printf '%s' '^gitlab_gitlab_(config|logs|data)$' ;;
+    dify)     printf '%s' '^dify_(storage|db|redis|sandbox_deps|sandbox_conf|plugin_daemon|weaviate)$' ;;
   esac
   return 0
 }
@@ -1780,6 +1782,7 @@ residue_container_patterns() { # $1=module → container-name ERE
     windmill) printf '%s' '^windmill-' ;;
     openmaic) printf '%s' '^app-(openmaic|postgres|render-service)-[0-9]+$' ;;
     gitlab)   printf '%s' '^aibox-gitlab$' ;;
+    dify)     printf '%s' '^dify-' ;;
   esac
   return 0
 }
@@ -1808,7 +1811,7 @@ manager_paths() { # the manager's own residue ('self' scope)
 }
 
 # ---- scan ----
-PURGE_MODULES_KNOWN="base clash pi-web openmaic windmill gitlab"
+PURGE_MODULES_KNOWN="base clash pi-web openmaic windmill gitlab dify"
 PURGE_FINDINGS=""
 PURGE_COUNT=0
 _purge_add() { # scope kind target note  (tab-separated findings list)
@@ -2154,7 +2157,7 @@ cmd_self_uninstall() {
     done
   fi
   if _purge_docker_up; then
-    ctrs="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^(aibox-|windmill|gitlab|app-|openmaic)' | tr '\n' ' ' || true)"
+    ctrs="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^(aibox-|windmill|gitlab|app-|openmaic|dify-)' | tr '\n' ' ' || true)"
     if [ -n "$ctrs" ]; then log "  running containers: ${ctrs}"; fi
   fi
   if [ "$purge" = 1 ]; then

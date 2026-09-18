@@ -1,0 +1,403 @@
+# dify deploy compose — placed into $AIBOX_HOME/apps/dify by the install hook.
+#
+# This is a CURATED single-file stack (not dify's auto-generated
+# docker-compose.yaml), pinned to dify v1.17.1. It keeps the core runtime
+# services and the default weaviate vector store; optional vector DBs, the
+# agent local_sandbox shell workspace, certbot, mysql, and the 20+ alt vector
+# stores are intentionally omitted (extend manually if needed).
+#
+# Conventions (docs/module-spec.md §Deploy directory):
+#   - named volumes only for data (Docker Desktop does not share /opt — bind
+#     mounts there fail with "Mounts denied"; $AIBOX_HOME/apps/dify is under
+#     $HOME/.aibox → under /Users on macOS → in the default share list);
+#   - the nginx/ and ssrf_proxy/ config TEMPLATES are bind-mounted from the
+#     deploy root (written verbatim by the install hook from the vendored
+#     upstream v1.17.1 files — their entrypoints run envsubst/awk INSIDE the
+#     containers; aibox never sources them);
+#   - no hardcoded credentials — everything tunable via the deploy .env
+#     (written once by `aibox install dify`, never clobbered).
+#
+# Default port: ${EXPOSE_NGINX_PORT:-8088} (dify upstream defaults to 80, which
+# collides with the windmill module in this repo). Override with DIFY_WEB_PORT.
+#
+# Shared base (optional): drop-in docker-compose.shared.yml switches db/redis
+# to the aibox base instance (replicas: 0 + aiboxbasenet) — see that file.
+
+x-dify-common: &dify-common
+  env_file:
+    - .env
+  networks:
+    - ssrf_proxy_network
+    - default
+  restart: always
+
+services:
+  # One-shot: chown the shared storage volume to 1001:1001 (the uid api runs
+  # as). Idempotent via a flag file inside the volume.
+  init_permissions:
+    image: busybox:latest
+    command:
+      - sh
+      - -c
+      - |
+        FLAG_FILE="/app/api/storage/.init_permissions"
+        if [ -f "$$FLAG_FILE" ]; then
+          echo "Permissions already initialized. Exiting."
+          exit 0
+        fi
+        echo "Initializing permissions for /app/api/storage"
+        chown -R 1001:1001 /app/api/storage && touch "$$FLAG_FILE"
+        echo "Permissions initialized. Exiting."
+    volumes:
+      - dify_storage:/app/api/storage
+    restart: "no"
+
+  # Bundled PostgreSQL 15 (dify upstream default). Shared-base mode (override)
+  # sets this to replicas: 0 and points DB_* at the aibox base PG18.
+  db_postgres:
+    image: ${DB_IMAGE:-postgres:15-alpine}
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-difyai123456}
+      POSTGRES_DB: ${DB_DATABASE:-dify}
+      PGDATA: ${PGDATA:-/var/lib/postgresql/data/pgdata}
+    command: >
+      postgres -c 'max_connections=${POSTGRES_MAX_CONNECTIONS:-100}'
+               -c 'shared_buffers=${POSTGRES_SHARED_BUFFERS:-128MB}'
+    volumes:
+      - dify_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "db_postgres", "-U", "${DB_USERNAME:-postgres}", "-d", "${DB_DATABASE:-dify}"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+
+  # Bundled Redis 6 (dify upstream default). Shared-base mode points
+  # REDIS_* at the aibox base Redis 7 and sets this to replicas: 0.
+  redis:
+    image: ${REDIS_IMAGE:-redis:6-alpine}
+    restart: always
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-difyai123456}
+    volumes:
+      - dify_redis:/data
+    command: redis-server --requirepass ${REDIS_PASSWORD:-difyai123456}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:-difyai123456} ping | grep -q PONG"]
+
+  # Code-execution sandbox. Egress is forced through ssrf_proxy (squid).
+  sandbox:
+    image: ${DIFY_SANDBOX_IMAGE:-langgenius/dify-sandbox:0.2.15}
+    restart: always
+    env_file:
+      - .env
+    environment:
+      API_KEY: ${SANDBOX_API_KEY:-dify-sandbox}
+      GIN_MODE: ${SANDBOX_GIN_MODE:-release}
+      WORKER_TIMEOUT: ${SANDBOX_WORKER_TIMEOUT:-15}
+      ENABLE_NETWORK: ${SANDBOX_ENABLE_NETWORK:-true}
+      HTTP_PROXY: ${SANDBOX_HTTP_PROXY:-http://ssrf_proxy:3128}
+      HTTPS_PROXY: ${SANDBOX_HTTPS_PROXY:-http://ssrf_proxy:3128}
+      SANDBOX_PORT: ${SANDBOX_PORT:-8194}
+      PIP_MIRROR_URL: ${PIP_MIRROR_URL:-}
+    volumes:
+      - dify_sandbox_deps:/dependencies
+      - dify_sandbox_conf:/conf
+    networks:
+      - ssrf_proxy_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8194/health"]
+
+  # SSRF forward proxy (squid). Vendored templates + entrypoint run envsubst/awk
+  # inside the container to assemble squid.conf from SSRF_* env.
+  ssrf_proxy:
+    image: ubuntu/squid:latest
+    restart: always
+    volumes:
+      - ./ssrf_proxy/squid.conf.template:/etc/squid/squid.conf.template
+      - ./ssrf_proxy/squid-common.conf.template:/etc/squid/dify_common.conf.template
+      - ./ssrf_proxy/docker-entrypoint.sh:/docker-entrypoint-mount.sh
+    entrypoint:
+      ["sh", "-c", "cp /docker-entrypoint-mount.sh /docker-entrypoint.sh && sed -i 's/\r$$//' /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh && /docker-entrypoint.sh"]
+    environment:
+      HTTP_PORT: ${SSRF_HTTP_PORT:-3128}
+      COREDUMP_DIR: ${SSRF_COREDUMP_DIR:-/var/spool/squid}
+      SSRF_PROXY_ALLOW_PRIVATE_IPS: ${SSRF_PROXY_ALLOW_PRIVATE_IPS:-}
+      SSRF_PROXY_ALLOW_PRIVATE_DOMAINS: ${SSRF_PROXY_ALLOW_PRIVATE_DOMAINS:-}
+    networks:
+      - ssrf_proxy_network
+      - default
+
+  # Plugin daemon (dify 1.x plugin system). Stores plugin packages on a named
+  # volume; exposes the remote-install port for plugin debugging.
+  plugin_daemon:
+    image: ${DIFY_PLUGIN_DAEMON_IMAGE:-langgenius/dify-plugin-daemon:0.6.10-local}
+    restart: always
+    env_file:
+      - .env
+    networks:
+      - ssrf_proxy_network
+      - default
+    environment:
+      DB_DATABASE: ${DB_PLUGIN_DATABASE:-dify_plugin}
+      DB_SSL_MODE: ${DB_SSL_MODE:-disable}
+      SERVER_PORT: ${PLUGIN_DAEMON_PORT:-5002}
+      SERVER_KEY: ${PLUGIN_DAEMON_KEY:-lYkiYYT6owG+71oLerGzA7GXCgOT++6ovaezWAjpCjf+Sjc3ZtU+qUEi}
+      MAX_PLUGIN_PACKAGE_SIZE: ${PLUGIN_MAX_PACKAGE_SIZE:-52428800}
+      PPROF_ENABLED: ${PLUGIN_PPROF_ENABLED:-false}
+      DIFY_INNER_API_URL: ${PLUGIN_DIFY_INNER_API_URL:-http://api:5001}
+      DIFY_INNER_API_KEY: ${PLUGIN_DIFY_INNER_API_KEY:-QaHbTe77CtuXmsfyhR7+vRjI/+XbV1AaFy691iy+kGDv2Jvy0/eAh8Y1}
+      PLUGIN_REMOTE_INSTALLING_HOST: ${PLUGIN_DEBUGGING_HOST:-0.0.0.0}
+      PLUGIN_REMOTE_INSTALLING_PORT: ${PLUGIN_DEBUGGING_PORT:-5003}
+      PLUGIN_WORKING_PATH: ${PLUGIN_WORKING_PATH:-/app/storage/cwd}
+      FORCE_VERIFYING_SIGNATURE: ${FORCE_VERIFYING_SIGNATURE:-true}
+      PYTHON_ENV_INIT_TIMEOUT: ${PLUGIN_PYTHON_ENV_INIT_TIMEOUT:-120}
+      PLUGIN_MAX_EXECUTION_TIMEOUT: ${PLUGIN_MAX_EXECUTION_TIMEOUT:-600}
+      PIP_MIRROR_URL: ${PIP_MIRROR_URL:-}
+      PLUGIN_STORAGE_TYPE: ${PLUGIN_STORAGE_TYPE:-local}
+      PLUGIN_STORAGE_LOCAL_ROOT: ${PLUGIN_STORAGE_LOCAL_ROOT:-/app/storage}
+      PLUGIN_INSTALLED_PATH: ${PLUGIN_INSTALLED_PATH:-plugin}
+      PLUGIN_PACKAGE_CACHE_PATH: ${PLUGIN_PACKAGE_CACHE_PATH:-plugin_packages}
+      PLUGIN_MEDIA_CACHE_PATH: ${PLUGIN_MEDIA_CACHE_PATH:-assets}
+      SENTRY_ENABLED: ${PLUGIN_SENTRY_ENABLED:-false}
+    ports:
+      - "${EXPOSE_PLUGIN_DEBUGGING_PORT:-5003}:${PLUGIN_DEBUGGING_PORT:-5003}"
+    volumes:
+      - dify_plugin_daemon:/app/storage
+    depends_on:
+      db_postgres:
+        condition: service_healthy
+        required: false
+      redis:
+        condition: service_started
+
+  # Dify Agent backend (no profile upstream → core). Runtime backend defaults
+  # to `local`; the local_sandbox shell-workspace service is omitted here (opt-in
+  # advanced feature — add it + agent_ssrf_proxy manually if needed).
+  agent_backend:
+    image: ${DIFY_AGENT_BACKEND_IMAGE:-langgenius/dify-agent-backend:1.17.1}
+    restart: always
+    env_file:
+      - .env
+    environment:
+      DIFY_AGENT_REDIS_URL: ${DIFY_AGENT_REDIS_URL:-redis://:${REDIS_PASSWORD:-difyai123456}@redis:6379/2}
+      DIFY_AGENT_PLUGIN_DAEMON_URL: ${DIFY_AGENT_PLUGIN_DAEMON_URL:-${PLUGIN_DAEMON_URL:-http://plugin_daemon:5002}}
+      DIFY_AGENT_PLUGIN_DAEMON_API_KEY: ${DIFY_AGENT_PLUGIN_DAEMON_API_KEY:-${PLUGIN_DAEMON_KEY:-lYkiYYT6owG+71oLerGzA7GXCgOT++6ovaezWAjpCjf+Sjc3ZtU+qUEi}}
+      DIFY_AGENT_INNER_API_URL: ${DIFY_AGENT_INNER_API_URL:-${PLUGIN_DIFY_INNER_API_URL:-http://api:5001}}
+      DIFY_AGENT_INNER_API_KEY: ${DIFY_AGENT_INNER_API_KEY:-${PLUGIN_DIFY_INNER_API_KEY:-QaHbTe77CtuXmsfyhR7+vRjI/+XbV1AaFy691iy+kGDv2Jvy0/eAh8Y1}}
+      DIFY_AGENT_RUNTIME_BACKEND: ${DIFY_AGENT_RUNTIME_BACKEND:-local}
+      DIFY_AGENT_STUB_API_BASE_URL: ${DIFY_AGENT_STUB_API_BASE_URL:-http://agent_backend:5050/agent-stub}
+      DIFY_AGENT_SANDBOX_FILES_BASE_URL: ${DIFY_AGENT_SANDBOX_FILES_BASE_URL:-http://api:5001}
+      DIFY_AGENT_SERVER_SECRET_KEY: ${DIFY_AGENT_SERVER_SECRET_KEY:-MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY}
+      DIFY_AGENT_API_TOKEN: ${DIFY_AGENT_API_TOKEN:-dify-agent-run-token-for-dev-only}
+    depends_on:
+      redis:
+        condition: service_started
+      plugin_daemon:
+        condition: service_started
+    networks:
+      - default
+
+  # API server (gunicorn, :5001). Runs alembic migrations on first boot when
+  # MIGRATION_ENABLED=true (set in the deploy .env).
+  api:
+    <<: *dify-common
+    image: ${DIFY_API_IMAGE:-langgenius/dify-api:1.17.1}
+    environment:
+      MODE: api
+      SENTRY_DSN: ${API_SENTRY_DSN:-}
+      PLUGIN_REMOTE_INSTALL_HOST: ${EXPOSE_PLUGIN_DEBUGGING_HOST:-localhost}
+      PLUGIN_REMOTE_INSTALL_PORT: ${EXPOSE_PLUGIN_DEBUGGING_PORT:-5003}
+      PLUGIN_MAX_PACKAGE_SIZE: ${PLUGIN_MAX_PACKAGE_SIZE:-52428800}
+      PLUGIN_DAEMON_TIMEOUT: ${PLUGIN_DAEMON_TIMEOUT:-600.0}
+      INNER_API_KEY_FOR_PLUGIN: ${PLUGIN_DIFY_INNER_API_KEY:-QaHbTe77CtuXmsfyhR7+vRjI/+XbV1AaFy691iy+kGDv2Jvy0/eAh8Y1}
+      AGENT_BACKEND_BASE_URL: ${AGENT_BACKEND_BASE_URL:-http://agent_backend:5050}
+      AGENT_BACKEND_API_TOKEN: ${DIFY_AGENT_API_TOKEN:-dify-agent-run-token-for-dev-only}
+    depends_on:
+      init_permissions:
+        condition: service_completed_successfully
+      db_postgres:
+        condition: service_healthy
+        required: false
+      redis:
+        condition: service_started
+      agent_backend:
+        condition: service_started
+    volumes:
+      - dify_storage:/app/api/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Dedicated websocket worker (collaboration). Kept in the default stack so
+  # the vendored nginx routing for /socket.io/ (NGINX_SOCKET_IO_UPSTREAM) works
+  # out of the box. Drop this service + set NGINX_SOCKET_IO_UPSTREAM=api:5001 to
+  # disable collaboration.
+  api_websocket:
+    <<: *dify-common
+    image: ${DIFY_API_IMAGE:-langgenius/dify-api:1.17.1}
+    environment:
+      MODE: api
+      SERVER_WORKER_AMOUNT: ${API_WEBSOCKET_WORKER_AMOUNT:-1}
+      SERVER_WORKER_CLASS: ${API_WEBSOCKET_WORKER_CLASS:-geventwebsocket.gunicorn.workers.GeventWebSocketWorker}
+      SERVER_WORKER_CONNECTIONS: ${API_WEBSOCKET_WORKER_CONNECTIONS:-1000}
+      GUNICORN_TIMEOUT: ${API_WEBSOCKET_GUNICORN_TIMEOUT:-360}
+    depends_on:
+      init_permissions:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+    volumes:
+      - dify_storage:/app/api/storage
+
+  # Celery worker — consumes all queues. CELERY_BROKER_URL is in the deploy .env
+  # (defaults to redis://:<pw>@redis:6379/1, matching the bundled redis).
+  worker:
+    <<: *dify-common
+    image: ${DIFY_API_IMAGE:-langgenius/dify-api:1.17.1}
+    environment:
+      MODE: worker
+      SENTRY_DSN: ${API_SENTRY_DSN:-}
+      PLUGIN_MAX_PACKAGE_SIZE: ${PLUGIN_MAX_PACKAGE_SIZE:-52428800}
+      INNER_API_KEY_FOR_PLUGIN: ${PLUGIN_DIFY_INNER_API_KEY:-QaHbTe77CtuXmsfyhR7+vRjI/+XbV1AaFy691iy+kGDv2Jvy0/eAh8Y1}
+      AGENT_BACKEND_BASE_URL: ${AGENT_BACKEND_BASE_URL:-http://agent_backend:5050}
+      AGENT_BACKEND_API_TOKEN: ${DIFY_AGENT_API_TOKEN:-dify-agent-run-token-for-dev-only}
+    depends_on:
+      init_permissions:
+        condition: service_completed_successfully
+      db_postgres:
+        condition: service_healthy
+        required: false
+      redis:
+        condition: service_started
+      agent_backend:
+        condition: service_started
+    volumes:
+      - dify_storage:/app/api/storage
+
+  # Celery beat — periodic task scheduler.
+  worker_beat:
+    <<: *dify-common
+    image: ${DIFY_API_IMAGE:-langgenius/dify-api:1.17.1}
+    environment:
+      MODE: beat
+    depends_on:
+      init_permissions:
+        condition: service_completed_successfully
+      db_postgres:
+        condition: service_healthy
+        required: false
+      redis:
+        condition: service_started
+
+  # Frontend (Next.js, :3000).
+  web:
+    image: ${DIFY_WEB_IMAGE:-langgenius/dify-web:1.17.1}
+    restart: always
+    env_file:
+      - .env
+    environment:
+      CONSOLE_API_URL: ${CONSOLE_API_URL:-}
+      SERVER_CONSOLE_API_URL: ${SERVER_CONSOLE_API_URL:-http://api:5001}
+      APP_API_URL: ${APP_API_URL:-}
+      NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:-ws://localhost}
+      NEXT_TELEMETRY_DISABLED: ${NEXT_TELEMETRY_DISABLED:-0}
+      MARKETPLACE_API_URL: ${MARKETPLACE_API_URL:-https://marketplace.dify.ai}
+      MARKETPLACE_URL: ${MARKETPLACE_URL:-https://marketplace.dify.ai}
+      ENABLE_WEBSITE_JINAREADER: ${ENABLE_WEBSITE_JINAREADER:-true}
+      ENABLE_WEBSITE_FIRECRAWL: ${ENABLE_WEBSITE_FIRECRAWL:-true}
+      ENABLE_WEBSITE_WATERCRAWL: ${ENABLE_WEBSITE_WATERCRAWL:-true}
+    networks:
+      - default
+
+  # Entry-point reverse proxy. Vendored templates + entrypoint run envsubst
+  # inside the container (NGINX_* env → nginx.conf/proxy.conf/default.conf).
+  nginx:
+    image: nginx:latest
+    restart: always
+    volumes:
+      - ./nginx/nginx.conf.template:/etc/nginx/nginx.conf.template
+      - ./nginx/proxy.conf.template:/etc/nginx/proxy.conf.template
+      - ./nginx/https.conf.template:/etc/nginx/https.conf.template
+      - ./nginx/conf.d/default.conf.template:/etc/nginx/conf.d/default.conf.template
+      - ./nginx/docker-entrypoint.sh:/docker-entrypoint-mount.sh
+      - ./nginx/ssl:/etc/ssl
+    entrypoint:
+      ["sh", "-c", "cp /docker-entrypoint-mount.sh /docker-entrypoint.sh && sed -i 's/\r$$//' /docker-entrypoint.sh && chmod +x /docker-entrypoint.sh && /docker-entrypoint.sh"]
+    environment:
+      NGINX_SERVER_NAME: ${NGINX_SERVER_NAME:-_}
+      NGINX_HTTPS_ENABLED: ${NGINX_HTTPS_ENABLED:-false}
+      NGINX_SSL_PORT: ${NGINX_SSL_PORT:-443}
+      NGINX_PORT: ${NGINX_PORT:-80}
+      NGINX_SSL_CERT_FILENAME: ${NGINX_SSL_CERT_FILENAME:-dify.crt}
+      NGINX_SSL_CERT_KEY_FILENAME: ${NGINX_SSL_CERT_KEY_FILENAME:-dify.key}
+      NGINX_SSL_PROTOCOLS: ${NGINX_SSL_PROTOCOLS:-TLSv1.2 TLSv1.3}
+      NGINX_WORKER_PROCESSES: ${NGINX_WORKER_PROCESSES:-auto}
+      NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE:-100M}
+      NGINX_KEEPALIVE_TIMEOUT: ${NGINX_KEEPALIVE_TIMEOUT:-65}
+      NGINX_PROXY_READ_TIMEOUT: ${NGINX_PROXY_READ_TIMEOUT:-3600s}
+      NGINX_PROXY_SEND_TIMEOUT: ${NGINX_PROXY_SEND_TIMEOUT:-3600s}
+      NGINX_ENABLE_CERTBOT_CHALLENGE: ${NGINX_ENABLE_CERTBOT_CHALLENGE:-false}
+      NGINX_SOCKET_IO_UPSTREAM: ${NGINX_SOCKET_IO_UPSTREAM:-api_websocket:5001}
+      CERTBOT_DOMAIN: ${CERTBOT_DOMAIN:-}
+    depends_on:
+      - api
+      - web
+    ports:
+      - "${EXPOSE_NGINX_PORT:-8088}:${NGINX_PORT:-80}"
+      - "${EXPOSE_NGINX_SSL_PORT:-443}:${NGINX_SSL_PORT:-443}"
+    networks:
+      - default
+
+  # Default vector store (weaviate). Pinned to the upstream-tested version; to
+  # use another store, drop this service and set VECTOR_STORE + the matching
+  # service/env manually (see docs/DEVELOPMENT.md).
+  weaviate:
+    image: ${WEAVIATE_IMAGE:-cr.weaviate.io/semitechnologies/weaviate:1.39.2}
+    restart: always
+    volumes:
+      - dify_weaviate:/var/lib/weaviate
+    environment:
+      PERSISTENCE_DATA_PATH: ${WEAVIATE_PERSISTENCE_DATA_PATH:-/var/lib/weaviate}
+      QUERY_DEFAULTS_LIMIT: ${WEAVIATE_QUERY_DEFAULTS_LIMIT:-25}
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: ${WEAVIATE_AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED:-true}
+      DEFAULT_VECTORIZER_MODULE: ${WEAVIATE_DEFAULT_VECTORIZER_MODULE:-none}
+      CLUSTER_HOSTNAME: ${WEAVIATE_CLUSTER_HOSTNAME:-node1}
+      AUTHENTICATION_APIKEY_ENABLED: ${WEAVIATE_AUTHENTICATION_APIKEY_ENABLED:-true}
+      AUTHENTICATION_APIKEY_ALLOWED_KEYS: ${WEAVIATE_AUTHENTICATION_APIKEY_ALLOWED_KEYS:-WVF5YThaHlkYwhGUSmCRgsX3tD5ngdN8pkih}
+      AUTHENTICATION_APIKEY_USERS: ${WEAVIATE_AUTHENTICATION_APIKEY_USERS:-hello@dify.ai}
+      AUTHORIZATION_ADMINLIST_ENABLED: ${WEAVIATE_AUTHORIZATION_ADMINLIST_ENABLED:-true}
+      AUTHORIZATION_ADMINLIST_USERS: ${WEAVIATE_AUTHORIZATION_ADMINLIST_USERS:-hello@dify.ai}
+      DISABLE_TELEMETRY: ${WEAVIATE_DISABLE_TELEMETRY:-false}
+    networks:
+      - default
+
+networks:
+  # Internal bridge shared by sandbox/api/worker/plugin_daemon ↔ ssrf_proxy.
+  # ssrf_proxy is ALSO on `default` (which has egress), so it can reach the
+  # internet on behalf of the others; api/worker reach ssrf_proxy via this net.
+  ssrf_proxy_network:
+    driver: bridge
+    internal: true
+
+volumes:
+  # Explicit names → deterministic regardless of compose project name
+  # (mirrors tools/base/docker-compose.yml). Residue map matches ^dify_(...).
+  dify_storage:
+    name: dify_storage
+  dify_db:
+    name: dify_db
+  dify_redis:
+    name: dify_redis
+  dify_sandbox_deps:
+    name: dify_sandbox_deps
+  dify_sandbox_conf:
+    name: dify_sandbox_conf
+  dify_plugin_daemon:
+    name: dify_plugin_daemon
+  dify_weaviate:
+    name: dify_weaviate

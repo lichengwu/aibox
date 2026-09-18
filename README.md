@@ -172,6 +172,7 @@ The proxy is **process-level env vars**, affecting only tools that honor `*_prox
 | [`clash`](tools/clash/README.md) | Clash subscription proxy pool, orchestrates local mihomo (auto speed-test / failover / auto-refresh after 1 week) |
 | [`base`](tools/base/README.md) | Shared base components (PostgreSQL 18 + Redis 7); each module gets its own DB |
 | [`gitlab`](tools/gitlab/README.md) | [GitLab CE](https://about.gitlab.com/) self-hosted (omnibus docker): web UI + git over SSH, embedded PG/Redis |
+| [`dify`](tools/dify/README.md) | [Dify](https://github.com/langgenius/dify) self-hosted (docker compose): LLM app builder, api/worker/web/nginx + weaviate (v1.17.1) |
 
 ### Bundled ops CLIs
 
