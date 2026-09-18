@@ -19,7 +19,7 @@ teardown() {
 @test "scaffold: compose-style skeleton validates clean (0 errors, 0 warnings)" {
   run bash "$REPO_ROOT/scripts/new-module.sh" scfmt --desc "Scaffold test module" --out "$OUT"
   [ "$status" -eq 0 ] || echo "$output"
-  [[ "$output" == *"PASS: 0 error(s), 0 warning(s)"* ]]
+  [[ "$output" == *"PASS: 0 error(s), 0 warning(s)"* ]] || { echo "$output" | tail -4; false; }
   [ -f "$OUT/scfmt/module.yaml" ]
   [ -f "$OUT/scfmt/lib.sh" ]
   [ -f "$OUT/scfmt/svc.sh" ]
@@ -37,7 +37,7 @@ teardown() {
 @test "scaffold: cli-style (--no-compose) validates clean, no compose file" {
   run bash "$REPO_ROOT/scripts/new-module.sh" sccli --no-compose --out "$OUT"
   [ "$status" -eq 0 ] || echo "$output"
-  [[ "$output" == *"PASS: 0 error(s), 0 warning(s)"* ]]
+  [[ "$output" == *"PASS: 0 error(s), 0 warning(s)"* ]] || { echo "$output" | tail -4; false; }
   [ ! -f "$OUT/sccli/docker-compose.yml" ]
 }
 
