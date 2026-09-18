@@ -164,6 +164,7 @@ aibox --no-proxy ...  # 单次绕过
 | [`windmill`](tools/windmill/README.md) | [Windmill](https://www.windmill.dev) 自托管运维 CLI，docker compose 部署（初始化 / 升级 / 备份 / 演练 / 自检） |
 | [`clash`](tools/clash/README.md) | Clash 订阅代理池，编排本地 mihomo 内核（自动测速选最快 / 失败切换 / 超 1 周自动刷新） |
 | [`base`](tools/base/README.md) | 共享基础组件（PostgreSQL 18 + Redis 7），各模块独立数据库 |
+| [`gitlab-ce`](tools/gitlab-ce/README.md) | [GitLab CE](https://about.gitlab.com/) 自托管（omnibus docker）：Web UI + git over SSH，内置 PG/Redis |
 
 ### 捆绑的运维 CLI
 

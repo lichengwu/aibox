@@ -2,6 +2,30 @@
 
 Each aibox "module" is an independent tool, living under `tools/<name>/` in the repo, installed / updated / uninstalled / dispatched uniformly by the main CLI `aibox`.
 
+## Onboarding a new module (normative)
+
+Adding a module = **scaffold + fill the contract + prove conformance**. Two repo tools own the
+mechanics; this spec owns the rules. `tools/gitlab-ce/` is the reference implementation onboarded
+with exactly this flow.
+
+### Tooling
+
+| Tool | Purpose |
+|------|---------|
+| `scripts/new-module.sh <name> [--desc "..."] [--no-compose] [--out <dir>]` | Generates a conformant skeleton: `module.yaml` (incl. the mandatory `checks:`), `lib.sh`, the four hooks, `svc.sh`, `README.md`, `docs/DEVELOPMENT.md`, optional `docker-compose.yml` — then runs the validator on it, so a fresh scaffold PASSes out of the box |
+| `scripts/validate-module.sh <name> \| --all` | The conformance gate — same rules CI enforces (this file is the rulebook, the validator is the executable form). Zero dependencies; auto-uses `yq` / `shellcheck` / bash 3.2 when present. Exit 0 ⇔ 0 ERRORs (WARNs tolerated) |
+
+### Checklist (definition of done)
+
+1. **Scaffold**: `scripts/new-module.sh <name>` → `tools/<name>/` skeleton (validator PASSes immediately).
+2. **`module.yaml`**: real `version`/`description`/`upstream` links; `ports` declared (unique across modules — the validator detects conflicts); `deps` (strict-checked at preflight); `services: base:<component>#<name>[_usage]` when consuming the shared base; **`checks:` is MANDATORY** (§Preflight checks below).
+3. **Hooks**: `install/uninstall/update/svc.sh` per §Hook contract — bash shebang, `set -euo pipefail`, idempotent, `${VAR}` braces (AGENTS.md pitfalls #1/#8), no bash-4-only syntax (pitfall #2); shared code in `lib.sh` (sourced library: no shebang/strict line).
+4. **Deploy conventions**: root `$AIBOX_HOME/apps/<name>`, config under `/etc/<name>/`, named volumes only, no hardcoded credentials (§Deploy directory & config path conventions).
+5. **Service modules**: `actions` containing `start` MUST provide the full lifecycle `start/stop/restart/status/logs` (+ module-specific actions like `credentials`); self-starting services use the platform-native init system (AGENTS.md rule 9).
+6. **Docs**: `README.md` (commands / ports / env overrides / preflight — ERROR if missing) + `docs/DEVELOPMENT.md` (upstream links, version-pin policy, design decisions, known quirks — WARN if missing).
+7. **Prove**: `scripts/validate-module.sh <name>` → 0 errors; `bats tests/*.bats` green; live smoke on a docker host: `aibox install <name>` → `<name> start` → `status` → `logs` → `stop` → `uninstall`.
+8. **Register in docs**: add the module row to `README.md` / `README.zh.md`; `aibox list-available` picks the module up automatically (`module.yaml` is the registry).
+
 ## Directory layout
 
 ```

@@ -164,6 +164,7 @@ The proxy is **process-level env vars**, affecting only tools that honor `*_prox
 | [`windmill`](tools/windmill/README.md) | [Windmill](https://www.windmill.dev) self-host ops CLI, docker compose deploy (init / upgrade / backup / drill / doctor) |
 | [`clash`](tools/clash/README.md) | Clash subscription proxy pool, orchestrates local mihomo (auto speed-test / failover / auto-refresh after 1 week) |
 | [`base`](tools/base/README.md) | Shared base components (PostgreSQL 18 + Redis 7); each module gets its own DB |
+| [`gitlab-ce`](tools/gitlab-ce/README.md) | [GitLab CE](https://about.gitlab.com/) self-hosted (omnibus docker): web UI + git over SSH, embedded PG/Redis |
 
 ### Bundled ops CLIs
 

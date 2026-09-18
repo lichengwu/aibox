@@ -72,123 +72,22 @@ jobs:
           exit $fail
 
   module-lint:
-    name: module.yaml lint
+    name: module conformance (validate-module.sh)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: install yq
+      - name: install yq + shellcheck (the validator auto-uses both when present)
         run: |
           sudo wget -qO/usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
-      - name: validate module.yaml (required + §2.2 subset + ports + files + lifecycle + dashboard + full names + checks)
-        run: |
-          set -e
-          fail=0
-          for f in tools/*/module.yaml; do
-            [ -f "$f" ] || continue
-            name="$(yq '.name' "$f")"
-            # required fields
-            for key in name version description dir; do
-              yq -e ".$key" "$f" >/dev/null 2>&1 || { echo "::error file=$f::missing required field $key"; fail=1; }
-            done
-            yq -e '.hooks.install' "$f" >/dev/null 2>&1 || { echo "::error file=$f::missing hooks.install"; fail=1; }
-            # §2.2 subset compliance: anchors/refs (&name/*name), block scalars (key:|/>), flow (key:{/[]/-{/-[);
-            # note: ${...} / <...> inside quoted strings are scalar values, not flagged.
-            if grep -nE '[&*][A-Za-z_]|:[[:space:]]*[|>]|:[[:space:]]*[[{]|^[[:space:]]*-[[:space:]]*[[{]' "$f" | grep -vE '^[0-9]+:[[:space:]]*#'; then
-              echo "::error file=$f::contains §2.2-forbidden YAML syntax (anchors/block scalars/flow); awk parser unsupported"; fail=1
-            fi
-            # ports format: port/proto:usage
-            for p in $(yq -o=ts '.ports[]' "$f" 2>/dev/null || true); do
-              echo "$p" | grep -qE '^[0-9]+/(tcp|udp):' || { echo "::error file=$f::ports format wrong (expected port/proto:usage): $p"; fail=1; }
-            done
-            # files: listed extra files must exist under tools/<name>/
-            for ff in $(yq -o=ts '.files[]' "$f" 2>/dev/null || true); do
-              [ -f "tools/$name/$ff" ] || { echo "::error file=$f::files lists but not in repo: $ff"; fail=1; }
-            done
-            # lifecycle: a module with start must have the full lifecycle set (start/stop/restart/status/logs)
-            if yq -o=ts '.actions[]' "$f" 2>/dev/null | grep -qx start; then
-              for a in start stop restart status logs; do
-                yq -o=ts '.actions[]' "$f" 2>/dev/null | grep -qx "$a" || { echo "::error file=$f::service-type module (has start) missing lifecycle action: $a"; fail=1; }
-              done
-            fi
-            # dashboard: only endpoints + hint subfields allowed
-            while IFS= read -r k; do
-              [ -z "$k" ] && continue
-              case "$k" in endpoints|hint) ;; *) echo "::error file=$f::dashboard allows only endpoints/hint; got: $k"; fail=1;; esac
-            done < <(yq '.dashboard' "$f" 2>/dev/null | grep -E '^[a-z_-]+:' | sed -E 's/^([a-z_-]+):.*/\1/')
-            # services/provides: component name must be a full-name whitelist entry
-            for c in $(yq -o=ts '.services[]' "$f" 2>/dev/null | sed -E 's/^[^:]*://; s/#.*//' || true) \
-                     $(yq -o=ts '.provides[]' "$f" 2>/dev/null || true); do
-              case "$c" in postgres|redis) ;; *) echo "::error file=$f::component must be a full-name whitelist entry (postgres|redis); got: $c"; fail=1;; esac
-            done
-            # checks: preflight contract (docs/module-spec.md) — MANDATORY for every module;
-            # install/update hard-fail on these unless --skip-checks.
-            yq -e '.checks' "$f" >/dev/null 2>&1 || { echo "::error file=$f::missing checks: section (mandatory preflight contract — docs/module-spec.md)"; fail=1; }
-            if yq -e '.checks.disk_gb' "$f" >/dev/null 2>&1; then
-              yq '.checks.disk_gb' "$f" | grep -qE '^[0-9]+$' || { echo "::error file=$f::checks.disk_gb must be an integer (GB)"; fail=1; }
-            fi
-            for dm in $(yq -o=ts '.checks.domains[]' "$f" 2>/dev/null || true); do
-              echo "$dm" | grep -qE '^[A-Za-z0-9._:-]+(/.*)?$' || { echo "::error file=$f::checks.domains entry malformed: $dm"; fail=1; }
-            done
-            for cm in $(yq -o=ts '.checks.commands[]' "$f" 2>/dev/null || true); do
-              echo "$cm" | grep -qE '^[a-z0-9_.+-]+(@[a-z]+)?$' || { echo "::error file=$f::checks.commands entry malformed: $cm"; fail=1; }
-            done
-            for im in $(yq -o=ts '.checks.docker_images[]' "$f" 2>/dev/null || true); do
-              echo "$im" | grep -qE '^[A-Za-z0-9._/-]+(:[A-Za-z0-9._-]+)?$' || { echo "::error file=$f::checks.docker_images entry malformed: $im"; fail=1; }
-            done
-            if yq -e '.checks.docker_pull' "$f" >/dev/null 2>&1; then
-              yq '.checks.docker_pull' "$f" | grep -qE '^[A-Za-z0-9._/-]+(:[A-Za-z0-9._-]+)?$' || { echo "::error file=$f::checks.docker_pull must be an image reference"; fail=1; }
-            fi
-            echo "  ok: $f"
-          done
-          exit $fail
-
-  deps-lint:
-    name: deps-lint (services/provides + no hardcoded creds)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: install yq
-        run: |
-          sudo wget -qO/usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
-      - name: services/provides validation + no hardcoded creds
-        run: |
-          set -e
-          fail=0
-          # 1. No hardcoded credentials: tools/*/docker-compose*.yml (except base) must not contain aibox:aibox@ / postgres://aibox:
-          while IFS= read -r line; do
-            echo "::error file=${line%%:*}::compose must not hardcode credentials (use \${AIBOX_POSTGRES_*} via base.env): ${line}"
-            fail=1
-          done < <(grep -rnE 'aibox:aibox@|postgres://aibox:' tools/*/docker-compose*.yml 2>/dev/null | grep -v 'tools/base/' || true)
-          # 2. services provider/component must match some provider's provides; dbname must be <module> or <module>_<usage>
-          declare -A provides
-          for f in tools/*/module.yaml; do
-            [ -f "$f" ] || continue
-            m=$(yq '.name' "$f")
-            for c in $(yq -o=ts '.provides[]' "$f" 2>/dev/null || true); do
-              provides["${m}:${c}"]=1
-            done
-          done
-          for f in tools/*/module.yaml; do
-            [ -f "$f" ] || continue
-            m=$(yq '.name' "$f")
-            for svc in $(yq -o=ts '.services[]' "$f" 2>/dev/null || true); do
-              provider="${svc%%:*}"
-              rest="${svc#*:}"
-              component="${rest%%#*}"
-              case "$svc" in *'#'*) db="${rest#*#}";; *) db="";; esac
-              [ -n "${provides["${provider}:${component}"]:-}" ] || { echo "::error file=$f::services ${svc} doesn't match provider ${provider}'s provides ${component}"; fail=1; }
-              if [ -n "$db" ]; then
-                case "$db" in
-                  "$m"|"$m"_*) ;;
-                  *) echo "::error file=$f::services dbname must be ${m} or ${m}_<usage>; got: $db"; fail=1;;
-                esac
-              fi
-            done
-          done
-          [ $fail -eq 0 ] && echo "✅ deps-lint passed"
-          exit $fail
+          sudo apt-get update && sudo apt-get install -y shellcheck
+      # Single rule source: scripts/validate-module.sh implements every module rule
+      # (required fields, §2.2 awk-subset, ports format+conflicts, files, deps,
+      # services/provides cross-refs, mandatory checks:, lifecycle, dashboard,
+      # upstream, README/docs, hook script quality incl. gotchas #1/#8, and the
+      # no-hardcoded-credentials compose scan). Local runs use the same script.
+      - name: validate all modules
+        run: scripts/validate-module.sh --all
 
   shared-override-sync:
     name: shared override sync

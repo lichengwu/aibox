@@ -178,25 +178,36 @@ bash 5 doesn't have this, so "ran fine locally on the dev box" scripts blow up o
 **Fix**: split into two lines: `local a="..."` / `local b="${a}/..."`.
 **Detection**: `grep -rnE 'local [a-z_]+="[^"]*"[ ]+[a-z_]+="\$\{[a-z_]+\}'`.
 
-## Developing a new module
+## Developing a new module (spec + tooling)
 
-1. Create `tools/<name>/` with at least `install.sh` (hook contract: [`docs/module-spec.md`](docs/module-spec.md)).
-2. Add `tools/<name>/module.yaml` — the source of truth (name/version/description/dir/hooks/deps/ports/actions/...). The registry is auto-discovered from `tools/*/module.yaml` (no registry.sh to edit; local `file://` source needs zero global changes). Module names with hyphens map to underscored variable keys internally (`pi-web` → `AIBOX_MODULE_pi_web_*`).
-3. If the module ships a long-lived service, implement `svc.sh` with `start/stop/restart/status/logs/diagnose`.
-4. Module scripts are downloaded and cached to `~/.aibox/modules/<name>/`; reuse `lib.sh` across hooks.
-5. **Install paths must be overridable**: start from `${AIBOX_BIN_DIR:-$HOME/.local/bin}` and expose a module-specific override (e.g. `OPENMAIC_BIN_DIR`) — deploy hosts often want `/usr/local/bin`.
-6. **`svc.sh` is an "action entry point", NOT "must be a daemon"**: long-lived services (pi-web) use `start/stop/restart`; pure-CLI dispatch (openmaic) can pass actions straight through to the dispatched command.
-7. **Platform differences: warn, don't hard-block**: install is usually cross-platform (just copying files); the real limit is reported by the script at execution time, which is less false-positive-prone than blocking at install.
-8. The local machine is macOS (bash 3.2); hooks must be compatible. Scripts **dispatched to other platforms** must avoid bash 4 syntax — see pitfall #2.
-9. **Deploy-type modules: don't invent your own paths** (see [`docs/module-spec.md`](docs/module-spec.md) "Deploy directory & config path conventions"): deploy root is uniformly `$AIBOX_HOME/apps/<name>` (same expression on both platforms, no branch); config is `/etc/<name>/<name>.conf`. Two empirical hard constraints: Docker Desktop on macOS **doesn't share `/opt`** by default (putting things there makes compose relative mounts fail with `Mounts denied`); **a systemd system service has no `HOME`** (paths derived from `$HOME` resolve to empty in the service context; units must use explicit `Environment=`).
+**Spec**: [`docs/module-spec.md`](docs/module-spec.md) §Onboarding a new module — the normative checklist (definition of done).
 
-10. **Self-starting services use the platform-native init system**: long-lived services (pi-web, windmill's scheduled task, clash) auto-start/daemonize per-platform — don't mix:
+**Tooling** (repo-local, zero-dependency, same rules CI enforces):
+
+```bash
+scripts/new-module.sh <name> [--desc "..."] [--no-compose] [--out <dir>]   # scaffold a conformant skeleton (passes the validator out of the box)
+scripts/validate-module.sh <name> | --all                                  # conformance gate: 0 ERRORs required (WARNs tolerated)
+```
+
+**Flow**: scaffold → fill `module.yaml` (ports/checks/deps/services/upstream) → implement the hooks → `scripts/validate-module.sh <name>` until PASS → `bats tests/*.bats` → live smoke (install / start / status / logs / stop / uninstall on a docker host) → add the module row to README(.zh). **`tools/gitlab-ce/` is the reference implementation onboarded with exactly this flow.**
+
+**Iron rules** (validator + CI enforce; details in the spec):
+
+1. `module.yaml` is the source of truth — the registry auto-discovers `tools/*/module.yaml` (no registry.sh to edit; local `file://` source needs zero global changes). Hyphenated names map to underscored variable keys internally (`pi-web` → `AIBOX_MODULE_pi_web_*`).
+2. Hooks (`install/uninstall/update/svc.sh`): bash shebang, `set -euo pipefail`, idempotent; shared code lives in `lib.sh` (sourced library — no shebang, no strict-mode line). Module scripts are downloaded and cached to `~/.aibox/modules/<name>/`.
+3. **Every module declares `checks:` (preflight contract)**: install/update is hard-gated by `preflight_module` — deps (strict), `checks.commands`, `checks.disk_gb`, `checks.domains` (host-probed) / `checks.docker_pull` (daemon-probed — the docker daemon's egress differs from the host's; never host-probe a daemon-consumed registry), with the `checks.docker_images` cache short-circuit, and `services:` readiness (recursive into base). Host network failures try the configured alternative routes (direct/clash/mirror/static proxy) and adopt a working one for the run. CI enforces the section's presence + field formats; `aibox check [module]` runs it proactively; `--skip-checks` bypasses. Full spec + per-module matrix: `docs/module-spec.md` §Preflight checks.
+4. **Install paths must be overridable**: start from `${AIBOX_BIN_DIR:-$HOME/.local/bin}` and expose a module-specific override (e.g. `OPENMAIC_BIN_DIR`) — deploy hosts often want `/usr/local/bin`.
+5. **`svc.sh` is an "action entry point", NOT "must be a daemon"**: long-lived services (pi-web) use `start/stop/restart`; pure-CLI dispatch (openmaic) can pass actions straight through to the dispatched command. Service-type modules (`actions` contains `start`) MUST implement the full lifecycle `start/stop/restart/status/logs`.
+6. **Platform differences: warn, don't hard-block**: install is usually cross-platform (just copying files); the real limit is reported by the script at execution time, which is less false-positive-prone than blocking at install.
+7. The local machine is macOS (bash 3.2); hooks must be compatible. Scripts **dispatched to other platforms** must avoid bash 4 syntax — see pitfall #2. (The validator runs a bash-3.2 parse check when available.)
+8. **Deploy-type modules: don't invent your own paths** (see [`docs/module-spec.md`](docs/module-spec.md) "Deploy directory & config path conventions"): deploy root is uniformly `$AIBOX_HOME/apps/<name>` (same expression on both platforms, no branch); config is `/etc/<name>/<name>.conf`. Two empirical hard constraints: Docker Desktop on macOS **doesn't share `/opt`** by default (putting things there makes compose relative mounts fail with `Mounts denied`); **a systemd system service has no `HOME`** (paths derived from `$HOME` resolve to empty in the service context; units must use explicit `Environment=`).
+9. **Self-starting services use the platform-native init system**: long-lived services (pi-web, windmill's scheduled task, clash) auto-start/daemonize per-platform — don't mix:
 
     - **macOS → launchd**: user-level `~/Library/LaunchAgents/<label>.plist`, `launchctl bootstrap gui/$(id -u)`, no root needed. `KeepAlive` = auto-restart, `StartCalendarInterval` = scheduled.
     - **Linux → systemd**: user-level `~/.config/systemd/user/<name>.{service,timer}`, `systemctl --user` + `loginctl enable-linger` to survive logout, no root needed. `Restart=always` = auto-restart, `OnCalendar` = scheduled.
     - One service, one unit per platform, generated by a `case "$(uname -s)"` branch. System-level services (need root / start at boot) use `/etc/systemd/system` + `systemctl` (no `--user`) — see windmill's `cmd_systemd`/`cmd_launchd` and pi-web's `write_plist`/`write_service`.
-
-11. **Every module declares `checks:` (preflight contract)**: install/update is hard-gated by `preflight_module` — deps (strict), `checks.commands`, `checks.disk_gb`, `checks.domains` (host-probed) / `checks.docker_pull` (daemon-probed — the docker daemon's egress differs from the host's; never host-probe a daemon-consumed registry), with the `checks.docker_images` cache short-circuit, and `services:` readiness (recursive into base). Host network failures try the configured alternative routes (direct/clash/static proxy) and adopt a working one for the run. CI enforces the section's presence + field formats; `aibox check [module]` runs it proactively; `--skip-checks` bypasses. Full spec + per-module matrix: `docs/module-spec.md` §Preflight checks.
+10. **Docs are part of the contract**: `README.md` (commands / ports / env overrides / preflight — validator: ERROR if missing) and `docs/DEVELOPMENT.md` (upstream links, version-pin policy, design decisions, known quirks — validator: WARN if missing).
+11. **No hardcoded credentials** in compose files; shared-PG consumers read `${AIBOX_POSTGRES_*}` from the injected `base.env` (validator scans; base is the only exception by design).
 
 ## License
 
