@@ -29,12 +29,14 @@ services:
         nginx['listen_port'] = ${GITLAB_HTTP_PORT:-8929}
         nginx['listen_https'] = false
         prometheus_monitoring['enable'] = false
-        alertmanager['enable'] = false
-        grafana['enable'] = false
         gitlab_rails['gitlab_shell_ssh_port'] = ${GITLAB_SSH_PORT:-8922}
         puma['worker_processes'] = ${GITLAB_PUMA_WORKERS:-2}
         sidekiq['max_concurrency'] = ${GITLAB_SIDEKIQ_CONCURRENCY:-10}
         postgresql['shared_buffers'] = '256MB'
+      # NOTE: no grafana['enable']/alertmanager['enable'] here — GitLab 19.x
+      # REMOVED those omnibus options; setting them makes reconfigure FATAL
+      # ("Reading unsupported config value grafana", measured live on 19.2.6).
+      # prometheus_monitoring['enable']=false is the supported master switch.
     healthcheck:
       test: ["CMD", "/opt/gitlab/bin/gitlab-healthcheck", "--fail", "--max-time", "10"]
       interval: 60s

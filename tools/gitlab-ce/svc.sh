@@ -16,7 +16,7 @@ case "$action" in
     port="${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
     timeout_s="${GITLAB_START_TIMEOUT:-600}"
     waited=0
-    log "waiting for GitLab to boot (first boot 3-5 min; timeout ${timeout}s)..."
+    log "waiting for GitLab to boot (first boot 3-5 min; timeout ${timeout_s}s)..."
     while [ "$waited" -lt "$timeout_s" ]; do
       if http_up "$port"; then
         ok "GitLab is up: http://127.0.0.1:${port}"
