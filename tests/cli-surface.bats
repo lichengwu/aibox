@@ -86,3 +86,9 @@ YAML
   [ "$status" -ne 0 ]
   [[ "$output" == *"reserved"* ]]
 }
+
+@test "update self passes AIBOX_RAW through to install.sh (live-caught regression pin)" {
+  # Without the passthrough, a SHA-pinned/mirrored AIBOX_RAW only affects the
+  # install.sh fetch; the payload silently comes from the default branch CDN.
+  grep -q 'AIBOX_RAW="$AIBOX_RAW" AIBOX_VERIFY=' "$REPO_ROOT/bin/aibox"
+}

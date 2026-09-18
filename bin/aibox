@@ -2038,7 +2038,12 @@ cmd_self_update() {
   local before after
   before="$AIBOX_VERSION"
   log "aibox self-update: currently ${before}, re-bootstrapping ..."
-  if curl -fsSL --max-time 30 "$AIBOX_RAW/install.sh" | AIBOX_VERIFY="${AIBOX_VERIFY:-0}" AIBOX_SHA256="${AIBOX_SHA256:-}" bash; then
+  # AIBOX_RAW must be PASSED THROUGH to install.sh (it re-derives RAW from its
+  # own env): without this, a pinned/mirrored AIBOX_RAW only affects the
+  # install.sh fetch here while the payload still comes from the default branch
+  # CDN — measured live on remote1: SHA-pinned `update self` silently kept the
+  # stale binary (branch-CDN lag), defeating the pin.
+  if curl -fsSL --max-time 30 "$AIBOX_RAW/install.sh" | AIBOX_RAW="$AIBOX_RAW" AIBOX_VERIFY="${AIBOX_VERIFY:-0}" AIBOX_SHA256="${AIBOX_SHA256:-}" bash; then
     # New CLI and new module metadata go together: drop the registry cache so the
     # next load_registry refetches (measured live: `aibox ports` kept showing a
     # stale declared port for up to the 1h TTL after self-update).
