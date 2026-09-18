@@ -24,7 +24,7 @@ _deploy_root="$(openmaic_deploy_root)"
 if [ "${AIBOX_PURGE_DATA:-0}" = "1" ]; then
   log "AIBOX_PURGE_DATA=1: cleaning the openmaic deployment (containers, volumes, config) ..."
   if [ -f "${_deploy_root}/app/docker-compose.yml" ]; then
-    ( cd "${_deploy_root}/app" && docker compose down -v --remove-orphans ) >/dev/null 2>&1 || true
+    (cd "${_deploy_root}/app" && docker compose down -v --remove-orphans) >/dev/null 2>&1 || true
   fi
   docker rm -f app-openmaic-1 app-postgres-1 app-render-service-1 >/dev/null 2>&1 || true
   docker volume rm app_openmaic-data app_openmaic-postgres >/dev/null 2>&1 || true

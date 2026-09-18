@@ -35,6 +35,8 @@ aibox install <module> [--skip-checks]   install a module (preflight-gated)
 aibox uninstall <module>          uninstall a module
 aibox update <module> [--restart|--no-restart] [--skip-checks] [--all] | --all   update modules; with --all also updates aibox itself
 aibox check [module]              preflight: environment (no arg) or one module's readiness
+aibox clean [--apply ...]         scan/clean residue left after uninstalls (forwards to the
+                                  standalone aibox-purge; dry-run report by default)
 aibox list                        list installed modules
 aibox list-available              list available modules
 aibox ports                       show port assignments (declared + live)

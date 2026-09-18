@@ -419,6 +419,14 @@ validate_module() {
       [ -n "$hit" ] && err "$(basename "$cf"): hardcoded shared-PG credentials (use \${AIBOX_POSTGRES_*} via base.env): $(printf '%s' "$hit" | head -1)"
     done
   fi
+
+  # --- S23: residue-map entry in scripts/purge.sh (post-manager cleanup) ---
+  # aibox-purge must be able to clean this module's leftovers AFTER aibox itself
+  # is gone (self-contained map; the module's own hooks no longer exist then).
+  if [ -f "$REPO_ROOT/scripts/purge.sh" ]; then
+    awk '/^residue_paths\(\)/,/^\}/' "$REPO_ROOT/scripts/purge.sh" | grep -qE "^[[:space:]]*${m}\)" \
+      || warn "no residue-map entry in scripts/purge.sh (residue_paths) — aibox-purge cannot clean this module's leftovers"
+  fi
 }
 
 # ---------- run ----------

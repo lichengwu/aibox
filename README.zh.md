@@ -37,6 +37,7 @@ aibox install <module> [--skip-checks]   安装模块（前置检查把关；--s
 aibox uninstall <module>         卸载模块
 aibox update <module> [--restart|--no-restart] [--skip-checks] [--all] | --all   更新模块；带 --all 则一并更新 aibox 自身
 aibox check [module]             前置检查：不带参数查环境（出口/核心域名/docker/磁盘），带模块名查该模块安装就绪度
+aibox clean [--apply ...]        扫描/清理卸载后的残留数据（转发独立的 aibox-purge；默认 dry-run 报告）
 aibox list                       已安装模块
 aibox list-available             可用模块
 aibox ports                      端口分配表（声明 + 实际监听）

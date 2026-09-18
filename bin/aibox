@@ -1700,6 +1700,20 @@ cmd_module_action() {
 # Self-update = idempotent re-bootstrap. Defense in depth: if AIBOX_SHA256 is set, the
 # bootstrap verifies the downloaded bin/aibox against it; if AIBOX_VERIFY=1, the bootstrap
 # tries to fetch and check the release SHA256SUMS sidecar (graceful if absent).
+# `aibox clean` — forwards to the standalone residue cleaner (aibox-purge),
+# shipped by install.sh next to aibox and deliberately kept by `self uninstall`
+# so residue stays cleanable after the manager is gone. Works offline; dry-run
+# by default, --apply deletes (see: aibox-purge --help).
+cmd_clean() {
+  local purge="$AIBOX_BIN_DIR/aibox-purge"
+  if [ -x "$purge" ]; then
+    exec "$purge" "$@"
+  fi
+  warn "aibox-purge not found at $purge"
+  info "fetch it: curl -fsSL ${AIBOX_RAW}/scripts/purge.sh -o /tmp/aibox-purge && bash /tmp/aibox-purge $*"
+  return 1
+}
+
 cmd_self_update() {
   local before after
   before="$AIBOX_VERSION"
@@ -1902,6 +1916,8 @@ ENTRIES
 
   # ---- summary ----
   ok "aibox manager removed (binary + state$([ "$rc_cleanup" = 1 ] && printf ' + rc PATH block'))"
+  log "residue cleaner kept: ${AIBOX_BIN_DIR}/aibox-purge — scan leftover data/config anytime (dry-run),"
+  log "  delete with: ${AIBOX_BIN_DIR}/aibox-purge --apply [--only=...] [--stop] [--yes]"
   if [ "$data_mode" != "purge" ] && [ -d "$AIBOX_HOME/apps" ]; then
     warn "kept deployments under $AIBOX_HOME/apps"
     [ "$services" = "keep" ] && warn "their services were NOT touched — manage them directly (docker compose -f <apps>/<module>/docker-compose.yml, systemctl --user, ...)"
@@ -1920,6 +1936,7 @@ Usage:
   aibox uninstall <module>          uninstall a module
   aibox update <module> [--restart|--no-restart] [--skip-checks] [--all] | --all   update modules; with --all also updates aibox itself
   aibox check [module]              preflight: environment (no arg) or one module's readiness
+  aibox clean [--apply ...]         scan/clean residue left after uninstalls (forwards to aibox-purge; dry-run by default)
   aibox list                        list installed modules
   aibox list-available             list available modules
   aibox ports                       show port assignments (declared + live)
@@ -2008,6 +2025,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     list-available|available|search)
                       cmd_list_available ;;
     check)            shift; cmd_check "$@" ;;
+    clean)            shift; cmd_clean "$@" ;;
     ports)            cmd_ports ;;
     dashboard)        shift; cmd_dashboard "$@" ;;
     proxy)            shift; cmd_proxy "$@" ;;

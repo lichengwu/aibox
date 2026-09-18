@@ -24,7 +24,7 @@ _deploy_root="$(wm_deploy_root)"
 if [ "${AIBOX_PURGE_DATA:-0}" = "1" ]; then
   log "AIBOX_PURGE_DATA=1: destroying the windmill deployment (containers, volumes, units, config) ..."
   if [ -f "${_deploy_root}/docker-compose.yml" ]; then
-    ( cd "${_deploy_root}" && docker compose down -v --remove-orphans ) >/dev/null 2>&1 || true
+    (cd "${_deploy_root}" && docker compose down -v --remove-orphans) >/dev/null 2>&1 || true
   fi
   if command -v systemctl >/dev/null 2>&1; then
     for u in /etc/systemd/system/windmill-*; do
@@ -44,7 +44,7 @@ else
     warn "kept ${_deploy_root} (deploy directory, database volumes, and backups); to clean up use windmill destroy --all"
   fi
   if command -v systemctl >/dev/null 2>&1; then
-    [ -f /etc/systemd/system/windmill-backup.timer ] && \
+    [ -f /etc/systemd/system/windmill-backup.timer ] &&
       warn "systemd units still present (windmill systemd remove can uninstall them)"
   fi
 fi
