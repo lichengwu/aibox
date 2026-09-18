@@ -46,4 +46,4 @@ For a complete teardown use `windmill --yes destroy --all` (it first relocates b
 
 - Proxy: the aibox global proxy (`aibox proxy set`) is seeded into the `PROXY_URL` of `/etc/windmill/windmill.conf` during install/update, for running `windmill check` offline on the deployment host
 - `aibox windmill <action>` is passed through to the local `windmill` CLI
-- `aibox self uninstall` has fail-closed protection over `apps/` and will not accidentally delete deployment instances
+- `aibox uninstall self` keeps module services/data by default (apps/ preserved); `--purge` cascades the full teardown

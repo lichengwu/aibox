@@ -44,8 +44,8 @@ teardown() {
   [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true
 }
 
-@test "self uninstall --yes (default): manager only; hooks NOT run; apps + rc handled" {
-  run bash "$REPO_ROOT/bin/aibox" self uninstall --yes
+@test "uninstall self --yes (default): manager only; hooks NOT run; apps + rc handled" {
+  run bash "$REPO_ROOT/bin/aibox" uninstall self --yes
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ ! -f "$MARKER_FILE" ]                                # no teardown
   [ ! -f "$AIBOX_BIN_DIR/aibox" ]                        # manager binary gone
@@ -58,8 +58,8 @@ teardown() {
   [[ "$output" == *"purge --apply"* ]]
 }
 
-@test "self uninstall --purge --yes: cascade — hooks per (module,profile) with PURGE=1, apps dropped" {
-  run bash "$REPO_ROOT/bin/aibox" self uninstall --purge --yes
+@test "uninstall self --purge --yes: cascade — hooks per (module,profile) with PURGE=1, apps dropped" {
+  run bash "$REPO_ROOT/bin/aibox" uninstall self --purge --yes
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   sort "$MARKER_FILE" > "$SANDBOX/m.sorted"
   diff - "$SANDBOX/m.sorted" <<'EOF'
@@ -71,24 +71,24 @@ EOF
   [ ! -f "$AIBOX_BIN_DIR/aibox" ]
 }
 
-@test "self uninstall: non-interactive without --yes refuses (nothing changed)" {
-  run bash "$REPO_ROOT/bin/aibox" self uninstall
+@test "uninstall self: non-interactive without --yes refuses (nothing changed)" {
+  run bash "$REPO_ROOT/bin/aibox" uninstall self
   [ "$status" -ne 0 ]
   [[ "$output" == *"re-run with --yes"* ]]
   [ -f "$AIBOX_BIN_DIR/aibox" ]
   [ -f "$AIBOX_HOME/installed.sh" ]
 }
 
-@test "self uninstall: v1 flag matrix is gone (unknown option dies)" {
-  run bash "$REPO_ROOT/bin/aibox" self uninstall --services=remove --yes
+@test "uninstall self: v1 flag matrix is gone (unknown option dies)" {
+  run bash "$REPO_ROOT/bin/aibox" uninstall self --services=remove --yes
   [ "$status" -ne 0 ]
-  [[ "$output" == *"unknown option for self uninstall"* ]]
+  [[ "$output" == *"unknown option for uninstall"* ]]
 }
 
-@test "self uninstall: no modules installed → clean manager-only removal" {
+@test "uninstall self: no modules installed → clean manager-only removal" {
   : > "$AIBOX_HOME/installed.sh"
   rm -rf "$AIBOX_HOME/modules" "$AIBOX_HOME/apps"
-  run bash "$REPO_ROOT/bin/aibox" self uninstall --yes
+  run bash "$REPO_ROOT/bin/aibox" uninstall self --yes
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ ! -f "$AIBOX_BIN_DIR/aibox" ]
   [ ! -d "$AIBOX_HOME" ]

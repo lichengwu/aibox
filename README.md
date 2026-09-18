@@ -32,39 +32,36 @@ AIBOX_VERIFY=1 curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main
 
 ```
 aibox install <module> [--skip-checks]   install a module (preflight-gated)
-aibox uninstall <module> [--purge]       uninstall a module; --purge also deletes its DATA
-aibox update <module> [--restart|--no-restart] [--skip-checks] [--all] | --all   update modules; with --all also updates aibox itself
-aibox check <module>              preflight one module's install/update readiness
-aibox list [--available]          installed modules; --available shows the registry catalog
+aibox uninstall <module>|self [--purge] [--yes]
+                                  uninstall a module; --purge also deletes its DATA.
+                                  'self' = the manager: default removes ONLY aibox
+                                  (services/data KEPT, apps/ preserved); --purge =
+                                  cascade full teardown (every module's uninstall
+                                  --purge, then manager + rc block)
+aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks]
+                                  update modules; self = aibox itself; --all = modules + self
+aibox check <module>|self         module preflight; 'self' = environment check
+                                  (egress, core domains, docker, disk)
+aibox dashboard [--available] [<module>]
+                                  overview (modules + versions + endpoints + credentials +
+                                  port table) / registry catalog / single-module detail + health
 aibox purge [<module>...|self] [--apply] [--stop] [--yes]
                                   residue scan/cleanup (dry-run by default): volumes, apps/,
-                                  /etc dirs, units, binaries left after uninstalls;
-                                  'self' scope = the manager's own residue
-aibox ports                       show port assignments (declared + live)
-aibox dashboard [module]          overview table, or single-module detail + health
+                                  /etc dirs, units, binaries left after uninstalls
 aibox <module> <action> [args]    invoke a module action (e.g. aibox pi-web start)
 
 Every install/update is gated by a **preflight check** (domains reachable / disk / deps / base
 services ready — declared per module in `module.yaml` `checks:`; see `docs/module-spec.md`).
 On network failure it tries the configured alternatives (direct / clash pool / gh mirror /
-static proxy) and adopts a working route for that run. `aibox self check` checks the
+static proxy) and adopts a working route for that run. `aibox check self` checks the
 environment, `aibox check <module>` runs a module preflight proactively;
 `--skip-checks` (or `AIBOX_SKIP_CHECKS=1`) bypasses it.
-
-aibox self check                  environment check (egress, core domains, docker, disk)
-aibox self update                 update aibox itself (idempotent re-bootstrap)
-aibox self uninstall [--purge] [--yes]
-                              remove the manager (module services/data KEPT by default;
-                              apps/ preserved so survivors stay manageable).
-                              --purge = cascade full teardown: every module's
-                              uninstall --purge, then manager + rc block
-aibox self version | version | help
 
 aibox proxy                       show proxy config and state
 aibox proxy set <url> [--no-test|--no-check]
                                   set proxy: test -> save -> verify site connectivity
-aibox proxy check [url]           verify dev-site connectivity
-aibox proxy test [url]            single-target reachability (includes a direct-connection control)
+aibox proxy check [url]           no url: dev-site connectivity matrix; with url:
+                                  single-target reachability + direct-connection control
 aibox proxy on | off              enable / disable (config retained)
 aibox proxy unset                 clear the config
 aibox proxy env [--remote]        print export statements / remote-ship format
@@ -114,7 +111,7 @@ A single-point probe only proves "this url can reach out"; it doesn't prove "the
   All traffic confirmed via proxy (curl %{proxy_used})
   unreachable:
     google
-       Troubleshoot: `aibox proxy test` for the direct-connection control; or try another proxy
+       Troubleshoot: `aibox proxy check <url>` for the direct-connection control; or try another proxy
 ```
 
 **If any fail it asks whether to revert**, restoring the pre-set state exactly (back to unconfigured if there was none, or back to the previous proxy if there was one). To skip the prompt:
@@ -152,14 +149,14 @@ Why layer 3 is necessary: the `openmaic` module's dispatched CLI runs `openmaic 
 
 ```bash
 aibox proxy check     # site-level connectivity (14 by default)
-aibox proxy test      # single-target reachability + direct-connection control
+aibox proxy check <url>   # single-target reachability + direct-connection control
 aibox proxy off       # disable globally (config retained)
 aibox --no-proxy ...  # bypass once
 ```
 
 If `set` finds failures it asks whether to revert — you don't have to remember what you had before.
 
-`proxy test` additionally runs a "direct-connection control" and tells you plainly whether the proxy is required on the current network — because **"can I reach it" is misleading**; see [AGENTS.md](AGENTS.md) pitfall #3.
+`proxy check <url>` additionally runs a "direct-connection control" and tells you plainly whether the proxy is required on the current network — because **"can I reach it" is misleading**; see [AGENTS.md](AGENTS.md) pitfall #3.
 
 ### What is NOT overridden
 
@@ -186,7 +183,7 @@ A module = a `tools/<name>/` directory + a `module.yaml` declaration (the source
 
 ```bash
 # local trial against your working tree, no network:
-AIBOX_RAW=file:///path/to/aibox aibox list --available
+AIBOX_RAW=file:///path/to/aibox aibox dashboard --available
 AIBOX_RAW=file:///path/to/aibox aibox install <your-module>
 ```
 
@@ -194,9 +191,9 @@ AIBOX_RAW=file:///path/to/aibox aibox install <your-module>
 
 - **Registry uses a shell-sourceable format, not JSON**: zero runtime dependencies, compatible with macOS bash 3.2; the main CLI sources it directly, no `jq` / `python`.
 - **Module scripts are cached on disk**: `aibox` downloads module scripts to `~/.aibox/modules/<name>/` before executing; hooks can reuse `lib.sh`, and `svc.sh` pass-through doesn't re-fetch every time.
-- **Self-update = idempotent re-bootstrap**: `aibox self update` re-runs `curl|bash install.sh` to overwrite the main CLI, with no git / Releases dependency. Optional `AIBOX_SHA256` / `AIBOX_VERIFY=1` add checksum defense in depth.
+- **Self-update = idempotent re-bootstrap**: `aibox update self` re-runs `curl|bash install.sh` to overwrite the main CLI, with no git / Releases dependency. Optional `AIBOX_SHA256` / `AIBOX_VERIFY=1` add checksum defense in depth.
 - **Platform is self-reported by the module**: a `platform=darwin` module only warns on non-macOS; the real constraint is reported by the module hook at runtime.
-- **`AIBOX_RAW` is overridable**: supports local sources / mirrors (e.g. `AIBOX_RAW=file:///path/to/aibox aibox list --available`). Remote registry results are cached with a TTL to dodge the unauthenticated GitHub API rate limit.
+- **`AIBOX_RAW` is overridable**: supports local sources / mirrors (e.g. `AIBOX_RAW=file:///path/to/aibox aibox dashboard --available`). Remote registry results are cached with a TTL to dodge the unauthenticated GitHub API rate limit.
 - **A module need not ship a daemon**: `pi-web` manages a launchd service, while `openmaic` only dispatches a CLI and passes `aibox openmaic <action>` through to it — in the contract, `svc.sh` is an "action entry point", not "must be a daemon".
 - **Module runtime environment is self-reported**: cross-platform install modules (like `openmaic`) don't set `platform`; the CLI refuses unsupported platforms at execution with a clear message, which is less false-positive-prone than hard-blocking at install time (install itself is side-effect-free on any OS).
 - **Proxy config is separated from runtime**: config is written to `~/.aibox/config` (600) and exported as env vars at startup. So it covers both `aibox` itself and the module hooks it spawns (child inheritance), with no changes to existing module code. The cross-machine / cross-time layer (a module networking elsewhere on its own) must be handled by the module writing the value into its own config file — env vars don't cross that boundary by nature; this isn't a trick, it's the boundary.

@@ -22,14 +22,13 @@ docs/module-spec.md  the module hook contract
 
 ```text
 aibox install <module> [--skip-checks]
-aibox uninstall <module>
-aibox update <module> [--restart|--no-restart] [--skip-checks] [--all] | --all     # --all also updates aibox itself
-aibox check <module>                      # module preflight; environment: aibox self check
-aibox list [--available] / ports / dashboard [module]
+aibox uninstall <module>|self [--purge] [--yes]   # --purge: also delete data; self = manager (--purge = cascade full teardown)
+aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks]   # self = aibox itself; --all = modules + self
+aibox check <module>|self                    # module preflight; self = environment check
+aibox dashboard [--available] [<module>]     # overview (versions+endpoints+credentials+ports) / catalog / detail+health
 aibox purge [<module>...|self] [--apply] [--stop] [--yes]  # residue scan/cleanup (dry-run default)
 aibox <module> <action> [args]            # pass-through to module svc.sh
-aibox self {check|update|uninstall [--purge]|version|help}
-aibox proxy {show|set <url>|unset|on|off|test|check|env}   # static proxy config (global; see README "Proxy")
+aibox proxy {show|set <url>|unset|on|off|check [url]|env}   # static proxy config (global; see README "Proxy")
 aibox --no-proxy <command>                                # bypass the proxy once
 aibox clash {set <sub-url>|on|off|status|refresh|select|test|logs|doctor}  # clash pool (mihomo; see tools/clash/README)
 ```
@@ -95,7 +94,7 @@ grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[，。、；：！？（）「」]' <file>
 
 ### #3 Proxy testing: status-code-only is always a false positive
 
-**Symptom**: after adding proxy support, `proxy test` reports "proxy ok" (HTTP 200) — but with the port wrong or the proxy off, the test **still says 200**.
+**Symptom**: after adding proxy support, `proxy test` (now `proxy check <url>`) reports "proxy ok" (HTTP 200) — but with the port wrong or the proxy off, the test **still says 200**.
 
 **Root cause**: the test was written as "reach GitHub via the proxy = proxy works". But on a directly-reachable network, that 200 came from the **direct connection** — the proxy may not have been used at all. The same machine, with a different network (Clash TUN on/off), flips the verdict without a line of test code changing.
 
@@ -196,7 +195,7 @@ scripts/validate-module.sh <name> | --all                                  # con
 
 1. `module.yaml` is the source of truth — the registry auto-discovers `tools/*/module.yaml` (no registry.sh to edit; local `file://` source needs zero global changes). Hyphenated names map to underscored variable keys internally (`pi-web` → `AIBOX_MODULE_pi_web_*`).
 2. Hooks (`install/uninstall/update/svc.sh`): bash shebang, `set -euo pipefail`, idempotent; shared code lives in `lib.sh` (sourced library — no shebang, no strict-mode line). Module scripts are downloaded and cached to `~/.aibox/modules/<name>/`.
-3. **Every module declares `checks:` (preflight contract)**: install/update is hard-gated by `preflight_module` — deps (strict), `checks.commands`, `checks.disk_gb`, `checks.domains` (host-probed) / `checks.docker_pull` (daemon-probed — the docker daemon's egress differs from the host's; never host-probe a daemon-consumed registry), with the `checks.docker_images` cache short-circuit, and `services:` readiness (recursive into base). Host network failures try the configured alternative routes (direct/clash/mirror/static proxy) and adopt a working one for the run. CI enforces the section's presence + field formats; `aibox self check` / `aibox check <module>` run it proactively; `--skip-checks` bypasses. Full spec + per-module matrix: `docs/module-spec.md` §Preflight checks.
+3. **Every module declares `checks:` (preflight contract)**: install/update is hard-gated by `preflight_module` — deps (strict), `checks.commands`, `checks.disk_gb`, `checks.domains` (host-probed) / `checks.docker_pull` (daemon-probed — the docker daemon's egress differs from the host's; never host-probe a daemon-consumed registry), with the `checks.docker_images` cache short-circuit, and `services:` readiness (recursive into base). Host network failures try the configured alternative routes (direct/clash/mirror/static proxy) and adopt a working one for the run. CI enforces the section's presence + field formats; `aibox check self` / `aibox check <module>` run it proactively; `--skip-checks` bypasses. Full spec + per-module matrix: `docs/module-spec.md` §Preflight checks.
 4. **Install paths must be overridable**: start from `${AIBOX_BIN_DIR:-$HOME/.local/bin}` and expose a module-specific override (e.g. `OPENMAIC_BIN_DIR`) — deploy hosts often want `/usr/local/bin`.
 5. **`svc.sh` is an "action entry point", NOT "must be a daemon"**: long-lived services (pi-web) use `start/stop/restart`; pure-CLI dispatch (openmaic) can pass actions straight through to the dispatched command. Service-type modules (`actions` contains `start`) MUST implement the full lifecycle `start/stop/restart/status/logs`.
 6. **Platform differences: warn, don't hard-block**: install is usually cross-platform (just copying files); the real limit is reported by the script at execution time, which is less false-positive-prone than blocking at install.

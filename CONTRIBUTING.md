@@ -11,7 +11,7 @@ git clone https://github.com/lichengwu/aibox.git
 cd aibox
 
 # trial against your working tree, no network needed:
-AIBOX_RAW=file://$PWD aibox list --available
+AIBOX_RAW=file://$PWD aibox dashboard --available
 AIBOX_RAW=file://$PWD aibox install pi-web   # installs from your tree
 ```
 

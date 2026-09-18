@@ -2,15 +2,16 @@
 # aibox — a lightweight, zero-dependency module manager for AI coding toolkits
 # Repo: https://github.com/lichengwu/aibox
 #
-# Usage:
-#   aibox install <module>            install a module
-#   aibox uninstall <module>          uninstall a module
-#   aibox update <module> [--restart|--no-restart] [--all] | --all   update modules
-#   aibox list                        list installed modules
-#   aibox list [--available]         installed modules / registry catalog
-#   aibox <module> <action> [args]   invoke a module service action (e.g. aibox pi-web start)
-#   aibox self {update|uninstall|version}
-#   aibox help
+# Usage (one grammar: everything is a module — 'self' is the manager module):
+#   aibox install <module> [--skip-checks]
+#   aibox uninstall <module>|self [--purge] [--yes]
+#   aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks]
+#   aibox check <module>|self           module preflight / environment check
+#   aibox dashboard [--available] [<module>]   overview(+ports) / catalog / detail
+#   aibox purge [<module>...|self] [--apply] [--stop] [--yes]
+#   aibox <module> <action> [args]      module action pass-through
+#   aibox proxy {set <url>|on|off|unset|check [url]|env}
+#   aibox version | help
 set -euo pipefail
 
 AIBOX_REPO="lichengwu/aibox"
@@ -265,7 +266,7 @@ installed_names() {
 download_module() {
   local name="$1" dir files f extra dl
   load_registry
-  module_exists "$name" || die "Unknown module: ${name} (aibox list --available shows available modules)"
+  module_exists "$name" || die "Unknown module: ${name} (aibox dashboard --available shows available modules)"
   dir="$(module_field "$name" dir)"
   files="$(module_field "$name" files)"
   [ -n "$dir" ] || die "Module $name is missing the dir field"
@@ -439,10 +440,10 @@ cmd_proxy() {
     unset) cmd_proxy_unset ;;
     on)    cmd_proxy_toggle 1 ;;
     off)   cmd_proxy_toggle 0 ;;
-    test)  shift; cmd_proxy_test "$@" ;;
-    check) shift; cmd_proxy_check "$@" ;;
+    check) shift; if [ $# -gt 0 ]; then cmd_proxy_test "$@"; else cmd_proxy_check; fi ;;
+    test)  die "'proxy test' merged into: aibox proxy check <target-url> (single target + direct-connection control)" ;;
     env)   shift; cmd_proxy_env "$@" ;;
-    *)     die "Usage: aibox proxy {show|set <url>|unset|on|off|test [url]|check [url]|env [--remote]}" ;;
+    *)     die "Usage: aibox proxy {show|set <url>|unset|on|off|check [url]|env [--remote]}" ;;
   esac
 }
 
@@ -574,27 +575,37 @@ cmd_proxy_toggle() {
   return 0
 }
 
-cmd_proxy_test() {
-  local url
-  url=$(normalize_proxy_url "${1:-}")
-  [ -n "$url" ] || url="$AIBOX_PROXY_URL"
+cmd_proxy_test() { # single-target reachability via the effective proxy route + direct control.
+  # $1 = TARGET url (default: $PROBE_TARGET). Invoked as `aibox proxy check <url>` (v2.1
+  # merge of the old `proxy test`). The proxy route resolves from config: static →
+  # clash-pool fallback; to test a different proxy, set it first (aibox proxy set <url>).
+  local target="${1:-$PROBE_TARGET}" url out code used
+  url="$AIBOX_PROXY_URL"
   # No static proxy — fall back to the clash pool (local mihomo) if it's active.
   if [ -z "$url" ] && clash_active; then
     url="socks5://127.0.0.1:${CLASH_PORT}"
   fi
-  [ -n "$url" ] || die "No proxy configured. Usage: aibox proxy test [url]"
+  [ -n "$url" ] || die "No proxy configured (nothing to route through). Set one: aibox proxy set <url>; site matrix: aibox proxy check"
 
-  log "Proxy test"
+  log "Proxy check (single target)"
   info "Proxy   $(mask_url "$url")"
-  info "Target  $PROBE_TARGET"
+  info "Target  $target"
   echo
 
+  # Any HTTP answer (even 401/404) = reachable; only 000/empty = failure. proxy_used:
+  # 1 = confirmed via proxy; 0 = answered DIRECT (warn — the proxy may be bypassed);
+  # empty = this curl build lacks %{proxy_used} (say so, don't guess).
   local proxied=0
-  if proxy_probe "$url"; then
-    if [ "$PROBE_CONFIRMED" = "1" ]; then
-      ok "Via proxy     200 (traffic confirmed going through the proxy)"
+  out="$(curl -s --max-time 15 -x "$url" -o /dev/null -w '%{http_code} %{proxy_used}' "$target" 2>/dev/null)" || out=""
+  code="${out%% *}"; used="${out##* }"
+  [ -n "$code" ] || code="000"
+  if [ "$code" != "000" ]; then
+    if [ "$used" = "1" ]; then
+      ok "Via proxy     ${code} (traffic confirmed going through the proxy)"
+    elif [ -z "$used" ]; then
+      ok "Via proxy     ${code} (curl lacks %{proxy_used}, can't confirm whether proxy was used)"
     else
-      ok "Via proxy     200 (curl lacks %{proxy_used}, can't confirm whether proxy was used)"
+      ok "Via proxy     ${code} (WARNING: proxy_used=0 — answered via DIRECT connection)"
     fi
     proxied=1
   else
@@ -602,15 +613,15 @@ cmd_proxy_test() {
   fi
 
   local dcode
-  dcode=$(curl -s --max-time 10 --noproxy '*' -o /dev/null -w '%{http_code}' "$PROBE_TARGET" 2>/dev/null) || dcode=""
+  dcode=$(curl -s --max-time 10 --noproxy '*' -o /dev/null -w '%{http_code}' "$target" 2>/dev/null) || dcode=""
   [ -n "$dcode" ] || dcode="000"
-  if [ "$dcode" = "200" ]; then
-    info "Direct control 200 — direct connection also works here, proxy isn't required"
+  if [ "$dcode" != "000" ]; then
+    info "Direct control ${dcode} — direct connection also answers here; the proxy isn't strictly required"
   else
-    info "Direct control $dcode — direct connection fails, proxy is required"
+    info "Direct control 000 — direct connection fails; the proxy is required"
   fi
 
-  [ "$proxied" = "1" ] && return 0 || return 1
+  if [ "$proxied" = "1" ]; then return 0; else return 1; fi
 }
 
 cmd_proxy_env() {
@@ -1214,7 +1225,8 @@ preflight_module() {
 # `aibox check` — environment check; `aibox check <module>` — that module's preflight.
 cmd_check() {
   local target="${1:-}"
-  [ -n "$target" ] || die "Usage: aibox check <module>   (environment check: aibox self check)"
+  [ -n "$target" ] || die "Usage: aibox check <module>|self   (self = environment check)"
+  if [ "$target" = self ]; then cmd_self_check; return $?; fi
   load_registry
   module_exists "$target" || die "Unknown module: $target"
   preflight_module "$target"
@@ -1480,11 +1492,18 @@ cmd_uninstall() {
   local name="" purge=0 a
   for a in "$@"; do
     case "$a" in
-      --purge) purge=1 ;;
-      *) [ -z "$name" ] && name="$a" ;;
+      --purge)  purge=1 ;;
+      --yes|-y) ASSUME_YES=1 ;;
+      -*)       die "unknown option for uninstall: $a (usage: aibox uninstall <module>|self [--purge] [--yes])" ;;
+      *)        [ -z "$name" ] && name="$a" ;;
     esac
   done
-  [ -n "$name" ] || die "Usage: aibox uninstall <module> [--purge]"
+  [ -n "$name" ] || die "Usage: aibox uninstall <module>|self [--purge] [--yes]"
+  if [ "$name" = self ]; then
+    # 'self' = the manager module (one grammar, no self sub-family)
+    if [ "$purge" = 1 ]; then cmd_self_uninstall --purge; else cmd_self_uninstall; fi
+    return $?
+  fi
   is_installed "$name" || { warn "$name not installed; residue left behind? scan it: aibox purge $name"; return; }
   local dest="$AIBOX_MOD_DIR/$name"
   load_registry
@@ -1518,11 +1537,14 @@ cmd_update() {
       --all)                  self_flag=1 ;;
       --restart|--no-restart) restart_arg="$a" ;;
       --skip-checks)          PREFLIGHT_SKIP=1 ;;
+      --yes|-y)               ASSUME_YES=1 ;;
+      -*)                     die "unknown option for update: $a (usage: aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks])" ;;
       *)                      [ -z "$name" ] && name="$a" ;;
     esac
   done
 
   if [ -n "$name" ]; then
+    if [ "$name" = self ]; then cmd_self_update; return $?; fi
     is_installed "${name}" || die "${name} not installed"
     log "Updating ${name} (re-fetching module scripts)..."
     download_module "${name}"
@@ -1551,32 +1573,6 @@ cmd_update() {
   fi
 }
 
-cmd_list() {
-  if [ "${1:-}" = "--available" ]; then cmd_list_available; return $?; fi
-  local names; names="$(installed_names)"
-  if [ ! -f "$AIBOX_INSTALLED" ] || [ -z "$names" ]; then
-    if [ "${AIBOX_PROFILE:-base}" != "base" ]; then
-      echo "(no modules installed for profile '${AIBOX_PROFILE}' yet)"
-    else
-      echo "(no modules installed yet)"
-    fi
-    echo "Available: aibox list --available"
-    return
-  fi
-  if [ "${AIBOX_PROFILE:-base}" != "base" ]; then
-    echo "Installed modules (profile: ${AIBOX_PROFILE}):"
-  else
-    echo "Installed modules:"
-  fi
-  local m key val
-  for m in $names; do
-    key="$(_ikey "$m")"
-    val="$(grep "^${key}=" "$AIBOX_INSTALLED" 2>/dev/null | head -1 | cut -d= -f2-)"
-    val="${val%\"}"; val="${val#\"}"
-    printf '  %s✔%s %-14s %s\n' "$C_GRN" "$C_RST" "$m" "$val"
-  done
-}
-
 cmd_list_available() {
   load_registry
   echo "Available modules (registry @ ${AIBOX_BRANCH}):"
@@ -1593,12 +1589,11 @@ cmd_list_available() {
 # Dashboard: module status + endpoint + credentials, visualized.
 # `aibox dashboard` — global overview table; `aibox <module> dashboard` — module detail + health probe.
 cmd_dashboard() {
-  local name="${1:-}"
-  if [ -n "$name" ]; then
-    cmd_dashboard_detail "$name"
-  else
-    cmd_dashboard_overview
-  fi
+  case "${1:-}" in
+    --available) cmd_list_available ;;
+    "")          cmd_dashboard_overview ;;
+    *)           cmd_dashboard_detail "$1" ;;
+  esac
 }
 
 # Truncate a string to N visible columns, appending an ellipsis if it was cut.
@@ -1607,10 +1602,11 @@ _trunc() { local s="$1" n="$2"; [ "${#s}" -gt "$n" ] && printf '%s…' "${s:0:$(
 
 cmd_dashboard_overview() {
   load_registry
-  printf '  %-16s  %-26s  %s\n' "MODULE" "ENDPOINT" "CREDENTIALS"
-  echo "  ─────────────────────────────────────────────────────────────────"
-  local m info endpoint cred mark
+  printf '  %-16s  %-8s  %-26s  %s\n' "MODULE" "VERSION" "ENDPOINT" "CREDENTIALS"
+  echo "  ───────────────────────────────────────────────────────────────────────────────"
+  local m info endpoint cred mark ver
   for m in ${AIBOX_MODULES:-}; do
+    ver="$(module_field "$m" version)"
     if is_installed "$m"; then
       mark="${C_GRN}✔${C_RST}"
       info=""
@@ -1624,10 +1620,12 @@ cmd_dashboard_overview() {
     fi
     endpoint=$(_trunc "${endpoint:-—}" 26)
     cred=$(_trunc "${cred:-—}" 42)
-    printf '  %s %-14s  %-26s  %s\n' "$mark" "$m" "$endpoint" "$cred"
+    printf '  %s %-14s  %-8s  %-26s  %s\n' "$mark" "$m" "${ver:-—}" "$endpoint" "$cred"
   done
   echo
-  info "✔ installed  ✘ not installed  —  details + health: aibox <module> dashboard"
+  cmd_ports
+  echo
+  info "✔ installed  ✘ not installed  —  detail + health: aibox dashboard <module>; catalog: aibox dashboard --available"
 }
 
 cmd_dashboard_detail() {
@@ -2126,8 +2124,9 @@ cmd_self_uninstall() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --purge)   purge=1 ;;
-      -h|--help) printf 'usage: aibox self uninstall [--purge] [--yes]\n'; return 0 ;;
-      *)         die "unknown option for self uninstall: $1 (usage: aibox self uninstall [--purge] [--yes])" ;;
+      --yes|-y)  ASSUME_YES=1 ;;
+      -h|--help) printf 'usage: aibox uninstall self [--purge] [--yes]\n'; return 0 ;;
+      *)         die "unknown option: $1 (usage: aibox uninstall self [--purge] [--yes])" ;;
     esac
     shift
   done
@@ -2212,28 +2211,27 @@ usage() {
 aibox $AIBOX_VERSION — a lightweight, zero-dependency module manager for AI coding toolkits
 Repo: https://github.com/lichengwu/aibox
 
-Usage (grammar: aibox <noun> <verb> — 'self' is the manager module):
+Usage (one grammar: everything is a module — 'self' is the manager module):
   aibox install <module> [--skip-checks]   install a module (preflight-gated)
-  aibox uninstall <module> [--purge]       uninstall a module; --purge also deletes its DATA
-  aibox update <module> [--restart|--no-restart] [--skip-checks] [--all] | --all   update modules; with --all also updates aibox itself
+  aibox uninstall <module>|self [--purge] [--yes]
+                                    uninstall a module; --purge also deletes its DATA.
+                                    'self' = the manager: by default removes ONLY aibox
+                                    (services/data KEPT, apps/ preserved); --purge =
+                                    cascade full teardown (every module's uninstall
+                                    --purge, then manager + rc block)
+  aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks]
+                                    update modules; self = aibox itself; --all = modules + self
   aibox <module> <action> [args]    invoke a module action (e.g. aibox pi-web start)
 
-  aibox check <module>              preflight one module's install/update readiness
-  aibox list [--available]          installed modules; --available shows the registry catalog
-  aibox ports                       show port assignments (declared + live)
-  aibox dashboard [module]          overview table, or single-module detail + health
+  aibox check <module>|self         module preflight; 'self' = environment check
+                                    (egress route, core domains, docker, disk)
+  aibox dashboard [--available] [<module>]
+                                    overview: modules + versions + endpoints + credentials
+                                    + port table;  --available: registry catalog;
+                                    <module>: single-module detail + health
   aibox purge [<module>...|self] [--apply] [--stop] [--yes]
                                     residue scan/cleanup (dry-run by default): volumes,
-                                    apps/, /etc dirs, units, binaries left after uninstalls;
-                                    'self' scope = the manager's own residue
-
-  aibox self check                  environment check (egress, core domains, docker, disk)
-  aibox self update                 update aibox itself (idempotent re-bootstrap)
-  aibox self uninstall [--purge] [--yes]
-                                    remove the manager (services/data KEPT by default);
-                                    --purge = cascade full teardown: every module's
-                                    uninstall --purge, then manager + rc block
-  aibox self version                print aibox version
+                                    apps/, /etc dirs, units, binaries left after uninstalls
   aibox version | -v | --version
   aibox help | -h | --help
 
@@ -2241,9 +2239,8 @@ Proxy (set once; covers aibox itself and module hooks):
   aibox proxy                      show current config and state
   aibox proxy set <url>            set: test -> save -> verify site connectivity
                                     (--no-test skips all; --no-check skips site verification)
-  aibox proxy check [url]          verify dev-site connectivity (github / docker / npm ...)
-                                    (asks whether to revert if any fail)
-  aibox proxy test [url]           single-target reachability (includes a direct-connection control)
+  aibox proxy check [url]          no url: dev-site matrix (github/docker/npm; revert prompt)
+                                    with url: single-target + direct-connection control
   aibox proxy on | off             enable / disable (config retained)
   aibox proxy unset                clear the config
   aibox proxy env [--remote]       print export statements / remote-ship format
@@ -2305,32 +2302,18 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     install)          shift; cmd_install "$@" ;;
     uninstall)        shift; cmd_uninstall "$@" ;;
     update)           shift; cmd_update "$@" ;;
-    list)             shift; cmd_list "$@" ;;
     check)            shift; cmd_check "$@" ;;
     purge)            shift; cmd_purge "$@" ;;
-    ports)            cmd_ports ;;
     dashboard)        shift; cmd_dashboard "$@" ;;
     proxy)            shift; cmd_proxy "$@" ;;
-    self)
-      shift
-      # Allow --yes after the subcommand (aibox self uninstall --yes).
-      # Only strip it within the self scope — **don't** touch module pass-through args
-      # (modules may have their own --yes).
-      _self_kept=()
-      for _self_a in "$@"; do
-        case "$_self_a" in
-          --yes | -y) ASSUME_YES=1 ;;
-          *)          _self_kept+=("$_self_a") ;;
-        esac
-      done
-      set -- ${_self_kept[@]+"${_self_kept[@]}"}
-      case "${1:-}" in
-        update)       cmd_self_update ;;
-        uninstall)    shift; cmd_self_uninstall "$@" ;;
-        check)        cmd_self_check ;;
-        version)      echo "aibox $AIBOX_VERSION" ;;
-        *)            die "Usage: aibox self {update|uninstall|check|version} [--yes]" ;;
-      esac ;;
+    # v2.1 merges — friendly migration guidance instead of "Unknown module":
+    list)             die "'list' merged into dashboard: aibox dashboard (installed) / aibox dashboard --available (catalog)" ;;
+    ports)            die "'ports' merged into dashboard: aibox dashboard (the overview includes the port table)" ;;
+    self)             die "the 'self' family merged into the standard verbs:
+  aibox check self                  environment check
+  aibox update self                 update aibox itself (--all includes self)
+  aibox uninstall self [--purge] [--yes]
+  aibox version" ;;
     version|-v|--version) echo "aibox $AIBOX_VERSION" ;;
     help|-h|--help)   usage ;;
     *)                cmd_module_action "$@" ;;

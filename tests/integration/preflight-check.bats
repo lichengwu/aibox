@@ -22,8 +22,8 @@ teardown_file() {
   [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true
 }
 
-@test "aibox self check — environment check passes (core domains, docker, disk)" {
-  run bash "$REPO_ROOT/bin/aibox" self check
+@test "aibox check self — environment check passes (core domains, docker, disk)" {
+  run bash "$REPO_ROOT/bin/aibox" check self
   [ "$status" -eq 0 ] || echo "$output"
   [[ "$output" == *"environment check"* ]]
   [[ "$output" == *"raw.githubusercontent.com"* ]]

@@ -248,6 +248,7 @@ validate_module() {
   [ -n "$dirv" ] || err "missing required field: dir"
   [ "$dirv" = "tools/$m" ] || err "dir '$dirv' must be 'tools/$m'"
   printf '%s' "$name" | grep -qE '^[a-z][a-z0-9-]*$' || err "name '$name': only lowercase letters, digits, hyphens; must start with a letter"
+  if [ "$name" = self ]; then err "module name 'self' is reserved (the manager module: aibox uninstall self / update self / check self)"; fi
   printf '%s' "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([-+.][A-Za-z0-9.+-]+)?$' || err "version '$version' is not semver (x.y.z)"
   case "$platform" in "" | linux | darwin) ;; *) err "platform '$platform' must be empty, linux, or darwin" ;; esac
 

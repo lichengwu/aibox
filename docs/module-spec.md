@@ -25,7 +25,7 @@ with exactly this flow.
 6. **Docs**: `README.md` (commands / ports / env overrides / preflight — ERROR if missing) + `docs/DEVELOPMENT.md` (upstream links, version-pin policy, design decisions, known quirks — WARN if missing).
 7. **Prove**: `scripts/validate-module.sh <name>` → 0 errors; `bats tests/*.bats` green; live smoke on a docker host: `aibox install <name>` → `<name> start` → `status` → `logs` → `stop` → `uninstall`.
 8. **Residue map**: extend the residue map in `bin/aibox` (`residue_*` functions) with the module's leftover locations (volumes, containers, `/etc/<name>`, units, dispatched binaries) — `aibox purge` must be able to clean up AFTER the module (or aibox itself) is uninstalled (validator WARNs when the entry is missing).
-9. **Register in docs**: add the module row to `README.md` / `README.zh.md`; `aibox list --available` picks the module up automatically (`module.yaml` is the registry).
+9. **Register in docs**: add the module row to `README.md` / `README.zh.md`; `aibox dashboard --available` picks the module up automatically (`module.yaml` is the registry).
 
 ## Directory layout
 
@@ -123,18 +123,18 @@ Data deletion is ONE flag across the CLI: **`--purge`**.
 aibox uninstall <module> [--purge]     tear down one module; --purge also deletes its DATA
 aibox purge [<module>...|self] [--apply] [--stop] [--yes]
                                        after-the-fact residue scan/cleanup (see below)
-aibox self uninstall [--purge] [--yes] remove the manager; --purge = cascade full teardown
+aibox uninstall self [--purge] [--yes] remove the manager; --purge = cascade full teardown
 ```
 
-- `aibox self uninstall` (default): removes ONLY the manager — `$AIBOX_BIN_DIR/aibox`,
+- `aibox uninstall self` (default): removes ONLY the manager — `$AIBOX_BIN_DIR/aibox`,
   `$AIBOX_HOME` state and the marked `# aibox` rc PATH block. **`apps/` is preserved** so
   surviving deployments stay manageable; module services and data are KEPT and the summary
   prints the teardown paths. Confirm gate: TTY asks; non-interactive requires `--yes`.
-- `aibox self uninstall --purge`: cascade — runs every installed (module, profile)'s
+- `aibox uninstall self --purge`: cascade — runs every installed (module, profile)'s
   `uninstall.sh` with `AIBOX_PURGE_DATA=1` (services + data via the hooks), drops `apps/`,
   then removes the manager + rc block. One command, composed from existing semantics.
 - `aibox uninstall <m> --purge`: single-module equivalent (hook with `AIBOX_PURGE_DATA=1`
-  + the manager sweeps `apps/<m>`).
+  - the manager sweeps `apps/<m>`).
 - Hooks run from the module cache (`~/.aibox/modules/<m>/uninstall.sh`) — no registry
   fetch, so uninstall works offline.
 
@@ -220,11 +220,12 @@ Before switching roots, verify these three constraints in order (the first two a
 
 ### Mandatory corollaries (skip any and you get an incident)
 
-- **`aibox self uninstall` must be fail-closed.** When `apps/` is non-empty it **refuses by default** and lists the deploys
-  (databases, backups) that would be deleted; an explicit `--yes` is required to proceed. A bare `rm -rf "$AIBOX_HOME"`
-  with a one-line prompt is not protection. (Consistent with "dangerous ops return 2 non-interactively".)
-  **Implemented**: `aibox self uninstall [--yes]` — when `apps/` is non-empty it lists deploys and requires interactive
-  confirmation; non-interactive without `--yes` returns `2` and changes nothing; `--yes` is accepted before or after the subcommand.
+- **`aibox uninstall self` must be fail-safe.** The default removes ONLY the manager (binary +
+  state + rc block) and KEEPS module services/data — `apps/` survives so running deployments stay
+  manageable, and the summary prints the teardown paths (`aibox uninstall <m> --purge`,
+  `aibox purge --apply`). `--purge` cascades: every installed (module, profile)'s hook with
+  `AIBOX_PURGE_DATA=1`, then `apps/`, then the manager. Confirm gate: TTY asks; non-interactive
+  without `--yes` exits non-zero and changes nothing ("dangerous ops never run silently").
 - **systemd / launchd units must bake the resolved absolute paths in explicitly**, e.g.
   `Environment="AIBOX_HOME=/root/.aibox"`.
   **Empirically: there is no `HOME` variable in a systemd system service** (`systemd-run /usr/bin/env` only outputs `USER=root`).
@@ -311,7 +312,7 @@ Irreversible ops (uninstalling a deploy, wiping data volumes, teardown) must be 
 
 - **Dangerous ops use `confirm "<prompt>"`**: requires typing `yes` to proceed; honors `--yes`/`-y` (`ASSUME_YES=1`, skip confirmation) and `--dry-run` (show only, don't execute). openmaic/windmill's `confirm` already does this.
 - **Soft choices use `ask_yn "<prompt>" [y|n]`**: default `n` (decline) or `y` (accept); **non-interactive environments (`[ -t 0 ]` false) always take the conservative default** with a warning.
-- The main CLI's `ask_confirm` (`bin/aibox`) is the soft-choice, default-decline, non-interactive-returns-`1` variant. `aibox self uninstall` uses it for fail-closed behavior when `apps/` is non-empty.
+- The main CLI's `ask_confirm` (`bin/aibox`) is the soft-choice, default-decline, non-interactive-returns-`1` variant. `aibox uninstall self` uses it for the confirm gate (non-interactive requires `--yes`).
 - **Never silently execute a dangerous op**: non-interactive + no `--yes` returns `2` instead of `0`, so scripts and CI can notice.
 
 ## Preflight checks (mandatory for every module)
@@ -369,7 +370,7 @@ aibox clash set <subscription-url> && aibox clash on    # real egress from here 
 ### CLI surface
 
 ```bash
-aibox self check               # environment: egress route, core domains (raw.githubusercontent/api.github), docker, disk
+aibox check self               # environment: egress route, core domains (raw.githubusercontent/api.github), docker, disk
 aibox check <module>           # that module's full preflight (usable before installing)
 aibox install <module> [--skip-checks]
 aibox update  <module> [--skip-checks] [--all]
@@ -425,7 +426,7 @@ name/version/description/platform/dir/deps/ports/files/hooks/actions/upstream/da
 
 ### ports field (port/proto:usage)
 
-CI `port-conflict` checks port+proto uniqueness (spec §3). The `aibox ports` command lists the assignment table + does an lsof listen probe.
+CI `port-conflict` checks port+proto uniqueness (spec §3). The `aibox dashboard` overview lists the assignment table + does an lsof listen probe.
 
 ### dashboard_info() interface (spec §4.4)
 
