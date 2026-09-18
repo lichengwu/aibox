@@ -917,7 +917,7 @@ cmd_proxy_check() {
   if [ "$failc" -gt 0 ]; then
     printf '  %sunreachable:%s\n' "$C_RED" "$C_RST"
     printf '%b' "$failed_lines"
-    info "Troubleshoot: 'aibox proxy test' for the direct-connection control; or try another proxy"
+    info "Troubleshoot: 'aibox proxy check <url>' for the direct-connection control; or try another proxy"
     return 1
   fi
   return 0
