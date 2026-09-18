@@ -1,8 +1,8 @@
-name: gitlab-ce
+name: gitlab
 version: 1.0.0
 description: "GitLab CE self-hosted (omnibus docker): web UI + git over SSH, embedded PG/Redis"
 platform: ""
-dir: tools/gitlab-ce
+dir: tools/gitlab
 
 deps:
   - docker
@@ -37,7 +37,7 @@ upstream:
 
 dashboard:
   endpoints: http://127.0.0.1:8929
-  hint: "Login root; initial password: aibox gitlab-ce credentials (file auto-deletes 24h after first boot)"
+  hint: "Login root; initial password: aibox gitlab credentials (file auto-deletes 24h after first boot)"
 
 # GitLab omnibus bundles its own PostgreSQL/Redis inside the container, so this
 # module does NOT consume the shared aibox base (documented in README/DEVELOPMENT).

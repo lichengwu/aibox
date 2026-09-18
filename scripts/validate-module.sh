@@ -24,16 +24,26 @@ MODE=""
 TARGET=""
 for a in "$@"; do
   case "$a" in
-    --all)    MODE="all" ;;
-    --quiet)  QUIET=1 ;;
-    -h|--help)
-      sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
-      exit 0 ;;
-    -*)       printf 'unknown flag: %s\n' "$a" >&2; exit 2 ;;
-    *)        [ -z "$TARGET" ] && { TARGET="$a"; MODE="one"; } ;;
+  --all) MODE="all" ;;
+  --quiet) QUIET=1 ;;
+  -h | --help)
+    sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+  -*)
+    printf 'unknown flag: %s\n' "$a" >&2
+    exit 2
+    ;;
+  *) [ -z "$TARGET" ] && {
+    TARGET="$a"
+    MODE="one"
+  } ;;
   esac
 done
-[ -n "$MODE" ] || { printf 'usage: validate-module.sh <module>|--all\n' >&2; exit 2; }
+[ -n "$MODE" ] || {
+  printf 'usage: validate-module.sh <module>|--all\n' >&2
+  exit 2
+}
 
 # ---------- parser reuse (single source of truth: bin/aibox) ----------
 # Source in a sandboxed AIBOX_HOME so apply_proxy/config touch nothing real;
@@ -42,23 +52,36 @@ _VHOME="$(mktemp -d 2>/dev/null || echo "/tmp/aibox-validate.$$")"
 mkdir -p "$_VHOME"
 export AIBOX_HOME="$_VHOME" AIBOX_CONFIG="$_VHOME/config"
 # shellcheck disable=SC1091
-. "$REPO_ROOT/bin/aibox" || { printf 'cannot source bin/aibox (parser)\n' >&2; exit 2; }
-set +e +u; set -o pipefail 2>/dev/null || true
+. "$REPO_ROOT/bin/aibox" || {
+  printf 'cannot source bin/aibox (parser)\n' >&2
+  exit 2
+}
+set +e +u
+set -o pipefail 2>/dev/null || true
 
 # ---------- output (v-prefixed: bin/aibox defines warn/ok/info/note too — never collide) ----------
-ERRORS=0; WARNS=0
+ERRORS=0
+WARNS=0
 MOD="?"
-verr()  { printf 'ERROR [%s] %s\n' "$MOD" "$*"; ERRORS=$((ERRORS+1)); }
-vwarn() { printf 'WARN  [%s] %s\n' "$MOD" "$*"; WARNS=$((WARNS+1)); }
-vok()   { [ "$QUIET" = 1 ] || printf 'ok    [%s] %s\n' "$MOD" "$*"; }
+verr() {
+  printf 'ERROR [%s] %s\n' "$MOD" "$*"
+  ERRORS=$((ERRORS + 1))
+}
+vwarn() {
+  printf 'WARN  [%s] %s\n' "$MOD" "$*"
+  WARNS=$((WARNS + 1))
+}
+vok() { [ "$QUIET" = 1 ] || printf 'ok    [%s] %s\n' "$MOD" "$*"; }
 vnote() { [ "$QUIET" = 1 ] || printf '  ·   %s\n' "$*"; }
 # keep short aliases for readability inside rules (defined AFTER the source above)
-err()  { verr "$@"; }
+err() { verr "$@"; }
 warn() { vwarn "$@"; }
 
 # ---------- optional enhancers (detect once) ----------
-HAVE_YQ=0;    command -v yq >/dev/null 2>&1 && HAVE_YQ=1
-HAVE_SC=0;    command -v shellcheck >/dev/null 2>&1 && HAVE_SC=1
+HAVE_YQ=0
+command -v yq >/dev/null 2>&1 && HAVE_YQ=1
+HAVE_SC=0
+command -v shellcheck >/dev/null 2>&1 && HAVE_SC=1
 BASH32=""
 if [ -x /bin/bash ] && /bin/bash -c 'test "${BASH_VERSINFO[0]}" -eq 3' 2>/dev/null; then
   BASH32=/bin/bash
@@ -144,7 +167,7 @@ parse_one() { # $1 = yaml file → eval-able assignments (namespaced by mu)
   m="$(awk -F': *' '/^name:/{gsub(/"/,"",$2); gsub(/[ \t\r]/,"",$2); print $2; exit}' "$f")"
   [ -n "$m" ] || return 1
   mu="$(mu_of "$m")"
-  parse_yaml_module_stdin "$mu" < "$f"
+  parse_yaml_module_stdin "$mu" <"$f"
 }
 
 # ---------- load every module into AIBOX_MODULE_* vars (cross-module rules need all) ----------
@@ -153,27 +176,35 @@ for f in $(all_module_files); do
   d="$(basename "$(dirname "$f")")"
   m="$(awk -F': *' '/^name:/{gsub(/"/,"",$2); gsub(/[ \t\r]/,"",$2); print $2; exit}' "$f")"
   if [ -z "$m" ]; then
-    MOD="$d"; err "module.yaml has no parseable name: field"
+    MOD="$d"
+    err "module.yaml has no parseable name: field"
     continue
   fi
   if [ "$m" != "$d" ]; then
-    MOD="$d"; err "name '$m' does not match directory '$d'"
+    MOD="$d"
+    err "name '$m' does not match directory '$d'"
   fi
-  eval "$(parse_one "$f")" || { MOD="$d"; err "module.yaml failed to parse"; continue; }
+  eval "$(parse_one "$f")" || {
+    MOD="$d"
+    err "module.yaml failed to parse"
+    continue
+  }
   LOAD_LIST="$LOAD_LIST $m"
 done
 
 # Cross-module tables (plain temp files — bash 3.2 has no associative arrays).
 _TMP="$(mktemp -d 2>/dev/null || echo "/tmp/aibox-validate-tbl.$$")"
 mkdir -p "$_TMP"
-PORTS_TBL="$_TMP/ports"; : > "$PORTS_TBL"          # "<port/proto> <module>"
-PROVIDES_TBL="$_TMP/provides"; : > "$PROVIDES_TBL" # "<provider>:<component>"
+PORTS_TBL="$_TMP/ports"
+: >"$PORTS_TBL" # "<port/proto> <module>"
+PROVIDES_TBL="$_TMP/provides"
+: >"$PROVIDES_TBL" # "<provider>:<component>"
 for m in $LOAD_LIST; do
   mu="$(mu_of "$m")"
   p="$(module_field "$m" ports)"
-  for tok in $p; do printf '%s %s\n' "$tok" "$m" >> "$PORTS_TBL"; done
+  for tok in $p; do printf '%s %s\n' "$tok" "$m" >>"$PORTS_TBL"; done
   pv="$(module_field "$m" provides)"
-  for c in $pv; do printf '%s:%s\n' "$m" "$c" >> "$PROVIDES_TBL"; done
+  for c in $pv; do printf '%s:%s\n' "$m" "$c" >>"$PROVIDES_TBL"; done
 done
 
 # ---------- per-module rule checks ----------
@@ -183,8 +214,14 @@ validate_module() {
   local f="$d/module.yaml"
   local mu tok line
   MOD="$m"
-  if [ ! -d "$d" ]; then err "no such module directory: tools/$m"; return; fi
-  if [ ! -f "$f" ]; then err "missing module.yaml"; return; fi
+  if [ ! -d "$d" ]; then
+    err "no such module directory: tools/$m"
+    return
+  fi
+  if [ ! -f "$f" ]; then
+    err "missing module.yaml"
+    return
+  fi
   mu="$(mu_of "$m")"
 
   # --- S3: YAML well-formed (yq, optional) ---
@@ -193,15 +230,17 @@ validate_module() {
   fi
 
   # --- S4: §2.2 awk-parser subset (no anchors/aliases/block scalars/flow) ---
-  if grep -nE '[&*][A-Za-z_]|:[[:space:]]*[|>]|:[[:space:]]*[[{]|^[[:space:]]*-[[:space:]]*[[{]' "$f" \
-     | grep -vE '^[0-9]+:[[:space:]]*#' | grep -q .; then
+  if grep -nE '[&*][A-Za-z_]|:[[:space:]]*[|>]|:[[:space:]]*[[{]|^[[:space:]]*-[[:space:]]*[[{]' "$f" |
+    grep -vE '^[0-9]+:[[:space:]]*#' | grep -q .; then
     err "module.yaml uses §2.2-forbidden YAML (anchors/block scalars/flow); awk parser unsupported"
   fi
 
   # --- S5/S6: required fields + formats ---
   local name version desc dirv platform
-  name="$(module_field "$m" name)"; version="$(module_field "$m" version)"
-  desc="$(module_field "$m" description)"; dirv="$(module_field "$m" dir)"
+  name="$(module_field "$m" name)"
+  version="$(module_field "$m" version)"
+  desc="$(module_field "$m" description)"
+  dirv="$(module_field "$m" dir)"
   platform="$(module_field "$m" platform)"
   [ -n "$name" ] || err "missing required field: name"
   [ -n "$version" ] || err "missing required field: version"
@@ -210,15 +249,17 @@ validate_module() {
   [ "$dirv" = "tools/$m" ] || err "dir '$dirv' must be 'tools/$m'"
   printf '%s' "$name" | grep -qE '^[a-z][a-z0-9-]*$' || err "name '$name': only lowercase letters, digits, hyphens; must start with a letter"
   printf '%s' "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([-+.][A-Za-z0-9.+-]+)?$' || err "version '$version' is not semver (x.y.z)"
-  case "$platform" in ""|linux|darwin) ;; *) err "platform '$platform' must be empty, linux, or darwin" ;; esac
+  case "$platform" in "" | linux | darwin) ;; *) err "platform '$platform' must be empty, linux, or darwin" ;; esac
 
   # --- S8: hooks contract ---
   local h
   h="$(module_field "$m" install)"
-  if [ -z "$h" ]; then err "missing hooks.install"
+  if [ -z "$h" ]; then
+    err "missing hooks.install"
   elif [ ! -f "$d/$h" ]; then err "hooks.install '$h' not found in module dir"; fi
   for hk in uninstall update svc; do
-    local hv; hv="$(module_field "$m" "$hk")"
+    local hv
+    hv="$(module_field "$m" "$hk")"
     if [ -n "$hv" ]; then
       [ -f "$d/$hv" ] || err "hooks.$hk '$hv' not found in module dir"
     else
@@ -255,8 +296,8 @@ validate_module() {
       "$BASH32" -n "$s" 2>/dev/null || err "$base_s: bash 3.2 parse error (mac dispatch compatibility; AGENTS.md pitfall #2)"
     fi
     if [ "$HAVE_SC" = 1 ]; then
-      shellcheck --severity=error --external-sources --shell=bash "$s" >/dev/null 2>&1 \
-        || err "$base_s: shellcheck --severity=error findings"
+      shellcheck --severity=error --external-sources --shell=bash "$s" >/dev/null 2>&1 ||
+        err "$base_s: shellcheck --severity=error findings"
     fi
     # gotcha #1: bare $VAR followed directly by full-width punctuation
     line="$(grep -nE "\\\$[A-Za-z_][A-Za-z0-9_]*[$FW_PUNCT]" "$s" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
@@ -292,18 +333,30 @@ validate_module() {
     printf '%s' "$tok" | grep -qE '^[a-z0-9_-]+$' || err "provides entry malformed: $tok"
   done
   for tok in $(module_field "$m" services); do
-    printf '%s' "$tok" | grep -qE '^[a-z0-9_-]+:[a-z0-9_-]+(#[a-z0-9_]+)?$' || { err "services entry must use the full provider form provider:component[#dbname]: $tok"; continue; }
+    printf '%s' "$tok" | grep -qE '^[a-z0-9_-]+:[a-z0-9_-]+(#[a-z0-9_]+)?$' || {
+      err "services entry must use the full provider form provider:component[#dbname]: $tok"
+      continue
+    }
     local prov comp db
-    prov="${tok%%:*}"; comp="${tok#*:}"
-    case "$comp" in *'#'*) db="${comp#*#}"; comp="${comp%%#*}" ;; *) db="" ;; esac
+    prov="${tok%%:*}"
+    comp="${tok#*:}"
+    case "$comp" in *'#'*)
+      db="${comp#*#}"
+      comp="${comp%%#*}"
+      ;;
+    *) db="" ;; esac
     [ "$prov" != "$m" ] || err "services must not reference own module: $tok"
-    printf '%s\n' "$LOAD_LIST" | tr ' ' '\n' | grep -qx "$prov" || { err "services provider '$prov' is not a module: $tok"; continue; }
+    printf '%s\n' "$LOAD_LIST" | tr ' ' '\n' | grep -qx "$prov" || {
+      err "services provider '$prov' is not a module: $tok"
+      continue
+    }
     grep -qx "${prov}:${comp}" "$PROVIDES_TBL" || err "services component not in ${prov}'s provides: $tok"
     if [ -n "$db" ]; then
-      local mu_name; mu_name="$(printf '%s' "$m" | tr '-' '_')"
+      local mu_name
+      mu_name="$(printf '%s' "$m" | tr '-' '_')"
       case "$db" in
-        "$m"|"$mu_name"|"${m}_"*|"${mu_name}_"*) ;;
-        *) err "services dbname must be <module> or <module>_<usage>: $tok" ;;
+      "$m" | "$mu_name" | "${m}_"* | "${mu_name}_"*) ;;
+      *) err "services dbname must be <module> or <module>_<usage>: $tok" ;;
       esac
     fi
   done
@@ -332,7 +385,8 @@ validate_module() {
   [ -n "$dpl" ] && { printf '%s' "$dpl" | grep -qE '^[A-Za-z0-9._/-]+(:[A-Za-z0-9._-]+)?$' || err "checks.docker_pull must be an image reference: $dpl"; }
 
   # --- S16: actions lifecycle completeness ---
-  local acts; acts="$(module_field "$m" actions)"
+  local acts
+  acts="$(module_field "$m" actions)"
   if printf '%s\n' $acts | grep -qx start; then
     for need in stop restart status logs; do
       printf '%s\n' $acts | grep -qx "$need" || err "service-type module (actions has start) missing lifecycle action: $need"
@@ -342,8 +396,8 @@ validate_module() {
   # --- S17: dashboard subfields (endpoints/hint only) ---
   if grep -qE '^dashboard:' "$f"; then
     local bad_sub
-    bad_sub="$(awk '/^dashboard:/{inb=1;next} /^[A-Za-z0-9_]/{inb=0} inb && /^  [a-z_-]+:/{gsub(/:.*/,"");gsub(/ /,"");print}' "$f" \
-      | grep -vE '^(endpoints|hint)$' | tr '\n' ' ')"
+    bad_sub="$(awk '/^dashboard:/{inb=1;next} /^[A-Za-z0-9_]/{inb=0} inb && /^  [a-z_-]+:/{gsub(/:.*/,"");gsub(/ /,"");print}' "$f" |
+      grep -vE '^(endpoints|hint)$' | tr '\n' ' ')"
     [ -n "$bad_sub" ] && err "dashboard allows only endpoints/hint; got: $bad_sub"
   fi
 
@@ -377,7 +431,10 @@ if [ "$MODE" = "all" ]; then
     validate_module "$m"
   done
 else
-  printf '%s\n' $LOAD_LIST | grep -qx "$TARGET" || { printf 'unknown module: %s (available:%s)\n' "$TARGET" " $LOAD_LIST" >&2; exit 2; }
+  printf '%s\n' $LOAD_LIST | grep -qx "$TARGET" || {
+    printf 'unknown module: %s (available:%s)\n' "$TARGET" " $LOAD_LIST" >&2
+    exit 2
+  }
   validate_module "$TARGET"
 fi
 

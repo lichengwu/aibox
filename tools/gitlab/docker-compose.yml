@@ -1,17 +1,17 @@
-# gitlab-ce deploy compose — placed into $AIBOX_HOME/apps/gitlab-ce by the install
+# gitlab deploy compose — placed into $AIBOX_HOME/apps/gitlab by the install
 # hook. Conventions (docs/module-spec.md §Deploy directory): named volumes only
 # (Docker Desktop does not share /opt — bind mounts there fail with "Mounts
 # denied"); no hardcoded credentials; ports/image tunables via the deploy .env.
 #
 # Single-instance module: fixed container name + project-scoped volumes
-# (gitlab-ce_gitlab_config / _logs / _data). GitLab omnibus bundles its own
+# (gitlab_gitlab_config / _logs / _data). GitLab omnibus bundles its own
 # PostgreSQL + Redis inside the container — intentionally NOT the shared aibox
 # base (the upstream docker distribution is supported with embedded services;
 # external-PG omnibus setups are out of scope for this module).
 services:
   gitlab:
     image: ${GITLAB_IMAGE:-gitlab/gitlab-ce:19.2.6-ce.0}
-    container_name: aibox-gitlab-ce
+    container_name: aibox-gitlab
     restart: unless-stopped
     shm_size: 256m
     ports:

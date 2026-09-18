@@ -5,7 +5,7 @@ Each aibox "module" is an independent tool, living under `tools/<name>/` in the 
 ## Onboarding a new module (normative)
 
 Adding a module = **scaffold + fill the contract + prove conformance**. Two repo tools own the
-mechanics; this spec owns the rules. `tools/gitlab-ce/` is the reference implementation onboarded
+mechanics; this spec owns the rules. `tools/gitlab/` is the reference implementation onboarded
 with exactly this flow.
 
 ### Tooling

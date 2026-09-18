@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gitlab-ce module — uninstall hook (idempotent; GitLab data volumes are
+# gitlab module — uninstall hook (idempotent; GitLab data volumes are
 # deliberately PRESERVED — repos/issues/CI history are irreversible to lose).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,4 +15,4 @@ else
   log "nothing to uninstall (no compose file at $ROOT)"
 fi
 warn "GitLab data volumes are RETAINED (repos, issues, CI history)."
-warn "To delete them permanently: docker volume rm gitlab-ce_gitlab_config gitlab-ce_gitlab_logs gitlab-ce_gitlab_data"
+warn "To delete them permanently: docker volume rm gitlab_gitlab_config gitlab_gitlab_logs gitlab_gitlab_data"

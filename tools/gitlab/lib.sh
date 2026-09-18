@@ -1,18 +1,21 @@
-# gitlab-ce module shared library (sourced by hooks, not executed directly)
-# Conventions: docs/module-spec.md — deploy root = $AIBOX_HOME/apps/gitlab-ce.
+# gitlab module shared library (sourced by hooks, not executed directly)
+# Conventions: docs/module-spec.md — deploy root = $AIBOX_HOME/apps/gitlab.
 
-MODULE_NAME="gitlab-ce"
-CONTAINER_NAME="aibox-gitlab-ce"
+MODULE_NAME="gitlab"
+CONTAINER_NAME="aibox-gitlab"
 DEFAULT_HTTP_PORT="8929"
 DEFAULT_SSH_PORT="8922"
 DEFAULT_IMAGE="gitlab/gitlab-ce:19.2.6-ce.0"
 
 # Output helpers: colors are inherited from aibox via exported C_* env vars
 # (single source of truth); ${C_*:-} falls back to plain output standalone.
-log()  { printf '%s[%s]%s %s\n' "${C_CYA:-}" "${AIBOX_MODULE:-$MODULE_NAME}" "${C_RST:-}" "${*}"; }
+log() { printf '%s[%s]%s %s\n' "${C_CYA:-}" "${AIBOX_MODULE:-$MODULE_NAME}" "${C_RST:-}" "${*}"; }
 warn() { printf '%s[!]%s %s\n' "${C_YEL:-}" "${C_RST:-}" "${*}" >&2; }
-ok()   { printf '%s[ok]%s %s\n' "${C_GRN:-}" "${C_RST:-}" "${*}"; }
-die()  { printf '%s[x]%s %s\n' "${C_RED:-}" "${C_RST:-}" "${*}" >&2; exit 1; }
+ok() { printf '%s[ok]%s %s\n' "${C_GRN:-}" "${C_RST:-}" "${*}"; }
+die() {
+  printf '%s[x]%s %s\n' "${C_RED:-}" "${C_RST:-}" "${*}" >&2
+  exit 1
+}
 
 # Deploy root per the aibox convention ($AIBOX_HOME/apps/<name>; module-spec
 # §Deploy directory). The guard is mandatory: systemd service contexts may
@@ -41,20 +44,20 @@ load_env() {
 detect_external_host() {
   local ip=""
   case "$(uname -s)" in
-    Linux)  ip="$(hostname -I 2>/dev/null | awk '{print $1}')" ;;
-    Darwin) ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)" ;;
+  Linux) ip="$(hostname -I 2>/dev/null | awk '{print $1}')" ;;
+  Darwin) ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)" ;;
   esac
   [ -n "$ip" ] || ip="localhost"
   printf '%s' "$ip"
 }
 
-# compose wrapper: always runs in the deploy root (project name = "gitlab-ce",
-# so named volumes become gitlab-ce_gitlab_{config,logs,data}).
+# compose wrapper: always runs in the deploy root (project name = "gitlab",
+# so named volumes become gitlab_gitlab_{config,logs,data}).
 compose() {
   local root
   root="$(deploy_root)"
-  [ -f "$root/docker-compose.yml" ] || die "not installed (run: aibox install gitlab-ce)"
-  ( cd "$root" && docker compose "$@" )
+  [ -f "$root/docker-compose.yml" ] || die "not installed (run: aibox install gitlab)"
+  (cd "$root" && docker compose "$@")
 }
 
 # GitLab answers 200 on the sign-in page once rails+puma are up (302 on /).
@@ -63,8 +66,8 @@ http_up() {
   port="${1:-$DEFAULT_HTTP_PORT}"
   code="$(curl -s -o /dev/null --max-time 5 -w '%{http_code}' "http://127.0.0.1:${port}/users/sign_in" 2>/dev/null || true)"
   case "$code" in
-    200|302) return 0 ;;
-    *) return 1 ;;
+  200 | 302) return 0 ;;
+  *) return 1 ;;
   esac
 }
 
@@ -93,7 +96,7 @@ dashboard_info() {
   port="${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
   url="http://127.0.0.1:${port}"
   echo "endpoint=${url}"
-  echo "credential=root / initial password via: aibox gitlab-ce credentials"
+  echo "credential=root / initial password via: aibox gitlab credentials"
   if container_running; then
     health="$(docker inspect -f '{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo none)"
     if http_up "$port"; then

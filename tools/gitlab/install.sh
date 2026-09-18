@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gitlab-ce module — install hook (contract: docs/module-spec.md §Hook contract).
+# gitlab module — install hook (contract: docs/module-spec.md §Hook contract).
 # Runs AFTER the aibox preflight gate; idempotent. Places the compose file and
 # writes the deploy .env once (never clobbers an existing one).
 set -euo pipefail
@@ -18,9 +18,9 @@ if [ ! -f "$ROOT/.env" ]; then
   http_port="${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
   ssh_port="${GITLAB_SSH_PORT:-$DEFAULT_SSH_PORT}"
   ext_url="${GITLAB_EXTERNAL_URL:-http://${host_ip}:${http_port}}"
-  cat > "$ROOT/.env" <<ENV
-# gitlab-ce deploy env — written by aibox install gitlab-ce.
-# Edit values here, then apply with: aibox gitlab-ce restart
+  cat >"$ROOT/.env" <<ENV
+# gitlab deploy env — written by aibox install gitlab.
+# Edit values here, then apply with: aibox gitlab restart
 GITLAB_IMAGE=${GITLAB_IMAGE:-$DEFAULT_IMAGE}
 GITLAB_HTTP_PORT=${http_port}
 GITLAB_SSH_PORT=${ssh_port}
@@ -35,5 +35,5 @@ else
 fi
 
 log "installed → $ROOT"
-log "Start     : aibox gitlab-ce start   (first boot takes 3-5 min; needs >= 4GB RAM)"
-log "Login     : root — initial password: aibox gitlab-ce credentials"
+log "Start     : aibox gitlab start   (first boot takes 3-5 min; needs >= 4GB RAM)"
+log "Login     : root — initial password: aibox gitlab credentials"

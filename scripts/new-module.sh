@@ -9,7 +9,7 @@
 # Usage:
 #   scripts/new-module.sh <name> [--desc "one-line description"] [--no-compose] [--out <tools-dir>]
 #
-# <name>: lowercase letters/digits/hyphens, must start with a letter (e.g. gitlab-ce).
+# <name>: lowercase letters/digits/hyphens, must start with a letter (e.g. gitlab).
 # --out:  write to <tools-dir>/<name> instead of this repo's tools/ (used by tests).
 set -euo pipefail
 
@@ -22,23 +22,50 @@ WITH_COMPOSE=1
 OUT_DIR=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --desc)       DESC="${2:-}"; shift 2 ;;
-    --no-compose) WITH_COMPOSE=0; shift ;;
-    --out)        OUT_DIR="${2:-}"; shift 2 ;;
-    -h|--help)    sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    -*)           printf 'unknown flag: %s\n' "$1" >&2; exit 2 ;;
-    *)            [ -z "$NAME" ] && NAME="$1"; shift ;;
+  --desc)
+    DESC="${2:-}"
+    shift 2
+    ;;
+  --no-compose)
+    WITH_COMPOSE=0
+    shift
+    ;;
+  --out)
+    OUT_DIR="${2:-}"
+    shift 2
+    ;;
+  -h | --help)
+    sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+  -*)
+    printf 'unknown flag: %s\n' "$1" >&2
+    exit 2
+    ;;
+  *)
+    [ -z "$NAME" ] && NAME="$1"
+    shift
+    ;;
   esac
 done
 
-[ -n "$NAME" ] || { printf 'usage: new-module.sh <name> [--desc "..."] [--no-compose] [--out <tools-dir>]\n' >&2; exit 2; }
-printf '%s' "$NAME" | grep -qE '^[a-z][a-z0-9-]*$' \
-  || { printf 'invalid module name "%s": lowercase letters/digits/hyphens, start with a letter\n' "$NAME" >&2; exit 2; }
+[ -n "$NAME" ] || {
+  printf 'usage: new-module.sh <name> [--desc "..."] [--no-compose] [--out <tools-dir>]\n' >&2
+  exit 2
+}
+printf '%s' "$NAME" | grep -qE '^[a-z][a-z0-9-]*$' ||
+  {
+    printf 'invalid module name "%s": lowercase letters/digits/hyphens, start with a letter\n' "$NAME" >&2
+    exit 2
+  }
 [ -n "$DESC" ] || DESC="$NAME module (TODO: one-line description)"
 
 TOOLS_DIR="${OUT_DIR:-$REPO_ROOT/tools}"
 DEST="$TOOLS_DIR/$NAME"
-[ -e "$DEST" ] && { printf 'refusing to overwrite: %s (remove it first)\n' "$DEST" >&2; exit 1; }
+[ -e "$DEST" ] && {
+  printf 'refusing to overwrite: %s (remove it first)\n' "$DEST" >&2
+  exit 1
+}
 
 mkdir -p "$DEST/docs"
 
@@ -46,7 +73,7 @@ mkdir -p "$DEST/docs"
 # then sed swaps __NAME__/__DESC__. The desc is escaped for the | delimiter.
 ESC_DESC="$(printf '%s' "$DESC" | sed -e 's/[\\&|]/\\&/g')"
 render() { # $1 = target file; stdin = template
-  sed -e "s|__NAME__|$NAME|g" -e "s|__DESC__|$ESC_DESC|g" > "$1"
+  sed -e "s|__NAME__|$NAME|g" -e "s|__DESC__|$ESC_DESC|g" >"$1"
 }
 
 # ---------- module.yaml ----------

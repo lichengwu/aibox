@@ -189,7 +189,7 @@ scripts/new-module.sh <name> [--desc "..."] [--no-compose] [--out <dir>]   # sca
 scripts/validate-module.sh <name> | --all                                  # conformance gate: 0 ERRORs required (WARNs tolerated)
 ```
 
-**Flow**: scaffold → fill `module.yaml` (ports/checks/deps/services/upstream) → implement the hooks → `scripts/validate-module.sh <name>` until PASS → `bats tests/*.bats` → live smoke (install / start / status / logs / stop / uninstall on a docker host) → add the module row to README(.zh). **`tools/gitlab-ce/` is the reference implementation onboarded with exactly this flow.**
+**Flow**: scaffold → fill `module.yaml` (ports/checks/deps/services/upstream) → implement the hooks → `scripts/validate-module.sh <name>` until PASS → `bats tests/*.bats` → live smoke (install / start / status / logs / stop / uninstall on a docker host) → add the module row to README(.zh). **`tools/gitlab/` is the reference implementation onboarded with exactly this flow.**
 
 **Iron rules** (validator + CI enforce; details in the spec):
 
