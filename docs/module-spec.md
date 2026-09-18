@@ -24,8 +24,8 @@ with exactly this flow.
 5. **Service modules**: `actions` containing `start` MUST provide the full lifecycle `start/stop/restart/status/logs` (+ module-specific actions like `credentials`); self-starting services use the platform-native init system (AGENTS.md rule 9).
 6. **Docs**: `README.md` (commands / ports / env overrides / preflight — ERROR if missing) + `docs/DEVELOPMENT.md` (upstream links, version-pin policy, design decisions, known quirks — WARN if missing).
 7. **Prove**: `scripts/validate-module.sh <name>` → 0 errors; `bats tests/*.bats` green; live smoke on a docker host: `aibox install <name>` → `<name> start` → `status` → `logs` → `stop` → `uninstall`.
-8. **Residue map**: extend `scripts/purge.sh` (`residue_*` functions) with the module's leftover locations (volumes, containers, `/etc/<name>`, units, dispatched binaries) — `aibox-purge` must be able to clean up AFTER aibox itself is uninstalled (validator WARNs when the entry is missing).
-9. **Register in docs**: add the module row to `README.md` / `README.zh.md`; `aibox list-available` picks the module up automatically (`module.yaml` is the registry).
+8. **Residue map**: extend the residue map in `bin/aibox` (`residue_*` functions) with the module's leftover locations (volumes, containers, `/etc/<name>`, units, dispatched binaries) — `aibox purge` must be able to clean up AFTER the module (or aibox itself) is uninstalled (validator WARNs when the entry is missing).
+9. **Register in docs**: add the module row to `README.md` / `README.zh.md`; `aibox list --available` picks the module up automatically (`module.yaml` is the registry).
 
 ## Directory layout
 
@@ -115,23 +115,26 @@ See `docs/module-system-spec.md` §2.3 for the full field reference.
 - Start install paths from `${AIBOX_BIN_DIR:-$HOME/.local/bin}` and expose a module-specific override (deploy hosts often want `/usr/local/bin`).
 - Platform differences: warn, don't hard-block. Install is usually cross-platform; the real limit is reported by the script at execution time, which is less false-positive-prone than blocking at install.
 
-### Data-purge contract (`AIBOX_PURGE_DATA`) & self uninstall
+### Data-purge contract (`AIBOX_PURGE_DATA`), self uninstall & residue purge
 
-`aibox self uninstall` is a **three-layer selective teardown** (services / data / manager):
+Data deletion is ONE flag across the CLI: **`--purge`**.
 
 ```text
-aibox self uninstall [--services=ask|remove|keep] [--only=a,b|--except=a,b]
-                     [--data=keep|purge] [--no-rc] [--yes]
+aibox uninstall <module> [--purge]     tear down one module; --purge also deletes its DATA
+aibox purge [<module>...|self] [--apply] [--stop] [--yes]
+                                       after-the-fact residue scan/cleanup (see below)
+aibox self uninstall [--purge] [--yes] remove the manager; --purge = cascade full teardown
 ```
 
-- `--services` — which installed modules' `uninstall.sh` hooks run, per (module, profile)
-  pair. `ask` (TTY default) prompts per module; non-TTY defaults to `keep`; `--yes`
-  resolves `ask` to the safe side (`keep`). `--only`/`--except` give headless selectivity.
-- `--data=purge` — passes `AIBOX_PURGE_DATA=1` to the hooks and drops `apps/`.
-  Requires `--services=remove` (never purge data of services left running).
-- Manager artifacts always go: `$AIBOX_BIN_DIR/aibox`, `$AIBOX_HOME` — **except `apps/`
-  which is preserved when `--data=keep`** so surviving deployments stay manageable —
-  plus the `# aibox` PATH block in shell rc files (`--no-rc` keeps it).
+- `aibox self uninstall` (default): removes ONLY the manager — `$AIBOX_BIN_DIR/aibox`,
+  `$AIBOX_HOME` state and the marked `# aibox` rc PATH block. **`apps/` is preserved** so
+  surviving deployments stay manageable; module services and data are KEPT and the summary
+  prints the teardown paths. Confirm gate: TTY asks; non-interactive requires `--yes`.
+- `aibox self uninstall --purge`: cascade — runs every installed (module, profile)'s
+  `uninstall.sh` with `AIBOX_PURGE_DATA=1` (services + data via the hooks), drops `apps/`,
+  then removes the manager + rc block. One command, composed from existing semantics.
+- `aibox uninstall <m> --purge`: single-module equivalent (hook with `AIBOX_PURGE_DATA=1`
+  + the manager sweeps `apps/<m>`).
 - Hooks run from the module cache (`~/.aibox/modules/<m>/uninstall.sh`) — no registry
   fetch, so uninstall works offline.
 
@@ -147,23 +150,31 @@ aibox self uninstall [--services=ask|remove|keep] [--only=a,b|--except=a,b]
 - Missing binaries must not short-circuit the hook (purge/retention of the deploy root
   still runs): no early `exit 0` before the data branch.
 
-### Residue cleanup after aibox itself is gone (`aibox-purge`)
+### Residue cleanup (`aibox purge`)
 
-Hooks can only clean residue while they exist. For the "manager already deleted, data/config
-left behind" case, the repo ships **`scripts/purge.sh`**, installed as `$AIBOX_BIN_DIR/aibox-purge`
-alongside `aibox` (and deliberately KEPT by `aibox self uninstall`). It is self-contained
-(embedded residue map, zero deps, offline, bash 3.2) and re-fetchable anytime:
+Hooks can only clean while they exist. `aibox purge` handles the after-the-fact case —
+data/config left behind when modules (or aibox itself) are already gone. The residue MAP
+is embedded in `bin/aibox` (`residue_*` functions — the single source of cleanup knowledge;
+new modules MUST extend it, onboarding checklist item 8; the validator WARNs otherwise):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main/scripts/purge.sh -o aibox-purge
-bash aibox-purge                 # dry-run scan: categorized residue report (default)
-bash aibox-purge --apply [--only=m1,m2] [--except=m] [--stop] [--keep-manager] [--yes]
+aibox purge                          # dry-run scan: categorized residue report (default)
+aibox purge <module>... --apply      # clean specific modules' residue
+aibox purge self --apply             # the manager's own residue (bin, state, rc block)
+aibox purge --apply [--stop] [--yes] # everything; --stop authorizes stopping RUNNING
+                                     # containers/processes (refused by default)
 ```
 
-While aibox is still installed, `aibox clean [args]` forwards to it. Safety: deletion targets
-come only from the embedded map + existence checks; RUNNING containers (and their volumes) and
-live processes are refused without `--stop`. **New modules MUST extend the `residue_*` map
-functions** (onboarding checklist item 8; the validator WARNs when an entry is missing).
+Rescue when aibox itself is already deleted (single file — offline, zero deps):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main/bin/aibox -o /tmp/aibox
+bash /tmp/aibox purge --apply
+```
+
+Safety: deletion targets come only from the embedded map + existence checks; RUNNING
+containers (and their volumes) and live processes are refused without `--stop`; `--apply`
+in a non-interactive shell requires `--yes`.
 
 ## Deploy directory & config path conventions
 
@@ -358,7 +369,7 @@ aibox clash set <subscription-url> && aibox clash on    # real egress from here 
 ### CLI surface
 
 ```bash
-aibox check                    # environment: egress route, core domains (raw.githubusercontent/api.github), docker, disk
+aibox self check               # environment: egress route, core domains (raw.githubusercontent/api.github), docker, disk
 aibox check <module>           # that module's full preflight (usable before installing)
 aibox install <module> [--skip-checks]
 aibox update  <module> [--skip-checks] [--all]

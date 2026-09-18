@@ -125,19 +125,6 @@ chmod 0755 "$_TMP_BIN"
 mv -f "$_TMP_BIN" "$BIN_DIR/aibox"
 trap - EXIT
 
-# Standalone residue cleaner — deliberately SURVIVES `aibox self uninstall` so
-# leftover data/config can be cleaned after the manager itself is gone.
-# Re-fetchable anytime: curl -fsSL $RAW/scripts/purge.sh
-log "Downloading scripts/purge.sh -> $BIN_DIR/aibox-purge"
-_TMP_PURGE="$(mktemp "$BIN_DIR/.aibox-purge.XXXXXX")"
-if curl -fsSL --max-time 60 "$RAW/scripts/purge.sh" -o "$_TMP_PURGE"; then
-  chmod 0755 "$_TMP_PURGE"
-  mv -f "$_TMP_PURGE" "$BIN_DIR/aibox-purge"
-else
-  rm -f "$_TMP_PURGE"
-  warn "Could not fetch the residue cleaner; get it later: curl -fsSL $RAW/scripts/purge.sh -o $BIN_DIR/aibox-purge"
-fi
-
 # PATH check & auto-write
 if ! echo ":$PATH:" | grep -q ":$BIN_DIR:"; then
   warn "$BIN_DIR is not in your PATH"

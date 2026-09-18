@@ -4,7 +4,7 @@
 # root (config/subscription cache/state/logs) — the subscription token and refresh
 # state belong to "this config"; accidental deletion is irreversible, so we only warn.
 # Purge contract (docs/module-spec.md): under AIBOX_PURGE_DATA=1 (set by
-# `aibox self uninstall --data=purge`) the deploy root IS deleted.
+# `aibox self uninstall --purge`) the deploy root IS deleted.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091

@@ -34,25 +34,25 @@ AIBOX_VERIFY=1 curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main
 
 ```text
 aibox install <module> [--skip-checks]   安装模块（前置检查把关；--skip-checks 跳过）
-aibox uninstall <module>         卸载模块
+aibox uninstall <module> [--purge]  卸载模块；--purge 连数据一起删（卷/状态//etc）
 aibox update <module> [--restart|--no-restart] [--skip-checks] [--all] | --all   更新模块；带 --all 则一并更新 aibox 自身
-aibox check [module]             前置检查：不带参数查环境（出口/核心域名/docker/磁盘），带模块名查该模块安装就绪度
-aibox clean [--apply ...]        扫描/清理卸载后的残留数据（转发独立的 aibox-purge；默认 dry-run 报告）
-aibox list                       已安装模块
-aibox list-available             可用模块
+aibox check <module>               前置检查：某模块的安装/更新就绪度
+aibox list [--available]           已安装模块；--available 列出仓库全部可用模块
+aibox purge [<module>...|self] [--apply] [--stop] [--yes]
+                                  残留扫描/清理（默认 dry-run 报告）：卸载后遗留的卷、apps/、
+                                  /etc 目录、服务单元、二进制；self 范围 = 管理器自身残留
 aibox ports                      端口分配表（声明 + 实际监听）
 aibox dashboard [module]          总览表，或单模块详情 + 健康
 aibox <module> <action> [args]   调用模块动作（如 aibox pi-web start）
+aibox self check                  环境检查（出口路由、核心域名、docker、磁盘）
 aibox self update                 更新 aibox 主程序（幂等重装）
-aibox self uninstall [--services=ask|remove|keep] [--only=a,b|--except=a,b]
-                     [--data=keep|purge] [--no-rc] [--yes]
-                              卸载 aibox：逐模块选择是否拆除服务（跑各自 uninstall 钩子）
-                              及是否清除数据（卷/状态//etc）；除非 --data=purge，apps/ 保留。
-                              彻底卸载：--services=remove --data=purge --yes
+aibox self uninstall [--purge] [--yes]
+                              删除管理器（默认保留模块服务与数据，apps/ 保留可继续管理）。
+                              --purge = 级联全拆：逐模块 uninstall --purge，再删管理器 + rc 块
 aibox self version | version | help
 
 安装/更新前会强制跑 preflight（各模块 module.yaml 的 checks: 声明：磁盘/域名可达/命令/base 服务就绪）；
-域名不通时会自动在已配置的路由（直连/clash/静态代理）里试出一个可达的并本次采用。
+域名不通时会自动在已配置的路由（直连/clash/gh 镜像/静态代理）里试出一个可达的并本次采用。
 详见 docs/module-spec.md 的 Preflight checks 一节。
 
 aibox proxy                       查看代理配置与状态
@@ -84,7 +84,7 @@ aibox 有两种代理出口：
 ```bash
 aibox proxy set http://10.0.0.2:7897           # 设置 → 测试 → 保存 → 校验站点
 aibox proxy check                              # 随时复检站点连通性
-aibox --no-proxy list-available                # 单次绕过
+aibox --no-proxy list --available                # 单次绕过
 ```
 
 配置存在 `~/.aibox/config`（权限 600），**不写入你的 shell 配置** —— 想让终端里的 git / brew 也走代理，用 `eval "$(aibox proxy env)"` 自己决定。
@@ -181,7 +181,7 @@ aibox --no-proxy ...  # 单次绕过
 
 ```bash
 # 本地源试跑（不联网）：
-AIBOX_RAW=file:///path/to/aibox aibox list-available
+AIBOX_RAW=file:///path/to/aibox aibox list --available
 AIBOX_RAW=file:///path/to/aibox aibox install <your-module>
 ```
 
@@ -191,7 +191,7 @@ AIBOX_RAW=file:///path/to/aibox aibox install <your-module>
 - **模块脚本落地缓存**：`aibox` 把模块脚本下载到 `~/.aibox/modules/<name>/` 再执行，钩子可复用 `lib.sh`，`svc.sh` 透传不每次联网。
 - **自更新 = 幂等重装**：`aibox self update` 重新 `curl|bash install.sh` 覆盖主 CLI，无 git / Releases 依赖。可选的 `AIBOX_SHA256` / `AIBOX_VERIFY=1` 增加校验和纵深防御。
 - **平台由模块自报**：`platform=darwin` 的模块在非 macOS 仅警告，实际限制由模块钩子自身报错。
-- **`AIBOX_RAW` 可覆盖**：支持本地源 / 镜像（如 `AIBOX_RAW=file:///path/to/aibox aibox list-available`）。远程 registry 结果带 TTL 缓存，避开未认证 GitHub API 的限流。
+- **`AIBOX_RAW` 可覆盖**：支持本地源 / 镜像（如 `AIBOX_RAW=file:///path/to/aibox aibox list --available`）。远程 registry 结果带 TTL 缓存，避开未认证 GitHub API 的限流。
 - **模块不一定带常驻服务**：`pi-web` 管 launchd 服务，而 `openmaic` 只分发一个 CLI 并把 `aibox openmaic <action>` 透传给它 —— 模块契约里 `svc.sh` 是「动作入口」，不是「必须是守护进程」。
 - **模块运行环境自报**：安装落点跨平台的模块（如 `openmaic`）不设 `platform`，由 CLI 在执行时拒绝不支持的平台并给出提示，比安装期硬拦截更清楚（安装本身在任何系统都无副作用）。
 - **代理配置与运行时分离**：配置写 `~/.aibox/config`（600），启动时导出为环境变量。因此它既覆盖 `aibox` 自身，也覆盖它派生的模块钩子（子进程继承），无需改任何现有模块代码。跨机器 / 跨时间那一层（模块在别处自己联网）必须由模块把值写进自己的配置文件 —— 环境变量本来就跨不过去，这不是取巧，是边界。

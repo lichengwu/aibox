@@ -1,118 +1,102 @@
 #!/usr/bin/env bats
-# aibox-purge (standalone residue cleaner) + `aibox clean` wrapper — hermetic
-# sandbox tests. PURGE_* env overrides redirect every root into the sandbox;
-# host-touching scanners (docker/processes/npm) are disabled via guards so the
-# tests never see — or touch — the real machine's state.
+# `aibox purge` — residue scan/cleanup (v2 CLI: embedded in bin/aibox).
+# Hermetic sandbox: PURGE_* env overrides redirect etc/systemd roots; HOME /
+# AIBOX_HOME / AIBOX_BIN_DIR are sandboxed; host-touching scanners
+# (docker/processes/npm) are disabled via guards so tests never see — or
+# touch — the real machine's state.
 
 setup() {
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
-  PURGE="$REPO_ROOT/scripts/purge.sh"
+  AIBOX="$REPO_ROOT/bin/aibox"
   SANDBOX="$(mktemp -d 2>/dev/null || echo "/tmp/aibox-purge.$$")"
-  export PURGE_HOME="$SANDBOX/userhome"
-  export PURGE_AIBOX_HOME="$SANDBOX/home"
-  export PURGE_BIN_DIR="$SANDBOX/bin"
+  export HOME="$SANDBOX/userhome"
+  export AIBOX_HOME="$SANDBOX/home"
+  export AIBOX_BIN_DIR="$SANDBOX/bin"
   export PURGE_ETC="$SANDBOX/etc"
   export PURGE_SYSTEMD_DIR="$SANDBOX/etc/systemd/system"
   export PURGE_NO_DOCKER=1
   export PURGE_NO_PROCS=1
   export PURGE_NO_NPM=1
 
-  # plant residues: base + windmill (modules) and manager (bin/state/rc)
-  mkdir -p "$PURGE_AIBOX_HOME/apps/base" "$PURGE_AIBOX_HOME/apps/windmill" "$PURGE_AIBOX_HOME/modules"
-  echo x > "$PURGE_AIBOX_HOME/base.env"
-  echo x > "$PURGE_AIBOX_HOME/installed.sh"
-  mkdir -p "$PURGE_BIN_DIR"
-  echo x > "$PURGE_BIN_DIR/aibox"
-  echo x > "$PURGE_BIN_DIR/windmill"
+  # plant residues: gitlab + windmill (modules) and self (manager bin/state/rc)
+  mkdir -p "$AIBOX_HOME/apps/gitlab" "$AIBOX_HOME/apps/windmill" "$AIBOX_HOME/modules"
+  echo x > "$AIBOX_HOME/installed.sh"
+  mkdir -p "$AIBOX_BIN_DIR"
+  echo x > "$AIBOX_BIN_DIR/aibox"
+  echo x > "$AIBOX_BIN_DIR/windmill"
   mkdir -p "$PURGE_ETC/windmill" "$PURGE_SYSTEMD_DIR"
   echo x > "$PURGE_SYSTEMD_DIR/windmill-backup.timer"
-  mkdir -p "$PURGE_HOME/.config"
-  printf 'alias ll="ls"\n# aibox\nexport PATH="%s:$PATH"\nalias gg="git"\n' "$PURGE_BIN_DIR" > "$PURGE_HOME/.zshrc"
+  mkdir -p "$HOME/.config"
+  printf 'alias ll="ls"\n# aibox\nexport PATH="%s:$PATH"\nalias gg="git"\n' "$AIBOX_BIN_DIR" > "$HOME/.zshrc"
 }
 
 teardown() {
   [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true
 }
 
-@test "scan (dry-run): categorizes residue and deletes nothing" {
-  run bash "$PURGE"
-  [ "$status" -eq 0 ] || echo "$output"
+@test "purge scan (dry-run): categorizes residue and deletes nothing" {
+  run bash "$AIBOX" purge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"dry-run"* ]]
-  [[ "$output" == *"[base]"* ]]
+  [[ "$output" == *"[gitlab]"* ]]
   [[ "$output" == *"[windmill]"* ]]
-  [[ "$output" == *"[manager]"* ]]
-  [[ "$output" == *"base.env"* ]]
+  [[ "$output" == *"[self]"* ]]
   [[ "$output" == *"windmill-backup.timer"* ]]
   [[ "$output" == *"# aibox PATH block"* ]]
   # nothing deleted
-  [ -f "$PURGE_AIBOX_HOME/base.env" ]
-  [ -f "$PURGE_BIN_DIR/aibox" ]
+  [ -d "$AIBOX_HOME/apps/gitlab" ]
+  [ -f "$AIBOX_BIN_DIR/aibox" ]
   [ -f "$PURGE_SYSTEMD_DIR/windmill-backup.timer" ]
 }
 
-@test "apply --only=windmill: scoped removal; base AND manager untouched" {
-  run bash "$PURGE" --apply --only=windmill --yes
-  [ "$status" -eq 0 ] || echo "$output"
-  [ ! -d "$PURGE_AIBOX_HOME/apps/windmill" ]
-  [ ! -f "$PURGE_BIN_DIR/windmill" ]
+@test "purge <module> --apply: scoped removal; other modules and manager untouched" {
+  run bash "$AIBOX" purge windmill --apply --yes
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ ! -d "$AIBOX_HOME/apps/windmill" ]
+  [ ! -f "$AIBOX_BIN_DIR/windmill" ]
   [ ! -d "$PURGE_ETC/windmill" ]
   [ ! -f "$PURGE_SYSTEMD_DIR/windmill-backup.timer" ]
-  # out of scope → intact (regression: manager used to be scanned unconditionally)
-  [ -d "$PURGE_AIBOX_HOME/apps/base" ]
-  [ -f "$PURGE_AIBOX_HOME/base.env" ]
-  [ -f "$PURGE_BIN_DIR/aibox" ]
-  grep -q '^# aibox$' "$PURGE_HOME/.zshrc"
+  # out of scope → intact
+  [ -d "$AIBOX_HOME/apps/gitlab" ]
+  [ -f "$AIBOX_BIN_DIR/aibox" ]
+  grep -q '^# aibox$' "$HOME/.zshrc"
 }
 
-@test "apply --keep-manager: module residue goes, manager survives" {
-  run bash "$PURGE" --apply --keep-manager --yes
-  [ "$status" -eq 0 ] || echo "$output"
-  [ ! -d "$PURGE_AIBOX_HOME/apps/base" ]
-  [ ! -d "$PURGE_AIBOX_HOME/apps/windmill" ]
-  [ -f "$PURGE_BIN_DIR/aibox" ]
-  [ -f "$PURGE_AIBOX_HOME/installed.sh" ]
-  grep -q '^# aibox$' "$PURGE_HOME/.zshrc"
+@test "purge self --apply: only the manager residue goes" {
+  run bash "$AIBOX" purge self --apply --yes
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ ! -f "$AIBOX_BIN_DIR/aibox" ]
+  ! grep -q '^# aibox$' "$HOME/.zshrc"
+  grep -q 'alias ll=' "$HOME/.zshrc"   # rc surgery keeps other lines
+  # module residue untouched
+  [ -d "$AIBOX_HOME/apps/gitlab" ]
+  [ -f "$AIBOX_BIN_DIR/windmill" ]
 }
 
-@test "apply full: everything gone, rc surgery keeps other lines, rescan clean" {
-  run bash "$PURGE" --apply --yes
-  [ "$status" -eq 0 ] || echo "$output"
-  [ ! -e "$PURGE_BIN_DIR/aibox" ]
-  [ ! -e "$PURGE_AIBOX_HOME" ]   # tidy finish removes the empty shell
-  [ ! -d "$PURGE_ETC/windmill" ]
-  [ -f "$PURGE_HOME/.zshrc" ]
-  ! grep -q '^# aibox$' "$PURGE_HOME/.zshrc"
-  grep -q 'alias ll=' "$PURGE_HOME/.zshrc"
-  grep -q 'alias gg=' "$PURGE_HOME/.zshrc"
-  run bash "$PURGE"
+@test "purge --apply (all): everything gone, rc surgery, rescan clean" {
+  run bash "$AIBOX" purge --apply --yes
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ ! -e "$AIBOX_BIN_DIR/aibox" ]
+  [ ! -e "$AIBOX_HOME" ]          # tidy finish removes the empty shell
+  [ -f "$HOME/.zshrc" ]
+  ! grep -q '^# aibox$' "$HOME/.zshrc"
+  grep -q 'alias ll=' "$HOME/.zshrc"
+  grep -q 'alias gg=' "$HOME/.zshrc"
+  run bash "$AIBOX" purge
   [ "$status" -eq 0 ]
   [[ "$output" == *"no residue found"* ]]
 }
 
-@test "apply without --yes in a non-interactive shell refuses (nothing deleted)" {
-  run bash "$PURGE" --apply
+@test "purge --apply without --yes in a non-interactive shell refuses" {
+  run bash "$AIBOX" purge --apply
   [ "$status" -ne 0 ]
   [[ "$output" == *"non-interactive"* ]]
-  [ -f "$PURGE_BIN_DIR/aibox" ]
-  [ -f "$PURGE_AIBOX_HOME/base.env" ]
+  [ -f "$AIBOX_BIN_DIR/aibox" ]
+  [ -d "$AIBOX_HOME/apps/gitlab" ]
 }
 
-@test "aibox clean forwards to aibox-purge with args" {
-  cat > "$PURGE_BIN_DIR/aibox-purge" <<'FAKE'
-#!/usr/bin/env bash
-echo "PURGE-CALLED $*"
-FAKE
-  chmod +x "$PURGE_BIN_DIR/aibox-purge"
-  run env AIBOX_HOME="$PURGE_AIBOX_HOME" AIBOX_BIN_DIR="$PURGE_BIN_DIR" \
-    bash "$REPO_ROOT/bin/aibox" clean --apply --only=base
-  [ "$status" -eq 0 ] || echo "$output"
-  [[ "$output" == *"PURGE-CALLED --apply --only=base"* ]]
-}
-
-@test "aibox clean without aibox-purge prints the fetch hint and fails" {
-  rm -f "$PURGE_BIN_DIR/aibox-purge"
-  run env AIBOX_HOME="$PURGE_AIBOX_HOME" AIBOX_BIN_DIR="$PURGE_BIN_DIR" \
-    bash "$REPO_ROOT/bin/aibox" clean
+@test "purge: unknown flag dies with usage" {
+  run bash "$AIBOX" purge --only=gitlab
   [ "$status" -ne 0 ]
-  [[ "$output" == *"scripts/purge.sh"* ]]
+  [[ "$output" == *"unknown option for purge"* ]]
 }

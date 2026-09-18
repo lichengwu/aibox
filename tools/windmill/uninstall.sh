@@ -6,7 +6,7 @@
 # to "this deployment" rather than "this command"; deletion is irreversible, so we
 # only warn, never act.
 # Purge contract (docs/module-spec.md): under AIBOX_PURGE_DATA=1 (set by
-# `aibox self uninstall --data=purge`) the deployment IS destroyed: containers +
+# `aibox self uninstall --purge`) the deployment IS destroyed: containers +
 # project volumes + systemd units + deploy root + /etc/windmill.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

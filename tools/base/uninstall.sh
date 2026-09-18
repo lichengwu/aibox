@@ -16,7 +16,7 @@ else
   log "No compose file; nothing to uninstall"
 fi
 # Purge contract (docs/module-spec.md): AIBOX_PURGE_DATA=1 — set by
-# `aibox self uninstall --data=purge` — deletes this module's DATA too (volumes).
+# `aibox self uninstall --purge` — deletes this module's DATA too (volumes).
 if [ "${AIBOX_PURGE_DATA:-0}" = "1" ]; then
   log "AIBOX_PURGE_DATA=1: deleting data volumes ..."
   if docker volume rm "${AIBOX_BASE_PG_VOLUME:-aibox_pg_data}" "${AIBOX_BASE_REDIS_VOLUME:-aibox_redis_data}" >/dev/null 2>&1; then

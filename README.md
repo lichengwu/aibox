@@ -32,29 +32,32 @@ AIBOX_VERIFY=1 curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main
 
 ```
 aibox install <module> [--skip-checks]   install a module (preflight-gated)
-aibox uninstall <module>          uninstall a module
+aibox uninstall <module> [--purge]       uninstall a module; --purge also deletes its DATA
 aibox update <module> [--restart|--no-restart] [--skip-checks] [--all] | --all   update modules; with --all also updates aibox itself
-aibox check [module]              preflight: environment (no arg) or one module's readiness
-aibox clean [--apply ...]         scan/clean residue left after uninstalls (forwards to the
-                                  standalone aibox-purge; dry-run report by default)
-aibox list                        list installed modules
-aibox list-available              list available modules
+aibox check <module>              preflight one module's install/update readiness
+aibox list [--available]          installed modules; --available shows the registry catalog
+aibox purge [<module>...|self] [--apply] [--stop] [--yes]
+                                  residue scan/cleanup (dry-run by default): volumes, apps/,
+                                  /etc dirs, units, binaries left after uninstalls;
+                                  'self' scope = the manager's own residue
 aibox ports                       show port assignments (declared + live)
 aibox dashboard [module]          overview table, or single-module detail + health
 aibox <module> <action> [args]    invoke a module action (e.g. aibox pi-web start)
 
 Every install/update is gated by a **preflight check** (domains reachable / disk / deps / base
 services ready — declared per module in `module.yaml` `checks:`; see `docs/module-spec.md`).
-On network failure it tries the configured alternatives (direct / clash pool / static proxy) and
-adopts a working route for that run. `aibox check [module]` runs it proactively;
+On network failure it tries the configured alternatives (direct / clash pool / gh mirror /
+static proxy) and adopts a working route for that run. `aibox self check` checks the
+environment, `aibox check <module>` runs a module preflight proactively;
 `--skip-checks` (or `AIBOX_SKIP_CHECKS=1`) bypasses it.
+
+aibox self check                  environment check (egress, core domains, docker, disk)
 aibox self update                 update aibox itself (idempotent re-bootstrap)
-aibox self uninstall [--services=ask|remove|keep] [--only=a,b|--except=a,b]
-                     [--data=keep|purge] [--no-rc] [--yes]
-                              uninstall aibox: per-module choice to tear down services
-                              (their hooks) and/or PURGE data (volumes/state//etc).
-                              apps/ survives unless --data=purge; full teardown:
-                              --services=remove --data=purge --yes
+aibox self uninstall [--purge] [--yes]
+                              remove the manager (module services/data KEPT by default;
+                              apps/ preserved so survivors stay manageable).
+                              --purge = cascade full teardown: every module's
+                              uninstall --purge, then manager + rc block
 aibox self version | version | help
 
 aibox proxy                       show proxy config and state
@@ -86,7 +89,7 @@ In some environments (e.g. direct-to-GitHub from CN) `aibox` can't pull modules,
 ```bash
 aibox proxy set http://10.0.0.2:7897           # set -> test -> save -> verify sites
 aibox proxy check                              # recheck site connectivity anytime
-aibox --no-proxy list-available                # bypass once
+aibox --no-proxy list --available                # bypass once
 ```
 
 The config lives at `~/.aibox/config` (mode 600) and **does not touch your shell config** — to make terminal git/brew use the proxy too, decide for yourself with `eval "$(aibox proxy env)"`.
@@ -183,7 +186,7 @@ A module = a `tools/<name>/` directory + a `module.yaml` declaration (the source
 
 ```bash
 # local trial against your working tree, no network:
-AIBOX_RAW=file:///path/to/aibox aibox list-available
+AIBOX_RAW=file:///path/to/aibox aibox list --available
 AIBOX_RAW=file:///path/to/aibox aibox install <your-module>
 ```
 
@@ -193,7 +196,7 @@ AIBOX_RAW=file:///path/to/aibox aibox install <your-module>
 - **Module scripts are cached on disk**: `aibox` downloads module scripts to `~/.aibox/modules/<name>/` before executing; hooks can reuse `lib.sh`, and `svc.sh` pass-through doesn't re-fetch every time.
 - **Self-update = idempotent re-bootstrap**: `aibox self update` re-runs `curl|bash install.sh` to overwrite the main CLI, with no git / Releases dependency. Optional `AIBOX_SHA256` / `AIBOX_VERIFY=1` add checksum defense in depth.
 - **Platform is self-reported by the module**: a `platform=darwin` module only warns on non-macOS; the real constraint is reported by the module hook at runtime.
-- **`AIBOX_RAW` is overridable**: supports local sources / mirrors (e.g. `AIBOX_RAW=file:///path/to/aibox aibox list-available`). Remote registry results are cached with a TTL to dodge the unauthenticated GitHub API rate limit.
+- **`AIBOX_RAW` is overridable**: supports local sources / mirrors (e.g. `AIBOX_RAW=file:///path/to/aibox aibox list --available`). Remote registry results are cached with a TTL to dodge the unauthenticated GitHub API rate limit.
 - **A module need not ship a daemon**: `pi-web` manages a launchd service, while `openmaic` only dispatches a CLI and passes `aibox openmaic <action>` through to it — in the contract, `svc.sh` is an "action entry point", not "must be a daemon".
 - **Module runtime environment is self-reported**: cross-platform install modules (like `openmaic`) don't set `platform`; the CLI refuses unsupported platforms at execution with a clear message, which is less false-positive-prone than hard-blocking at install time (install itself is side-effect-free on any OS).
 - **Proxy config is separated from runtime**: config is written to `~/.aibox/config` (600) and exported as env vars at startup. So it covers both `aibox` itself and the module hooks it spawns (child inheritance), with no changes to existing module code. The cross-machine / cross-time layer (a module networking elsewhere on its own) must be handled by the module writing the value into its own config file — env vars don't cross that boundary by nature; this isn't a trick, it's the boundary.

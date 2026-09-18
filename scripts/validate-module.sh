@@ -420,15 +420,15 @@ validate_module() {
     done
   fi
 
-  # --- S23: residue-map entry in scripts/purge.sh (post-manager cleanup) ---
-  # aibox-purge must be able to clean this module's leftovers AFTER aibox itself
-  # is gone (self-contained map; the module's own hooks no longer exist then).
-  # Repo-own tools/ only: the map lives in THIS repo's purge.sh, so an external
-  # scaffold (VALIDATE_TOOLS_DIR override — used by new-module.sh and tests)
-  # cannot be in it yet; the author adds the entry when the module lands here.
-  if [ -z "${VALIDATE_TOOLS_DIR:-}" ] && [ -f "$REPO_ROOT/scripts/purge.sh" ]; then
-    awk '/^residue_paths\(\)/,/^\}/' "$REPO_ROOT/scripts/purge.sh" | grep -qE "^[[:space:]]*${m}\)" \
-      || warn "no residue-map entry in scripts/purge.sh (residue_paths) — aibox-purge cannot clean this module's leftovers"
+  # --- S23: residue-map entry in bin/aibox (post-manager cleanup) ---
+  # `aibox purge` must be able to clean this module's leftovers AFTER the module
+  # (or aibox itself) is gone — the embedded residue map is the only knowledge
+  # left then. Repo-own tools/ only: the map lives in THIS repo's bin/aibox, so
+  # an external scaffold (VALIDATE_TOOLS_DIR override — used by new-module.sh and
+  # tests) cannot be in it yet; the author adds the entry when the module lands.
+  if [ -z "${VALIDATE_TOOLS_DIR:-}" ] && [ -f "$REPO_ROOT/bin/aibox" ]; then
+    awk '/^residue_paths\(\)/,/^\}/' "$REPO_ROOT/bin/aibox" | grep -qE "^[[:space:]]*${m}\)" ||
+      warn "no residue-map entry in bin/aibox (residue_paths) — 'aibox purge' cannot clean this module's leftovers"
   fi
 }
 

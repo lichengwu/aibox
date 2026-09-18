@@ -5,7 +5,7 @@
 # data volume mount points) untouched — they belong to "this deployment" rather
 # than "this command"; mistaken deletion is irreversible, so we only warn.
 # Purge contract (docs/module-spec.md): under AIBOX_PURGE_DATA=1 (set by
-# `aibox self uninstall --data=purge`) the deployment IS cleaned: containers +
+# `aibox self uninstall --purge`) the deployment IS cleaned: containers +
 # volumes + deploy root + /etc/openmaic (+ best-effort shared-PG database drop).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
