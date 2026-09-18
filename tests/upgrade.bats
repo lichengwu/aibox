@@ -62,7 +62,9 @@ load test_helper
   grep -q '^A=1$' "$f"
   grep -q '^C=3$' "$f"
   grep -q '^# a comment stays$' "$f"
-  [ "$(stat -f %Lp "$f" 2>/dev/null || stat -c %a "$f")" = "600" ]
+  # GNU syntax first, BSD fallback — same order as tests/config.bats (the reverse
+  # concatenates GNU stat -f's stdout garbage with the fallback value).
+  [ "$(stat -c %a "$f" 2>/dev/null || stat -f %Lp "$f")" = "600" ]
   rm -rf "$d"
 }
 

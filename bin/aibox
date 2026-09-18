@@ -1639,7 +1639,10 @@ upgrade_floor_image() { # $1=compose file, $2=env key
 upgrade_env_rewrite() { # $1=envfile, rest=KEY=VALUE pairs
   local envf="$1"; shift
   local tmp mode kv k
-  mode="$(stat -f %Lp "$envf" 2>/dev/null || stat -c %a "$envf" 2>/dev/null || echo 600)"
+  # GNU syntax FIRST (fails cleanly on BSD, no stdout garbage); BSD as fallback —
+  # the reverse order breaks on GNU: stat -f prints multi-line filesystem info to
+  # stdout even when it exits 1, and the || fallback output concatenates (CI-caught).
+  mode="$(stat -c %a "$envf" 2>/dev/null || stat -f %Lp "$envf" 2>/dev/null || echo 600)"
   tmp="$(mktemp "${envf}.upgrade.XXXXXX")" || return 1
   local exprs=()
   for kv in "$@"; do exprs+=(-e "s|^${kv%%=*}=.*|${kv}|"); done
