@@ -222,20 +222,22 @@ Format: `port/protocol:purpose`. CI detects uniqueness by **port + protocol**.
 
 Conflict → `::error` + exit 1 → PR check fails, code cannot merge.
 
-### 3.5 `aibox ports` Command (View Allocation Table)
+### 3.5 Port Table (inside `aibox dashboard`)
 
 ```bash
-$ aibox ports
-Module       Port/Proto    Usage     Overridable (example)
-pi-web       30141/tcp     http      PI_WEB_PORT
-clash        7890/tcp      mixed     CLASH_PORT
-clash        9090/tcp      api       CLASH_API_PORT
-windmill     8080/tcp      http      WM_HTTP_PORT
-openmaic     3000/tcp      app       —
-openmaic     5432/tcp      postgres  — (migration-era local pg; shared base takes over after)
+$ aibox dashboard        # the overview ends with the allocation table
+...
+Port assignments:
+  Module       Port/Proto     Usage      Status
+  base         35432/tcp      postgres   listening
+  clash        7890/tcp       mixed      listening
+  gitlab       8929/tcp       http       —
+  openmaic     3000/tcp       app        —
+  pi-web       30141/tcp      http       —
+  windmill     80/tcp         http       listening
 ```
 
-Developers run `aibox ports` before adding a module to see what's allocated and pick a free port. The main CLI collects this live from module.yaml's ports field (dynamic, no need to maintain docs/ports.md).
+Developers run `aibox dashboard` before adding a module to see what's allocated — and which declared ports are actually listening (live `lsof`/`ss` probe) — then pick a free port. Collected live from module.yaml's ports field (dynamic, no need to maintain docs/ports.md). (History: this was the standalone `aibox ports` command; merged into the dashboard overview in CLI v2.1.)
 
 ### 3.6 Runtime Probing (at install, optional)
 
@@ -255,22 +257,28 @@ Each module has a Dashboard showing: whether it is deployed, endpoint (browser U
 
 ### 4.2 Commands
 
-- `aibox dashboard` —— global overview table (module / deployed? / endpoint / status)
-- `aibox <module> dashboard` —— single-module detail (port/URL/credentials/log path/health)
+- `aibox dashboard` —— global overview table (MODULE / VERSION / ENDPOINT / CREDENTIALS) followed by the port-allocation table
+- `aibox dashboard --available` —— registry catalog (all modules, installed marks)
+- `aibox dashboard <module>` —— single-module detail (port/URL/credentials/log path/health)
 
 ### 4.3 TUI Implementation
 
 Pure bash (colors + tables, zero dependency). **Does not use dialog/whiptail** (not on macOS). Output like:
 
-```
-┌─ aibox dashboard ────────────────────────────────┐
-│ Module     Status   endpoint                Creds │
-├──────────────────────────────────────────────────┤
-│ pi-web     ✓ run    http://127.0.0.1:30141  pi/** │
-│ clash      ✓ run    socks5://127.0.0.1:7890  —     │
-│ windmill   ✗ off    —                        —     │
-│ openmaic   ✓ on     http://127.0.0.1:3000   .env  │
-└──────────────────────────────────────────────────┘
+```text
+  MODULE            VERSION   ENDPOINT                    CREDENTIALS
+  ─────────────────────────────────────────────────────────────────────────────
+  ✔ base            1.1.0     pg://127.0.0.1:35432 (use…  PG user/password aibox/* (overr…
+  ✔ clash           1.1.0     socks5://127.0.0.1:7890     API secret 420e47ce4c470caf19d80c…
+  ✘ gitlab          1.0.0     —                           not installed
+  ✔ windmill        1.2.0     http://127.0.0.1:80         CREDENTIALS.txt + .env (POSTGRES_…
+
+Port assignments:
+  Module       Port/Proto     Usage      Status
+  base         35432/tcp      postgres   listening
+  windmill     80/tcp         http       listening
+
+  ✔ installed  ✘ not installed  —  detail + health: aibox dashboard <module>; catalog: aibox dashboard --available
 ```
 
 ### 4.4 Module Interface: `dashboard_info()`
@@ -284,7 +292,7 @@ dashboard_info() {
   echo "endpoint=http://127.0.0.1:${PORT}"
   echo "credential=Username pi / password ${PASSWORD}"   # password read from plist (resolve_password)
   echo "log=${LOG_DIR}/pi-web.log"
-  echo "health=curl -s -u pi:${PASSWORD} http://127.0.0.1:${PORT}/"
+  echo "health=ok HTTP 200"        # status string probed by the module (shown as-is)
 }
 ```
 
@@ -294,14 +302,16 @@ The convention is written into module-spec. **The module.yaml `dashboard` sectio
 
 | Module | Credential source |
 | --- | --- |
-| pi-web | plist `PI_WEB_PASSWORD` (read by resolve_password) |
+| base | `base[-profile].env` (PG user/password; injected into consumers via `--env-file`) |
+| pi-web | plist/unit `PI_WEB_PASSWORD` (read by resolve_password) |
 | clash | state `CLASH_SECRET` (API auth) |
 | windmill | `$WM_DIR/CREDENTIALS.txt` + `.env` (POSTGRES_PASSWORD, etc.) |
 | openmaic | `.env.local` (API Key, access password) |
+| gitlab | 24h `initial_root_password` in the container → `aibox gitlab credentials` (reset recipe after expiry) |
 
 ### 4.6 Health Check
 
-`aibox <module> dashboard` does a lightweight probe of the endpoint (curl health endpoint, 2s timeout) and shows ✓/✗. Depends on port declaration (§3) + the module's dashboard_info health.
+`aibox dashboard <module>` does a lightweight probe of the endpoint (curl health endpoint, short timeout) and shows the result. Depends on port declaration (§3) + the module's dashboard_info health.
 
 ### 4.7 Dependencies
 
@@ -507,7 +517,7 @@ Migration cost is low (4 modules, mechanical field move). After migration, addin
 | Order | Requirement | Difficulty | Dependencies | Notes |
 | --- | --- | --- | --- | --- |
 | 1 | **module.yaml spec + migration** | Medium | None | Foundation; all requirements depend on it; awk parser + CI |
-| 2 | **Port declaration + CI conflict detection** | Medium | §2 | ports field + port-conflict job + `aibox ports` command |
+| 2 | **Port declaration + CI conflict detection** | Medium | §2 | ports field + port-conflict job + the dashboard port table |
 | 3 | **Module development guide** | Low | §2 | Independent, pure docs; can parallelize with 2 |
 | 4 | **Dashboard TUI** | Medium | §2 + §3 | dashboard_info interface + aibox dashboard command |
 | 5 | **Shared base components** | High | §2 + §3 | Architectural-level, phased; base module + compose refactor + existing migration |

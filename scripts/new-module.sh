@@ -58,7 +58,10 @@ printf '%s' "$NAME" | grep -qE '^[a-z][a-z0-9-]*$' ||
     printf 'invalid module name "%s": lowercase letters/digits/hyphens, start with a letter\n' "$NAME" >&2
     exit 2
   }
-  [ "$NAME" != self ] || { printf 'the name "self" is reserved (the manager module)\n' >&2; exit 2; }
+[ "$NAME" != self ] || {
+  printf 'the name "self" is reserved (the manager module)\n' >&2
+  exit 2
+}
 
 [ -n "$DESC" ] || DESC="$NAME module (TODO: one-line description)"
 
