@@ -39,7 +39,7 @@ teardown() {
   bash "$REPO_ROOT/bin/aibox" install openmaic --skip-checks >/dev/null 2>&1
   run bash "$REPO_ROOT/bin/aibox" openmaic version
   [ "$status" -eq 0 ]
-  [[ "$output" == *"1.0.0"* ]]
+  [[ "$output" == *"1.0.1"* ]]
 }
 
 @test "uninstall openmaic: marker + cache removed (no other profile holds it)" {

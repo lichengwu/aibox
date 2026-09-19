@@ -7,6 +7,90 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.8.0] — 2026-09-19
+
+### Added
+
+- **Download source pools** — every download aibox performs now goes through a
+  source pool: mainstream accelerated mirrors race the direct route with a REAL
+  download, the fastest measured source serves, and a stalled/failed source fails
+  over to the next; every reachable source is tried before giving up. On healthy
+  networks the direct route wins and nothing changes. Families:
+  - **npm** (pi-web): registry ranking + stall-watchdog failover — installs no
+    longer hang on a dead `npm view` (measured).
+  - **GitHub raw/api** (`gh_pool_fetch` in bin/aibox): concurrent race +
+  per-family ranking cache (`ghpool.cache`, TTL 600s) + a raw→contents-API
+  rewrite fallback — wired into all 5 manager download points (registry, module
+  files, bootstrap, self-update, upgrades).
+  - **GitHub releases ~20MB** (clash mihomo): rate-probed on the real asset,
+  resumable, per-source failover.
+  - **docker.io** (`docker_pool_prepull` in module lib.shs): daemon-routed
+  hello-world probe (host egress ≠ daemon egress — never host-probe a
+  daemon-consumed registry) → ranked mirror pre-pull + `docker tag`; live-verified
+  mirrors: docker.1ms.run / daocloud / dockerproxy / rat.dev (dead ones
+  excluded). Consumed by base/dify/gitlab/new-api/xiaozhi + the openmaic CLI.
+  - **ghcr.io** (NEW family, xiaozhi): bounded direct attempt → ordered mirror
+  failover (ghcr.nju.edu.cn + ghcr.dockerproxy.net) with pull-via-mirror +
+  retag — the docker.io mirrors do NOT proxy ghcr.
+  - **node dist** (`_node_dist_pick`): nodejs.org / npmmirror / Aliyun — exported
+  as NVM_NODEJS_ORG_MIRROR for nvm.
+  - **install.sh bootstrap** (`fetch_pool`): the curl|bash flow itself races
+  direct + mirrors (measured: boots in 5.8s with no direct route).
+  Per-family knobs: AIBOX_GH_POOL/AIBOX_GH_MIRROR, AIBOX_NPM_REGISTRIES,
+  AIBOX_DOCKER_POOL/AIBOX_DOCKER_MIRROR, AIBOX_GHCR_* , AIBOX_NODE_POOL.
+  Static direct-egress gates removed from pool-covered modules (they
+  false-failed exactly the mirror-saved networks).
+
+- **`new-api` module** (v1.0.0) — [QuantumNous/new-api](https://github.com/QuantumNous/new-api)
+  v0.13.2: LLM API gateway (OpenAI-compatible relay, key/quota management,
+  usage analytics). Single-service compose on the shared base (auto DB
+  creation, base.env injection), `/api/status` health contract, docker.io pool.
+
+- **`xiaozhi` module** (v1.0.0) — [xinnan-tech/xiaozhi-esp32-server](https://github.com/xinnan-tech/xiaozhi-esp32-server)
+  v0.9.6: backend for xiaozhi-esp32 AI voice devices. 3-service compose
+  (ws relay :8000 / console :8002 / bundled mysql:8.0) + shared-base redis;
+  STAGED start with server.secret AUTO-APPLY (the Java manager-api generates
+  it into MySQL sys_params; the Python server refuses to boot without it);
+  ghcr source pool; `aibox xiaozhi secret <value>` manual override.
+
+- **upgrade: images tag-prefix form** — upstreams that prefix their tags
+  (xiaozhi ghcr: git v0.9.6 ↔ docker server_0.9.6) can now declare
+  `ENV=repo:prefix` with a tag prefix; the engine's v-strip + prefix append
+  reproduces the exact tag. validate-module.sh + module-spec.md updated.
+
+### Changed
+
+- **TUI redesign** (formal / clean / consistent, gh-CLI / kubectl style): symbol
+  system (plain log, ✓ ok, ⚠ warn, ✗ die — two-space gap, dim 2-space info),
+  sectioned `aibox help`, clean dashboard tables (✓ installed / · not),
+  labeled detail views, probe-matrix marks unified. Module lib.sh helpers and
+  both dispatched CLIs aligned; the scaffolder emits the new set; the output
+  contract is documented in module-spec.md.
+
+### Fixed
+
+- xiaozhi: unescaped backticks in the .config.yaml heredoc ran as command
+  substitution at render time (die mid-install + eaten comment text) — found
+  by deploy-host verification.
+- xiaozhi: secret auto-apply raced the Java boot (console HTTP passes before
+  sys_params lands) — bounded retry.
+- pools: `_dk_is_dockerio` misclassified the explicit `docker.io/library/x`
+  form as foreign (silently skipped by the pool) — explicit branch added in
+  all 6 copies.
+- `gh_pool_fetch` win-notice printf arg-count bug (garbage repeat line on
+  every race win); xiaozhi `_write_secret` sed metachar injection; NVM mirror
+  export masking a failed pick; TUI stragglers ([?] prompts, purge title).
+- review-hardening: 4 pool regression tests added; unquoted-heredoc
+  command-substitution scan clean across the repo.
+
+### Verified
+
+- Full lifecycle of both new modules on the deploy host (192.168.50.88):
+  bootstrap → install → start (pools) → health → status/dashboard/credentials
+  → restart/stop/start → update → upgrade --check → purge → uninstall
+  --purge (zero residue). 202 bats tests; validator 0 errors; shellcheck
+  error-level clean; bash 3.2 parse clean.
+
 ## [0.7.0] — 2026-09-18
 
 ### Added
