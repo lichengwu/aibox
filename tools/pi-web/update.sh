@@ -18,8 +18,13 @@ restart_arg="${1:-}"
 
 resolve_node
 
+# npm_registry_pick probes the candidates in parallel (curl-bounded) and also
+# yields NPM_LATEST — this REPLACES `npm view`, which hits the registry with no
+# timeout and hangs on stalled networks.
+npm_registry_pick
+
 cur="$(npm ls -g @agegr/pi-web --depth=0 2>/dev/null | grep -oE '@agegr/pi-web@[0-9][0-9.]*' | head -1 | sed 's/.*@//' || true)"
-latest="$(npm view @agegr/pi-web version 2>/dev/null | tr -d '[:space:]' || true)"
+latest="${NPM_LATEST}"
 
 if [ -n "$cur" ] && [ -n "$latest" ] && [ "$cur" = "$latest" ]; then
   log "@agegr/pi-web is already latest ($latest); no update, no restart"
@@ -27,7 +32,7 @@ if [ -n "$cur" ] && [ -n "$latest" ] && [ "$cur" = "$latest" ]; then
 fi
 
 log "Upgrading @agegr/pi-web ${cur:-not installed} -> ${latest:-latest} ..."
-npm install -g @agegr/pi-web@latest --silent
+npm_install_global
 cleanup_old
 resolve_password
 write_service

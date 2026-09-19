@@ -7,6 +7,8 @@
 #   AIBOX_BIN_DIR (default ~/.local/bin) main CLI install dir
 #   AIBOX_SHA256  (optional)           verify the downloaded bin/aibox against this checksum
 #   AIBOX_VERIFY  (default 0)          if 1, fetch+check the release SHA256SUMS sidecar (graceful if absent)
+#   AIBOX_GH_POOL (default shipped)     GitHub-family download pool override ("direct" = no pool)
+#   AIBOX_GH_MIRROR / CLASH_MIRROR     user mirror, joins the pool as a candidate
 # Idempotent: safe to re-run; also used by `aibox self update`.
 set -euo pipefail
 
@@ -48,6 +50,85 @@ if [ "${AIBOX_PROXY_ENABLED:-1}" = "1" ] && [ -n "${AIBOX_PROXY_URL:-}" ]; then
   fi
 fi
 
+# ---------- download source pool (GitHub family; bootstrap-local) ----------
+# Same pattern as the manager's pool (bin/aibox, gh_pool_fetch) — inlined because
+# install.sh cannot source the manager (it downloads it). Live-verified candidates
+# (measured on a CN mac AND an Aliyun deploy host): gh-proxy.com proxies raw +
+# github releases; ghproxy.net raw; ghproxy.link / ghproxy.cn served CORRUPT
+# content (truncated / wrong size) — excluded. RACE: direct + mirrors fetch
+# concurrently, the FIRST success serves (a dead direct costs nothing). Non-GitHub
+# URLs (file://, a pinned AIBOX_RAW mirror base) fetch direct — the user pinned
+# their route. Checksum verification (AIBOX_SHA256 / AIBOX_VERIFY) still applies
+# to whatever source wins.
+fetch_pool() { # $1=url, $2=outfile → 0 on success
+  local url="$1" out="$2"
+  case "$url" in
+  https://raw.githubusercontent.com/* | https://github.com/* | https://api.github.com/*) : ;;
+  *)
+    curl -fsSL --max-time 60 "$url" -o "$out"
+    return $?
+    ;;
+  esac
+  if [ "${AIBOX_GH_POOL:-}" = "direct" ]; then
+    curl -fsSL --max-time 60 "$url" -o "$out"
+    return $?
+  fi
+  local mirrors="" m tmpd i pid pids="" body="" deadline alive j
+  m="${AIBOX_GH_MIRROR:-${CLASH_MIRROR:-}}"
+  if [ -n "$m" ]; then mirrors="${m%/} "; fi
+  mirrors="${mirrors}${AIBOX_GH_POOL:-https://gh-proxy.com https://ghproxy.net}"
+  tmpd="$(mktemp -d "${TMPDIR:-/tmp}/aiboot.XXXXXX")" || return 1
+  # fire: d0 = direct, d1..dN = mirrors (concurrent; first success wins)
+  (
+    curl -fsSL --max-time 30 "$url" -o "$tmpd/d0" 2>/dev/null && : >"$tmpd/d0.ok"
+  ) &
+  pids="$pids $!"
+  i=0
+  # shellcheck disable=SC2086
+  for m in $mirrors; do
+    i=$((i + 1))
+    (
+      curl -fsSL --max-time 30 "${m%/}/$url" -o "$tmpd/d$i" 2>/dev/null && : >"$tmpd/d$i.ok"
+    ) &
+    pids="$pids $!"
+  done
+  # poll until the first .ok appears, every worker exits, or the deadline hits
+  deadline=$(( $(date +%s) + 30 ))
+  while [ -z "$body" ]; do
+    for ((j = 0; j <= i; j++)); do
+      if [ -f "$tmpd/d$j.ok" ]; then
+        body="$tmpd/d$j"
+        break
+      fi
+    done
+    if [ -n "$body" ]; then break; fi
+    alive=0
+    # shellcheck disable=SC2086
+    for pid in $pids; do
+      if kill -0 "$pid" 2>/dev/null; then alive=1; fi
+    done
+    if [ "$alive" = 0 ]; then break; fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then break; fi
+    sleep 0.25
+  done
+  # SIGTERM to workers FIRST, then orphaned curl children (the kill-order lesson).
+  # The loop-level stderr redirect also silences bash's "Terminated: 15" job
+  # notices (printed at reap time — cosmetic noise during the bootstrap).
+  # shellcheck disable=SC2086
+  for pid in $pids; do
+    kill "$pid" 2>/dev/null || true
+    pkill -P "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  done 2>/dev/null
+  if [ -n "$body" ] && [ -s "$body" ]; then
+    cp "$body" "$out"
+    rm -rf "$tmpd"
+    return 0
+  fi
+  rm -rf "$tmpd"
+  return 1
+}
+
 mkdir -p "$BIN_DIR" "$HOME_DIR"
 
 # Download to a TEMP file in $BIN_DIR (same filesystem) and atomically mv into place.
@@ -60,7 +141,7 @@ _TMP_BIN="$(mktemp "$BIN_DIR/.aibox.download.XXXXXX")"
 trap 'rm -f "$_TMP_BIN"' EXIT
 
 log "Downloading bin/aibox -> $BIN_DIR/aibox"
-curl -fsSL --max-time 60 "$RAW/bin/aibox" -o "$_TMP_BIN"
+fetch_pool "$RAW/bin/aibox" "$_TMP_BIN" || die "Download failed: $RAW/bin/aibox (source pool tried: direct + mirrors; pin AIBOX_RAW, or AIBOX_GH_POOL=direct to bypass)"
 
 # ---------- checksum verification (defense in depth) ----------
 # Two modes, both optional and graceful:
@@ -105,7 +186,7 @@ elif [ "${AIBOX_VERIFY:-0}" = "1" ]; then
   # Best-effort: fetch the release's SHA256SUMS sidecar and check bin/aibox against it.
   _sums_url="https://github.com/${REPO}/releases/latest/download/SHA256SUMS"
   _sums_tmp="$(mktemp 2>/dev/null || echo "/tmp/aibox-sums.$$")"
-  if curl -fsSL "$_sums_url" -o "$_sums_tmp" 2>/dev/null; then
+  if fetch_pool "$_sums_url" "$_sums_tmp" 2>/dev/null; then
     _want=$(awk '$2=="bin/aibox"{print $1}' "$_sums_tmp" 2>/dev/null)
     if [ -n "$_want" ]; then
       verify_sha256 "$_TMP_BIN" "$_want" || {

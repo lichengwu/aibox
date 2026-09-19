@@ -120,15 +120,302 @@ parse_yaml_module_stdin() {
   '
 }
 
-# Is the registry cache fresh (mtime within TTL)? Returns 0 if fresh, 1 if stale/missing.
-# Extracted so tests can exercise the staleness logic directly.
+# Is the given cache file fresh (mtime within TTL)? Returns 0 if fresh, 1 if stale/missing.
+# Extracted so tests can exercise the staleness logic directly. Optional $2 overrides
+# the TTL (defaults to the registry TTL — the gh source pool passes its own).
 _cache_fresh() {
   local f="$1" now mtime age
+  local ttl="${2:-${AIBOX_REGISTRY_TTL:-3600}}"
   [ -f "$f" ] || return 1
   now="$(date +%s)"
   mtime="$(date -r "$f" +%s 2>/dev/null || stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)"
   age=$((now - ${mtime:-0}))
-  [ "$age" -lt "${AIBOX_REGISTRY_TTL:-3600}" ]
+  [ "$age" -lt "${ttl}" ]
+}
+
+# ---------- download source pool (GitHub family: raw / api / releases) ----------
+# Same pattern as pi-web's npm registry pick and windmill's ghcr route probe:
+# a maintained pool of mainstream acceleration sources, RACED against the actual
+# download (concurrent, per-candidate bounded), the measured winner serves the
+# run; later fetches walk the measured ranking with per-fetch failover.
+#
+# Live-verified pool (measured on a CN mac AND an Aliyun deploy host):
+#   gh-proxy.com  — proxies BOTH raw and api
+#   ghproxy.net   — raw ok, api 403 from some networks
+#   ghproxy.link / ghproxy.cn — served CORRUPT content (truncated / wrong size)
+#   → EXCLUDED: a mirror that corrupts content is worse than a slow one.
+# DIRECT always races: on healthy networks it wins and no proxy is ever used.
+#
+# Scope: the manager's SMALL files (module.yaml, hooks, install.sh, bin/aibox,
+# upgrade mappings) — the race downloads the file once per candidate (~N × size,
+# fine at these sizes). Large binaries (clash's ~20MB mihomo) use bounded partial
+# rate probes in their own module instead. Families rank SEPARATELY (raw / api /
+# releases) — a proxy can be great for raw and useless for api (measured). For
+# raw URLs an extra "ghapi" pseudo-candidate rewrites to the api.github.com
+# contents API — survives networks where raw is blocked but the api host is
+# reachable even when every public proxy is down (measured live).
+#
+# Knobs: AIBOX_GH_POOL="<url>..." overrides the default pool; "direct" disables
+# it (direct-only). AIBOX_GH_POOL_TIMEOUT (default 10s) bounds each candidate.
+# The user's CLASH_MIRROR / AIBOX_GH_MIRROR joins as a high-priority candidate.
+# Non-GitHub hosts (hub.docker.com etc.): direct, plus the user mirror if set.
+GH_POOL_ORDER_RAW=""
+GH_POOL_ORDER_API=""
+GH_POOL_ORDER_REL=""
+AIBOX_GH_POOL_DEFAULT="https://gh-proxy.com https://ghproxy.net"
+
+# Family of a URL: RAW / API / REL / OTHER.
+_gh_pool_family() {
+  case "$1" in
+  https://raw.githubusercontent.com/*) printf RAW ;;
+  https://api.github.com/*) printf API ;;
+  https://github.com/*) printf REL ;;
+  *) printf OTHER ;;
+  esac
+}
+
+# Ranking cache FILE: "$AIBOX_HOME/ghpool.cache", lines "FAM<TAB>cand cand ...",
+# mode 600, TTL AIBOX_GH_POOL_TTL (default 600s). The in-process globals do NOT
+# survive gh_pool_fetch's usual $( ) command-substitution subshells — the file
+# cache is the real per-run (TTL-bounded) ranking store.
+_gh_pool_cache_path() {
+  printf '%s/ghpool.cache' "${AIBOX_HOME:-${HOME:+$HOME/.aibox}}"
+}
+
+_gh_pool_cache_read() { # $1 = family → candidates line (empty when missing/stale)
+  local f line
+  f="$(_gh_pool_cache_path)"
+  [ -n "${f}" ] || return 0
+  if ! _cache_fresh "${f}" "${AIBOX_GH_POOL_TTL:-600}"; then return 0; fi
+  line="$(awk -v fam="$1" -F'\t' '$1==fam {print $2; exit}' "${f}" 2>/dev/null || true)"
+  printf '%s' "${line}"
+}
+
+_gh_pool_cache_write() { # $1 = family, $2 = candidates ("" = invalidate the entry)
+  local f tmp others
+  f="$(_gh_pool_cache_path)"
+  [ -n "${f}" ] || return 0
+  mkdir -p "$(dirname "${f}")"
+  tmp="$(mktemp "${f}.tmp.XXXXXX")" || return 0
+  # awk on a MISSING file exits 2 — under set -e that killed this function with
+  # status 2 in unguarded call contexts (live runs survived only via the callers'
+  # `|| die` exemption; the bats tests run unguarded and exposed it).
+  others=""
+  if [ -f "${f}" ]; then
+    others="$(awk -v fam="$1" -F'\t' '$1!=fam {print}' "${f}" 2>/dev/null || true)"
+  fi
+  {
+    printf '%s\t%s\n' "$1" "$2"
+    if [ -n "${others}" ]; then printf '%s\n' "${others}"; fi
+  } >"${tmp}"
+  mv "${tmp}" "${f}"
+  chmod 600 "${f}" 2>/dev/null || true
+  return 0
+}
+
+# Candidates in CONFIGURED order (user mirror, direct, pool, ghapi-for-RAW).
+# Prints "kind|location" lines: direct|  prefix|<mirror-url>  ghapi|
+_gh_pool_candidates() { # $1 = family
+  local u
+  u="${CLASH_MIRROR:-${AIBOX_GH_MIRROR:-}}"
+  if [ -n "${u}" ]; then printf 'prefix|%s\n' "${u%/}"; fi
+  printf 'direct|\n'
+  case "${AIBOX_GH_POOL:-}" in
+  direct | none | off) return 0 ;; # pool disabled: direct (+ user mirror) only — no ghapi either
+  "") # shellcheck disable=SC2086
+    printf 'prefix|%s\n' ${AIBOX_GH_POOL_DEFAULT} ;;
+  *) # shellcheck disable=SC2086
+    printf 'prefix|%s\n' ${AIBOX_GH_POOL} ;;
+  esac
+  if [ "$1" = "RAW" ]; then printf 'ghapi|\n'; fi
+  return 0
+}
+
+# Fetch ONE candidate (race worker): body → $4, curl time_total → $5; rc = fetch status.
+_gh_pool_one() { # kind loc url bodyfile timefile
+  local kind="$1" loc="$2" url="$3" body="$4" tf="$5" t rc=0
+  case "${kind}" in
+  direct)
+    t="$(curl -fsSL --max-time "${AIBOX_GH_POOL_TIMEOUT:-10}" -o "${body}" -w '%{time_total}' "${url}" 2>/dev/null)" || rc=$?
+    ;;
+  prefix)
+    t="$(curl -fsSL --max-time "${AIBOX_GH_POOL_TIMEOUT:-10}" -o "${body}" -w '%{time_total}' "${loc%/}/${url}" 2>/dev/null)" || rc=$?
+    ;;
+  ghapi)
+    local o r ref path b json
+    o="$(printf '%s' "${url#https://raw.githubusercontent.com/}" | cut -d/ -f1)"
+    r="$(printf '%s' "${url#https://raw.githubusercontent.com/}" | cut -d/ -f2)"
+    ref="$(printf '%s' "${url#https://raw.githubusercontent.com/}" | cut -d/ -f3)"
+    path="$(printf '%s' "${url#https://raw.githubusercontent.com/}" | cut -d/ -f4-)"
+    if [ -z "${o}" ] || [ -z "${r}" ] || [ -z "${ref}" ] || [ -z "${path}" ]; then
+      rc=1
+    else
+      json="${body}.api"
+      t="$(curl -fsSL --max-time "${AIBOX_GH_POOL_TIMEOUT:-10}" -o "${json}" -w '%{time_total}' \
+        "https://api.github.com/repos/${o}/${r}/contents/${path}?ref=${ref}" 2>/dev/null)" || rc=$?
+      if [ "${rc}" = 0 ]; then
+        b="$(grep -oE '"content": *"[^"]*"' "${json}" 2>/dev/null | cut -d'"' -f4 | sed 's/\\n//g')"
+        if [ -n "${b}" ] && printf '%s' "${b}" | base64 -d 2>/dev/null >"${body}"; then
+          :
+        else
+          rc=1
+          t=""
+        fi
+      fi
+    fi
+    ;;
+  esac
+  printf '%s' "${t:-999}" >"${tf}"
+  return "${rc}"
+}
+
+# Fetch one candidate to stdout (sequential path).
+_gh_pool_cand_get() { # kind loc url
+  case "$1" in
+  direct) curl -fsSL --max-time "${AIBOX_GH_POOL_TIMEOUT:-10}" "$3" 2>/dev/null ;;
+  prefix) curl -fsSL --max-time "${AIBOX_GH_POOL_TIMEOUT:-10}" "${2%/}/$3" 2>/dev/null ;;
+  ghapi) _gh_api_fetch "$3" 2>/dev/null ;;
+  esac
+}
+
+# Fetch a URL through the source pool. First fetch of a family RACES all
+# candidates on the actual URL (concurrent, bounded): the fastest successful
+# candidate serves the fetch, its measured ranking is cached for the run, and
+# later fetches walk the ranking with per-fetch failover. Non-GitHub-family
+# URLs: direct, plus the user mirror if configured.
+gh_pool_fetch() { # $1 = url → content on stdout; nonzero when everything failed
+  local url="$1" fam order um
+  fam="$(_gh_pool_family "${url}")"
+
+  if [ "${fam}" = "OTHER" ]; then
+    if curl -fsSL --max-time "${AIBOX_GH_POOL_TIMEOUT:-10}" "${url}" 2>/dev/null; then
+      return 0
+    fi
+    um="${CLASH_MIRROR:-${AIBOX_GH_MIRROR:-}}"
+    if [ -n "${um}" ] && curl -fsSL --max-time "${AIBOX_GH_POOL_TIMEOUT:-10}" "${um%/}/${url}" 2>/dev/null; then
+      return 0
+    fi
+    return 1
+  fi
+
+  # Cached ranking (per family): in-process global first, then the cache FILE
+  # (globals die with the $( ) subshell; the file survives, TTL-bounded).
+  order=""
+  case "${fam}" in
+  RAW) order="${GH_POOL_ORDER_RAW}" ;;
+  API) order="${GH_POOL_ORDER_API}" ;;
+  REL) order="${GH_POOL_ORDER_REL}" ;;
+  esac
+  if [ -z "${order}" ]; then
+    order="$(_gh_pool_cache_read "${fam}")"
+  fi
+  if [ -n "${order}" ]; then
+    local cand kind loc
+    # shellcheck disable=SC2086
+    for cand in ${order}; do
+      kind="${cand%%|*}"
+      loc="${cand#*|}"
+      if _gh_pool_cand_get "${kind}" "${loc}" "${url}"; then
+        return 0
+      fi
+    done
+    # Every cached candidate failed since the race — invalidate the entry and
+    # re-race now (self-healing: mirrors die, networks change).
+    _gh_pool_cache_write "${fam}" ""
+    case "${fam}" in
+    RAW) GH_POOL_ORDER_RAW="" ;;
+    API) GH_POOL_ORDER_API="" ;;
+    REL) GH_POOL_ORDER_REL="" ;;
+    esac
+  fi
+
+  # First fetch of the family: RACE all candidates on this actual URL.
+  local tmpd cands cand i=0 pids="" pid total rounds done_all i2 t rc line first=1 winner="" ranked="" candstr
+  tmpd="$(mktemp -d "${TMPDIR:-/tmp}/ghpool.XXXXXX")" || return 1
+  cands="$(_gh_pool_candidates "${fam}")"
+  # shellcheck disable=SC2086
+  for cand in ${cands}; do
+    i=$((i + 1))
+    printf '%s\n' "${cand}" >"${tmpd}/c${i}.cand"
+    (
+      rc=0
+      _gh_pool_one "${cand%%|*}" "${cand#*|}" "${url}" "${tmpd}/c${i}.body" "${tmpd}/c${i}.time" || rc=$?
+      echo "${rc}" >"${tmpd}/c${i}.rc"
+    ) &
+    pids="${pids} $!"
+  done
+  total="${i}"
+
+  # Poll until every candidate finished, or the race budget (one candidate's
+  # max fetch time) elapses; stragglers are killed (worker SIGTERM first, then
+  # orphaned curl children — the pi-web kill-order lesson).
+  rounds=0
+  while [ "${rounds}" -lt "$(( (${AIBOX_GH_POOL_TIMEOUT:-10}) * 4 ))" ]; do
+    done_all=1
+    for ((i2 = 1; i2 <= total; i2++)); do
+      if [ ! -f "${tmpd}/c${i2}.rc" ]; then
+        done_all=0
+        break
+      fi
+    done
+    if [ "${done_all}" = 1 ]; then
+      break
+    fi
+    sleep 0.25
+    rounds=$((rounds + 1))
+  done
+  # shellcheck disable=SC2086
+  for pid in ${pids}; do
+    kill "${pid}" 2>/dev/null || true
+    pkill -P "${pid}" 2>/dev/null || true
+    wait "${pid}" 2>/dev/null || true
+  done
+
+  # Rank: successful candidates (rc=0 AND a non-empty body) by measured time;
+  # failed/unfinished ones keep their configured order behind them.
+  : >"${tmpd}/rank"
+  for ((i2 = 1; i2 <= total; i2++)); do
+    rc="$(cat "${tmpd}/c${i2}.rc" 2>/dev/null || echo 1)"
+    if [ "${rc}" = 0 ] && [ -s "${tmpd}/c${i2}.body" ]; then
+      t="$(cat "${tmpd}/c${i2}.time" 2>/dev/null || echo 999)"
+      printf '%s %s\n' "${t:-999}" "${i2}" >>"${tmpd}/rank"
+    fi
+  done
+  while read -r line; do
+    [ -n "${line}" ] || continue
+    i2="${line##* }"
+    candstr="$(cat "${tmpd}/c${i2}.cand" 2>/dev/null)"
+    if [ "${first}" = 1 ]; then
+      winner="${i2}"
+      first=0
+    fi
+    ranked="${ranked:+${ranked} }${candstr}"
+  done < <(sort -sn "${tmpd}/rank")
+  for ((i2 = 1; i2 <= total; i2++)); do
+    rc="$(cat "${tmpd}/c${i2}.rc" 2>/dev/null || echo 1)"
+    if [ "${rc}" = 0 ] && [ -s "${tmpd}/c${i2}.body" ]; then continue; fi
+    candstr="$(cat "${tmpd}/c${i2}.cand" 2>/dev/null)"
+    ranked="${ranked:+${ranked} }${candstr}"
+  done
+
+  if [ -n "${winner}" ] && [ -s "${tmpd}/c${winner}.body" ]; then
+    case "${fam}" in
+    RAW) GH_POOL_ORDER_RAW="${ranked}" ;;
+    API) GH_POOL_ORDER_API="${ranked}" ;;
+    REL) GH_POOL_ORDER_REL="${ranked}" ;;
+    esac
+    _gh_pool_cache_write "${fam}" "${ranked}"
+    # stderr only — stdout is the fetched content, often captured in $( ).
+    printf '[aibox] source pool (%s): %s won the race (%ss; %s candidate(s) tried)\n' \
+      "${fam}" "$(printf '%s' "$(cat "${tmpd}/c${winner}.cand")" | awk -F'|' '{print ($2=="" ? $1 : $2)}')" \
+      "$(cat "${tmpd}/c${winner}.time" 2>/dev/null)" "${total}" >&2
+    cat "${tmpd}/c${winner}.body"
+    rm -rf "${tmpd}"
+    return 0
+  fi
+  # No winner: do not cache a failed ranking — the next fetch re-races.
+  rm -rf "${tmpd}"
+  return 1
 }
 
 # ---------- registry ----------
@@ -171,14 +458,18 @@ load_registry() {
 _load_registry_remote() {
   local m mu yaml d api_json
   AIBOX_MODULES=""
-  api_json="$(curl -fsSL --max-time 15 "https://api.github.com/repos/${AIBOX_REPO}/contents/tools" 2>/dev/null)" \
-    || die "Failed to fetch module list (GitHub API: ${AIBOX_REPO}/tools; or use a file:// local source)"
+  api_json="$(gh_pool_fetch "https://api.github.com/repos/${AIBOX_REPO}/contents/tools")" \
+    || die "Failed to fetch module list (GitHub API: ${AIBOX_REPO}/tools; the source pool was tried — network? or use a file:// local source)"
   local _body_tmp="$AIBOX_REGISTRY_CACHE.body.tmp"
   local _out_tmp="$AIBOX_REGISTRY_CACHE.out.tmp"
+  # mkdir BEFORE the temp-file writes — a fresh AIBOX_HOME (remote source, manager
+  # not bootstrapped yet) would die on `: >` otherwise (pre-existing latent bug,
+  # exposed by the pool's live test).
+  mkdir -p "$(dirname "$AIBOX_REGISTRY_CACHE")"
   local _old_umask; _old_umask=$(umask); umask 077
   : > "$_body_tmp"
   for d in $(printf '%s\n' "$api_json" | awk -F'"' '/"name":/{print $4}'); do
-    yaml="$(curl -fsSL --max-time 15 "$AIBOX_RAW/tools/$d/module.yaml" 2>/dev/null)" || continue
+    yaml="$(gh_pool_fetch "$AIBOX_RAW/tools/$d/module.yaml")" || continue
     m="$(printf '%s\n' "$yaml" | awk -F': *' '/^name:/{gsub(/"/,"",$2); print $2; exit}')"
     [ -n "$m" ] || continue
     AIBOX_MODULES="${AIBOX_MODULES:+$AIBOX_MODULES }$m"
@@ -281,7 +572,10 @@ download_module() {
   for f in $dl; do
     log "  fetch $dir/$f"
     mkdir -p "$(dirname "$AIBOX_LAST_DEST/$f")"   # nested entries (e.g. cli/openmaic) need their dir
-    curl -fsSL --max-time 30 "$AIBOX_RAW/$dir/$f" -o "$AIBOX_LAST_DEST/$f" || die "Download $dir/$f failed (check branch/path)"
+    if ! gh_pool_fetch "$AIBOX_RAW/$dir/$f" >"$AIBOX_LAST_DEST/$f"; then
+      rm -f "$AIBOX_LAST_DEST/$f"
+      die "Download $dir/$f failed (check branch/path; the source pool was tried)"
+    fi
     chmod +x "$AIBOX_LAST_DEST/$f" 2>/dev/null || true
   done
 }
@@ -1308,6 +1602,57 @@ dep_satisfied() {
   esac
 }
 
+# ---------- node-dist source pool (for nvm installs) ----------
+# nodejs.org is slow/blocked on CN networks (measured: 1.7-5.1s for the dist
+# index vs 0.05-0.12s on the mainstream mirrors). Live-verified mirrors
+# (byte-identical on FIXED-version paths — hash-checked d67cdb735b… ×3):
+# npmmirror.com/mirrors/node (Alibaba), mirrors.aliyun.com/nodejs-release.
+# tencent EXCLUDED — its index.json content diverges (measured 329756B vs
+# 331021B). Probes the REAL file nvm fetches first (<base>/index.json, ~330KB)
+# concurrently, bounded; the fastest VALID response (≥ 100KB — a 404 error page
+# is small AND fast, which would fake a high rate) wins and is exported as
+# NVM_NODEJS_ORG_MIRROR (nvm's documented env). A mirror only wins by
+# MEASUREMENT — healthy networks keep nodejs.org.
+# Knobs: AIBOX_NODE_POOL (override list; "direct" = disabled), AIBOX_NODE_MIRROR
+# (user mirror, raced first), AIBOX_NODE_PROBE_TIMEOUT (default 8s).
+NODE_DIST_POOL_DEFAULT="https://npmmirror.com/mirrors/node https://mirrors.aliyun.com/nodejs-release"
+
+_node_dist_pick() { # → the winning dist base URL (DIRECT = https://nodejs.org/dist)
+  local cands u tmpd pid pids="" i best tstat size t rate
+  case "${AIBOX_NODE_POOL:-}" in
+  direct | none | off)
+    printf 'https://nodejs.org/dist'
+    return 0
+    ;;
+  esac
+  cands="https://nodejs.org/dist"
+  if [ -n "${AIBOX_NODE_MIRROR:-}" ]; then cands="${AIBOX_NODE_MIRROR%/} ${cands}"; fi
+  # shellcheck disable=SC2086
+  for u in ${AIBOX_NODE_POOL:-${NODE_DIST_POOL_DEFAULT}}; do cands="${cands} ${u%/}"; done
+  tmpd="$(mktemp -d "${TMPDIR:-/tmp}/nodedist.XXXXXX")" || { printf 'https://nodejs.org/dist'; return 0; }
+  i=0
+  # shellcheck disable=SC2086
+  for u in $cands; do
+    i=$((i + 1))
+    (
+      tstat="$(curl -sL -o /dev/null -w '%{size_download} %{time_total}' --max-time "${AIBOX_NODE_PROBE_TIMEOUT:-8}" "${u}/index.json" 2>/dev/null || true)"
+      size="${tstat%% *}"
+      t="${tstat##* }"
+      rate="$(printf '%s %s' "${size:-0}" "${t:-0}" | awk '{t=$2+0; if (t>0) printf "%d", $1/t; else print 0}')"
+      if [ "${size:-0}" -ge 100000 ] && [ "${rate:-0}" -gt 0 ]; then
+        printf '%s\t%s\n' "${rate}" "${u}" >"${tmpd}/r${i}.res"
+      fi
+    ) &
+    pids="${pids} $!"
+  done
+  # shellcheck disable=SC2086
+  for pid in $pids; do wait "${pid}" 2>/dev/null || true; done
+  best="$(cat "${tmpd}"/*.res 2>/dev/null | sort -rn | head -1 | cut -f2)"
+  rm -rf "${tmpd}"
+  [ -n "${best}" ] || best="https://nodejs.org/dist"
+  printf '%s' "${best}"
+}
+
 # Auto-install deps by platform. Lightweight / has a package manager -> install; needs sudo
 # or GUI interaction -> print the manual command.
 install_dep() {
@@ -1359,11 +1704,15 @@ install_dep() {
       if [ -s "$HOME/.nvm/nvm.sh" ]; then
         # shellcheck disable=SC1091
         . "$HOME/.nvm/nvm.sh"
+        # node-dist source pool: the fastest dist mirror serves (measured on the
+        # REAL index.json nvm fetches; DIRECT stays default on healthy networks).
+        export NVM_NODEJS_ORG_MIRROR="$(_node_dist_pick)"
+        log "  node dist: ${NVM_NODEJS_ORG_MIRROR}"
         nvm install 22 && nvm use 22 >/dev/null
       elif [ "$pm" = "brew" ]; then brew install node@22
       elif [ "$root" = "1" ]; then
         _pm_install "$pm" nodejs npm || ${pm} install -y nodejs \
-          || warn "  distro nodejs unavailable; prefer nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash"
+          || warn "  distro nodejs unavailable; prefer nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash (raw blocked? prefix a mirror, e.g. https://gh-proxy.com/)"
         return 1   # preflight rechecks the version (distro nodejs may be < 22)
       else warn "  Install node via nvm (curl nvm | bash) or: sudo ${pm} install nodejs"; return 1; fi ;;
     python3)
@@ -1675,18 +2024,12 @@ _gh_api_fetch() { # $1 = https://raw.githubusercontent.com/<owner>/<repo>/<ref>/
   printf '%s' "${b}" | base64 -d 2>/dev/null || printf '%s' "${b}" | base64 -D 2>/dev/null
 }
 
+# Fetch a URL for the component-upgrade engine: routed through the source pool
+# (gh_pool_fetch) — the pool's ghapi pseudo-candidate and mirror candidates
+# subsume the old chain (direct → raw→api rewrite → CLASH_MIRROR); dockerhub and
+# other non-GitHub hosts go direct + the user mirror, preserving old semantics.
 upgrade_fetch() {
-  local url="$1" mirror out
-  out="$(curl -fsSL --max-time "${AIBOX_UPGRADE_TIMEOUT:-20}" "${url}" 2>/dev/null)" && { printf '%s' "${out}"; return 0; }
-  case "${url}" in
-  https://raw.githubusercontent.com/*)
-    out="$(_gh_api_fetch "${url}")" && [ -n "${out}" ] && { printf '%s' "${out}"; return 0; }
-    ;;
-  esac
-  mirror="${CLASH_MIRROR:-${AIBOX_GH_MIRROR:-}}"
-  [ -n "${mirror}" ] || return 1
-  out="$(curl -fsSL --max-time "${AIBOX_UPGRADE_TIMEOUT:-20}" "${mirror%/}/${url}" 2>/dev/null)" && { printf '%s' "${out}"; return 0; }
-  return 1
+  gh_pool_fetch "$1"
 }
 
 cmd_upgrade() {
@@ -1803,13 +2146,20 @@ cmd_upgrade() {
     newvals+=("${k}=${prefix}${tag}")
   done
 
-  # Fail fast: pull every new image BEFORE touching anything.
+  # Pull every new image BEFORE touching anything — but a direct-pull failure no
+  # longer aborts (compose modules now carry a docker.io mirror pool that retries
+  # at svc start; the health gate + auto-rollback remain the safety net).
   local img
   for kv in "${newvals[@]}"; do
     img="${kv#*=}"
+    if docker image inspect "${img}" >/dev/null 2>&1; then
+      log "already cached: ${img}"
+      continue
+    fi
     log "pulling ${img} …"
-    docker pull "${img}" >/dev/null 2>&1 \
-      || { warn "docker pull failed: ${img}"; warn "precheck failed (daemon egress? run: aibox check ${name})"; return 4; }
+    if ! docker pull "${img}" >/dev/null 2>&1; then
+      warn "direct docker pull failed: ${img} — continuing (mirror pool retries at svc start; health gate + rollback protect)"
+    fi
   done
 
   # Back up, rewrite ONLY the declared image keys, recreate + health-wait via svc start.
@@ -2306,7 +2656,7 @@ cmd_self_update() {
   # install.sh fetch here while the payload still comes from the default branch
   # CDN — measured live on remote1: SHA-pinned `update self` silently kept the
   # stale binary (branch-CDN lag), defeating the pin.
-  if curl -fsSL --max-time 30 "$AIBOX_RAW/install.sh" | AIBOX_RAW="$AIBOX_RAW" AIBOX_VERIFY="${AIBOX_VERIFY:-0}" AIBOX_SHA256="${AIBOX_SHA256:-}" bash; then
+  if gh_pool_fetch "$AIBOX_RAW/install.sh" | AIBOX_RAW="$AIBOX_RAW" AIBOX_VERIFY="${AIBOX_VERIFY:-0}" AIBOX_SHA256="${AIBOX_SHA256:-}" bash; then
     # New CLI and new module metadata go together: drop the registry cache so the
     # next load_registry refetches (measured live: `aibox ports` kept showing a
     # stale declared port for up to the 1h TTL after self-update).

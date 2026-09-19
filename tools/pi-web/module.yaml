@@ -1,5 +1,5 @@
 name: pi-web
-version: 1.1.0
+version: 1.2.0
 description: "Deploy @agegr/pi-web as a launchd/systemd service (HTTP Basic auth, auto-restart)"
 platform: ""
 dir: tools/pi-web
@@ -12,12 +12,14 @@ ports:
   - 30141/tcp:http
 
 # Preflight (enforced by aibox install/update; see docs/module-spec.md).
-# pi-web is installed from the npm registry; the user-level service manager
-# (launchd on macOS, systemd --user on Linux) must exist for start/enable.
+# The user-level service manager (launchd on macOS, systemd --user on Linux) must
+# exist for start/enable. NOTE: no `domains:` gate on the npm registry — the install
+# hook itself probes registry.npmjs.org + the CN mirrors in parallel and adopts the
+# fastest (with a stall watchdog + failover); a static npmjs-only reachability gate
+# would false-fail exactly the mirror-saved networks (measured: npmjs metadata 4.3s
+# vs 0.15s on npmmirror, worse cases hang).
 checks:
   disk_gb: 2
-  domains:
-    - registry.npmjs.org
   commands:
     - launchctl@darwin
     - systemctl@linux

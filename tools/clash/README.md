@@ -87,12 +87,43 @@ Two complementary layers:
 | --- | --- | --- |
 | `CLASH_BIN_DIR` | `AIBOX_BIN_DIR` → `~/.local/bin` | mihomo binary location |
 | `CLASH_BASE_DIR` | `$AIBOX_HOME/apps/clash` | deployment root override |
+| `CLASH_MIRROR` | (unset) | GitHub mirror prefix — JOINS the download pool as a candidate (raced, not pinned) |
+| `AIBOX_GH_POOL` | shipped pool | mirror list override (`direct` = no pool) |
+| `CLASH_PROBE_TIME` | `5` | per-source rate-probe seconds |
+| `CLASH_DOWNLOAD_TIMEOUT` | `120` | per-attempt download window seconds |
+| `CLASH_DOWNLOAD_ATTEMPTS` | `2` | attempts PER SOURCE before failover |
+| `CLASH_TAG_TIMEOUT` | `10` | version-resolve race timeout seconds |
 | `CLASH_PORT` | `7890` | mixed port |
 | `CLASH_API_PORT` | `9090` | external controller port |
+
+## Download source pool (the mihomo binary)
+
+The binary comes from a GitHub release (~20MB) — on CN-class networks direct
+release downloads are throttled to a crawl (measured: ~21KB/s on Aliyun) or reset.
+The install hook now runs the same pattern as aibox's other downloads:
+
+- **Version resolve** (`clash_gh_get`): races DIRECT + the mirror pool
+  concurrently; the first complete response wins.
+- **Rate-probe ranking** (`clash_rank_candidates`): every candidate gets a
+  bounded (~5s) partial download of the ACTUAL release asset; candidates are
+  ranked by measured bytes/sec. The winner's partial is a real prefix of the
+  asset — it seeds the resumable download (on fast routes the probe even
+  completes the whole file).
+- **Resumable failover** (`download_mihomo`): the throttled-CDN lesson
+  (partials carry across attempts) extends across sources — mirrors proxy the
+  identical asset bytes, so a partial from one source resumes on another.
+  Per-source attempt windows (default 2) then fail over down the measured
+  ranking; every reachable source is tried before dying.
+
+Candidate pool (live-verified on a CN mac + an Aliyun host): **gh-proxy.com**
+(proxies github releases + api), **ghproxy.net**; ghproxy.link / ghproxy.cn
+served corrupt content — excluded. `CLASH_MIRROR` / `AIBOX_GH_MIRROR` join as
+high-priority candidates (raced, not pinned — the fastest route serves).
+`AIBOX_GH_POOL="url..."` overrides the pool; `direct` disables it.
 
 ## Design trade-offs
 
 - **Does not parse the subscription yaml itself**: mihomo natively consumes the subscription URL; aibox does not write a yaml parser (parsing clash yaml in pure bash is fragile; format changes are handled by mihomo).
 - **Latency testing/switching delegated to mihomo**: the `url-test`/`fallback` strategy groups are mature; aibox only calls the API to report/trigger.
 - **nohup+pid for a simple daemon**: works immediately cross-platform (macOS/Linux) without depending on launchd/systemd unit files. If mihomo dies, aibox detects `CLASH_ENABLED` but no port response and falls back to the static proxy (no silent failure). A systemd/launchd unit for boot-time auto-start is a future optional enhancement.
-- **mihomo is shipped by aibox**: users need not install it manually; the install hook downloads the matching-platform binary from the GitHub release.
+- **mihomo is shipped by aibox**: users need not install it manually; the install hook downloads the matching-platform binary from the GitHub release — through the source pool (direct + mirrors, rate-probed, resumable failover) above.

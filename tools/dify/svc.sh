@@ -15,6 +15,10 @@ start)
   if shared_base_enabled && [ ! -f "${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/base.env" ]; then
     die "DIFY_SHARED_BASE=1 but base.env is missing — run: aibox base start"
   fi
+  # docker.io source pool: bounded direct probe (healthy → compose pulls direct,
+  # zero overhead); direct dead → ranked mirror pre-pull + tag (see lib.sh).
+  # shellcheck disable=SC2046
+  docker_pool_prepull $(compose_images) || true
   compose up -d "$@"
   port="$(effective_port)"
   timeout_s="${DIFY_START_TIMEOUT:-300}"

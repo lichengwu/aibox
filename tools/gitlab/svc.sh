@@ -12,6 +12,10 @@ load_env
 
 case "$action" in
 start)
+  # docker.io source pool: bounded direct probe (healthy → compose pulls direct,
+  # zero overhead); direct dead → ranked mirror pre-pull + tag (see lib.sh).
+  # shellcheck disable=SC2046
+  docker_pool_prepull $(compose_images) || true
   compose up -d "$@"
   port="${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
   timeout_s="${GITLAB_START_TIMEOUT:-600}"

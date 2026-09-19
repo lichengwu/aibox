@@ -274,6 +274,59 @@ Caveats:
 - Don't assume the proxy is HTTP. The value may be `socks5://host:port`; **pass it through wholesale**, don't prepend `http://`.
 - When writing the config file, remember to redact — the proxy URL may contain `user:pass@`; don't log it in cleartext (see `mask_url`).
 
+## Download source pools (per-family acceleration)
+
+**Pattern** (applies to EVERY download aibox performs): maintain a pool of
+mainstream accelerated sources per family, **probe them concurrently with a
+real download through the real channel**, rank by measured speed, serve from
+the fastest, and **fail over down the ranking until every reachable source is
+tried** — then (and only then) fail. DIRECT always races: healthy networks keep
+zero-overhead defaults. User-configured mirrors join as candidates (raced, not
+pinned). Mirrors that serve divergent/corrupt content are EXCLUDED from the
+shipped pools (measured: ghproxy.link/ghproxy.cn truncated/wrong-size; tencent
+node-dist index diverges).
+
+### Family inventory
+
+| family | consumer | mechanism (where) | shipped pool (live-verified) |
+| --- | --- | --- | --- |
+| npm | pi-web install/update | `npm_registry_pick` + `npm_install_global` (tools/pi-web/lib.sh) — concurrent tarball-throughput probe + wall-clock watchdog failover | registry.npmjs.org, registry.npmmirror.com, mirrors.cloud.tencent.com/npm, mirrors.huaweicloud.com/repository/npm |
+| GitHub raw/api/releases | manager registry + module download + self-update + upgrade mappings | `gh_pool_fetch` (bin/aibox) — race + per-family file cache (TTL) + ghapi pseudo-candidate | direct, gh-proxy.com, ghproxy.net, CLASH_MIRROR/AIBOX_GH_MIRROR |
+| GitHub (bootstrap) | install.sh (bin/aibox, SHA256SUMS) | `fetch_pool` (install.sh, bootstrap-local) — first-success race | direct + the same mirrors + AIBOX_GH_MIRROR |
+| GitHub releases (~20MB) | clash mihomo download | `clash_gh_get` + `clash_rank_candidates` + resumable `download_mihomo` (tools/clash/lib.sh) — bounded rate probes of the actual asset, probe partial seeds the resume | direct + the same mirrors; CLASH_MIRROR joins |
+| docker.io images | dify / gitlab / base compose pulls | `docker_pool_prepull` (each module's lib.sh) — direct daemon probe (healthy → zero overhead); dead → rank mirrors by concurrent hello-world pulls, pre-pull + `docker tag` (mirrors proxy identical digests) | docker.1ms.run, docker.m.daocloud.io, dockerproxy.net, hub.rat.dev (tencent-family excluded) |
+| docker.io images (dispatched) | openmaic compose pulls (deploy host) | `docker_pool_prepull` hooked into its CLI's `compose()` on `up*` (tools/openmaic/cli/openmaic) — same mechanism | the same 4 mirrors |
+| node dist | install_dep's nvm branch (node:22 deps) | `_node_dist_pick` (bin/aibox) — concurrent bounded probes of the REAL index nvm fetches; winner exported as NVM_NODEJS_ORG_MIRROR | nodejs.org, npmmirror.com/mirrors/node, mirrors.aliyun.com/nodejs-release (≥100KB size floor — a 404 page is small AND fast) |
+| ghcr + docker.io (images) | windmill | `auto_ghcr_mirror` + `WM_HUB_MIRROR` (tools/windmill/cli/windmill) — throughput probe (layer growth), persist to .env, failure-driven re-probe | ghcr.nju.edu.cn, ghcr.dockerproxy.net — the in-repo PRECEDENT that seeded this pattern |
+| npm (inside docker build) | openmaic render-service | baked `--registry=npmmirror` Dockerfile patch (tools/openmaic/cli) — predates this pattern | registry.npmmirror.com |
+
+### Knobs (per family)
+
+| family | env vars |
+| --- | --- |
+| npm | `AIBOX_NPM_REGISTRY` (pin), `AIBOX_NPM_REGISTRIES` (list), `AIBOX_NPM_TIMEOUT` (watchdog), `AIBOX_NPM_PROBE_TIMEOUT` |
+| GitHub (manager) | `AIBOX_GH_POOL` (list; `direct` = off), `AIBOX_GH_MIRROR`/`CLASH_MIRROR` (user mirror), `AIBOX_GH_POOL_TIMEOUT`, `AIBOX_GH_POOL_TTL` (ranking cache) |
+| GitHub (clash) | `CLASH_MIRROR`, `CLASH_TAG_TIMEOUT`, `CLASH_PROBE_TIME`, `CLASH_DOWNLOAD_TIMEOUT`, `CLASH_DOWNLOAD_ATTEMPTS` (per source) |
+| docker.io | `AIBOX_DOCKER_POOL` (list; `direct` = off), `AIBOX_DOCKER_MIRROR` (user mirror), `AIBOX_DOCKER_FORCE_POOL` (skip the direct probe), `AIBOX_DOCKER_PROBE_TIMEOUT`, `AIBOX_DOCKER_MIRROR_PROBE_TIMEOUT`, `AIBOX_DOCKER_PULL_TIMEOUT` |
+| node dist | `AIBOX_NODE_POOL` (list; `direct` = off), `AIBOX_NODE_MIRROR`, `AIBOX_NODE_PROBE_TIMEOUT` |
+| ghcr (windmill) | `WM_GHCR_MIRROR`, `WM_GHCR_CANDIDATES`, `WM_GHCR_PROBE`, `WM_HUB_MIRROR` |
+
+### Static preflight gates superseded by runtime pools
+
+Where a module's runtime pool handles the family, the STATIC preflight gate
+would false-fail exactly the mirror-saved networks, so it is removed (the deps
+check still hard-gates the tool's existence):
+
+- pi-web: no `domains: registry.npmjs.org` — `npm_registry_pick` probes at install time
+- clash: no `domains: api.github.com/github.com` — `clash_gh_get`/`clash_rank_candidates` handle it
+- dify / gitlab / base: no `docker_pull: hello-world` — `docker_pool_prepull` probes the daemon's direct route and falls back to the mirror pool; the upgrade engine's pre-pull no longer aborts on direct failure (warn + continue; health gate + auto-rollback remain the safety net)
+
+### Boundaries (deliberately NOT pooled)
+
+- the clash **subscription URL** — the user's own provider, fetched by mihomo (plain-curl probes 403 by design)
+- `cr.weaviate.io` (dify's vector store) — no mainstream mirror proxies it; direct-only, documented
+- openmaic's in-build npm — already accelerated via its Dockerfile patch
+
 ## User command → hook mapping
 
 | User command | Hook |
@@ -448,14 +501,20 @@ pre-staged dependencies. A failed preflight aborts install/update **before** any
 
 | module | disk_gb | domains (host-probed) | docker_pull (daemon-probed) | docker_images | commands | services |
 | -------- | :---: | --------- | --------- | --------------- | ---------- | ---------- |
-| base | 5 | — | hello-world | postgres:18, redis:7 (cached → skip probes) | — | — |
-| clash | 1 | api.github.com, github.com (mihomo release; `CLASH_MIRROR` overrides the download base) | — | — | — | — |
-| pi-web | 2 | registry.npmjs.org | — | — | launchctl@darwin, systemctl@linux | — |
+| base | 5 | — | — (docker.io pool at start) | postgres:18, redis:7 | — | — |
+| clash | 1 | — (GitHub source pool) | — | — | — | — |
+| dify | 10 | — | — (docker.io pool at start) | langgenius 1.17.1 set + postgres/redis/weaviate (offline-restart short-circuit) | — | — |
+| gitlab | 15 | — | — (docker.io pool at start) | gitlab/gitlab-ce:19.2.6-ce.0 | — | — |
 | openmaic | 20 | github.com | hello-world | — | — | base:postgres#openmaic |
-| windmill | 12 | ghcr.io (shared-PG mode pulls nothing from docker.io) | — | — | — | base:postgres#windmill, base:redis |
+| pi-web | 2 | — (npm registry pool) | — | — | launchctl@darwin, systemctl@linux | — |
+| windmill | 12 | ghcr.io (its CLI auto-probes ghcr mirrors) | — | — | — | base:postgres#windmill, base:redis |
 
-Notes: the clash **subscription URL** is user-supplied and fetched by mihomo with its own UA —
-plain-curl probes return 403 by design, so it is deliberately not a checked domain. Disk floors
+Notes: entries marked "pool" have their static gate REMOVED — the runtime download
+source pool (see §Download source pools) probes the real channel and fails over,
+so a static direct-egress gate would false-fail exactly the mirror-saved networks.
+The clash **subscription URL** is user-supplied and fetched by mihomo with its own
+UA — plain-curl probes return 403 by design, so it is deliberately not a checked
+domain (same class: not poolable). Disk floors
 match measured reality (windmill images ≈ 9.5G live; openmaic's render-service Chromium build is
 heavy) and windmill's own `doctor` contract (≥ 12G).
 

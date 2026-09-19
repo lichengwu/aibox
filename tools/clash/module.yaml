@@ -1,5 +1,5 @@
 name: clash
-version: 1.1.0
+version: 1.2.0
 description: "Clash subscription proxy pool — mihomo kernel orchestration (auto speed-test/switch/failover)"
 platform: ""
 dir: tools/clash
@@ -9,15 +9,14 @@ ports:
   - 9090/tcp:api
 
 # Preflight (enforced by aibox install/update; see docs/module-spec.md).
-# The mihomo binary comes from GitHub releases (CLASH_MIRROR env overrides the
-# download base when GitHub is blocked). The subscription URL itself is
-# user-supplied and fetched by mihomo with its own UA — plain-curl probes of it
-# return 403 by design, so it is deliberately NOT a checked domain.
+# NOTE: no `domains:` gate — the install hook itself races the download source
+# pool (CLASH_MIRROR/AIBOX_GH_MIRROR + gh-proxy.com + ghproxy.net + DIRECT,
+# rate-probed on the actual release asset; see lib.sh). A static
+# github-only reachability gate would false-fail exactly the mirror-saved
+# networks. The subscription URL is user-supplied and fetched by mihomo with
+# its own UA — plain-curl probes return 403 by design, so it stays unchecked.
 checks:
   disk_gb: 1
-  domains:
-    - api.github.com
-    - github.com
 
 hooks:
   install: install.sh

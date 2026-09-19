@@ -35,6 +35,30 @@ aibox pi-web diagnose
 | `PI_WEB_BIND` | `0.0.0.0` | listen address; `127.0.0.1` for localhost only |
 | `PI_WEB_PORT` | `30141` | listen port |
 
+### npm registry (CN-network stalls: probe + watchdog + failover)
+
+`npm i -g @agegr/pi-web@latest` can stall badly against registry.npmjs.org on
+CN-class networks (measured: the package metadata takes 4.3s vs 0.15s on npmmirror;
+worse cases hang indefinitely). The install/update hooks handle this — nothing to
+configure by default:
+
+- **Probe**: the candidate registries (npmjs + npmmirror + Tencent + Huawei Cloud
+  mirrors, plus your own non-default `.npmrc` registry) are speed-tested IN PARALLEL
+  by downloading the package's actual tarball — the fastest download wins for that
+  run (the probe also verifies the mirror carries the package). Different networks rank differently (measured:
+  npmmirror fastest on one host, huawei on another), so nothing is hardcoded.
+  Your global npm config is never touched (a persist hint is printed instead).
+- **Watchdog + failover**: `npm install` runs under a wall-clock watchdog; a stalled
+  registry is killed and the install fails over to the runner-up once per candidate.
+  npm is silent in non-TTY, so wall-clock is the only portable stall signal.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `AIBOX_NPM_REGISTRY` | (unset) | hard-pin one registry (skips probing) |
+| `AIBOX_NPM_REGISTRIES` | shipped list | override the candidate list |
+| `AIBOX_NPM_TIMEOUT` | `240` | install watchdog seconds |
+| `AIBOX_NPM_PROBE_TIMEOUT` | `6` | per-probe curl timeout seconds |
+
 Just export them before `aibox install pi-web`, for example:
 
 ```bash

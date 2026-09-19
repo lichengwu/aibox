@@ -113,6 +113,26 @@ override sets the bundled `db_postgres`/`redis` to `replicas: 0` and remaps
 > so the override forces `REDIS_PASSWORD` empty (dify's client sends AUTH by
 > default, which a no-auth redis rejects).
 
+## Docker image source pool
+
+The compose images are pulled through the docker.io **source pool** (main
+README → "Download source pools"): at start a bounded direct daemon-route
+probe runs — healthy networks pull directly with zero overhead; when the
+direct route is dead, mirrors (docker.1ms.run, docker.m.daocloud.io,
+dockerproxy.net, hub.rat.dev — live-verified) are ranked by concurrent probe
+pulls and the images are pre-pulled via `docker pull <mirror>/<image>` +
+`docker tag` (mirrors proxy identical digests), so `compose up` finds them
+cached.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `AIBOX_DOCKER_POOL` | shipped pool | mirror list override (`direct` = no pool) |
+| `AIBOX_DOCKER_MIRROR` | (unset) | your mirror — joins the race first |
+| `AIBOX_DOCKER_FORCE_POOL` | `0` | `1` = skip the direct probe, always engage |
+
+Images on OTHER registries (the `cr.weaviate.io` vector store) stay
+direct-only — no mainstream mirror proxies them.
+
 ## Preflight
 
 Declared in `module.yaml` `checks:` — enforced by `aibox install/update`. All

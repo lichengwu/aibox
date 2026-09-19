@@ -1,5 +1,5 @@
 name: base
-version: 1.1.0
+version: 1.2.0
 description: "Shared base components (PostgreSQL 18 + Redis 7); each module gets its own DB"
 platform: ""
 dir: tools/base
@@ -24,9 +24,13 @@ files:
 # host-curl probes of registry-1.docker.io are unreliable), so the pull path is
 # probed daemon-routed via hello-world; when both real images are already
 # cached the probe is skipped and offline restarts pass.
+# NOTE: no `docker_pull:` gate — the svc-start hook probes the daemon's direct
+# route itself and, when it is dead, pre-pulls through the ranked docker.io
+# mirror pool (see lib.sh docker_pool_prepull). A static direct-egress gate
+# would false-fail exactly the mirror-saved networks. The deps check still
+# hard-gates the docker DAEMON's existence.
 checks:
   disk_gb: 5
-  docker_pull: hello-world
   docker_images:
     - postgres:18
     - redis:7

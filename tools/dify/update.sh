@@ -32,6 +32,8 @@ log "kept existing ${ROOT}/.env (image tags there override the compose defaults)
 case "${1:-}" in
 --restart)
   log "applying (--restart): recreating containers…"
+  # shellcheck disable=SC2046
+  docker_pool_prepull $(compose_images) || true
   compose up -d --remove-orphans
   ok "recreated — see: aibox ${MODULE_NAME} status"
   ;;

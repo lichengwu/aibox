@@ -12,6 +12,14 @@
 curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main/install.sh | bash
 ```
 
+On networks where raw.githubusercontent.com is blocked (CN common), prefix a
+mirror — the bootstrap itself races direct + mirrors for everything it
+downloads (see [Download source pools](#download-source-pools-mirror-acceleration)):
+
+```bash
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/lichengwu/aibox/main/install.sh | bash
+```
+
 This installs the `aibox` main CLI to `~/.local/bin/aibox` (PATH is handled automatically). Then install your first module:
 
 ```bash
@@ -166,6 +174,42 @@ If `set` finds failures it asks whether to revert — you don't have to remember
 ### What is NOT overridden
 
 The proxy is **process-level env vars**, affecting only tools that honor `*_proxy` (curl / git / wget / npm / pip / apt). **Docker daemon pulls go through `/etc/docker/daemon.json` and are unaffected**; already-running daemons can't be changed either — restart them.
+
+## Download source pools (mirror acceleration)
+
+Every download aibox performs goes through a **source pool**: mainstream
+accelerated mirrors race the direct route with a REAL download, the fastest
+measured source serves, and a stalled/failed source fails over to the next —
+every reachable source is tried before giving up. On healthy networks the
+direct route wins the race and nothing changes.
+
+| family | where | shipped pool (live-verified, content-checked) |
+| --- | --- | --- |
+| npm (pi-web) | module install/update | npmjs + npmmirror + Tencent + Huawei Cloud mirrors |
+| GitHub raw/api (scripts, registry, bootstrap, self-update, upgrades) | every manager download | direct + gh-proxy.com + ghproxy.net (+ a raw→api rewrite fallback) |
+| GitHub releases ~20MB (clash mihomo) | clash install | same mirrors — rate-probed on the real asset, resumable, per-source failover |
+| docker.io images (dify / gitlab / base; openmaic via its CLI) | module start / `up` (pre-pull + `docker tag`) | direct (daemon-routed probe) + docker.1ms.run + daocloud + dockerproxy + rat.dev |
+| node dist (nvm `node:22` dep) | dependency auto-install | nodejs.org + npmmirror + Aliyun (exports NVM_NODEJS_ORG_MIRROR) |
+| ghcr (windmill) | windmill's own CLI | ghcr.nju.edu.cn + ghcr.dockerproxy.net (auto-probed, persisted to .env) |
+
+Mirrors that served divergent content were measured and EXCLUDED (ghproxy.link,
+ghproxy.cn — truncated/wrong-size; tencent node-dist — stale index). Per-family
+knobs (see [docs/module-spec.md](docs/module-spec.md) §Download source pools for
+the full contract):
+
+```text
+AIBOX_GH_POOL=<urls|direct>                    GitHub family mirror list ("direct" = no pool)
+AIBOX_GH_MIRROR / CLASH_MIRROR                 your mirror — joins the race as a candidate
+AIBOX_NPM_REGISTRY / AIBOX_NPM_REGISTRIES / AIBOX_NPM_TIMEOUT      npm family
+AIBOX_DOCKER_POOL / AIBOX_DOCKER_MIRROR / AIBOX_DOCKER_FORCE_POOL  docker.io family
+AIBOX_NODE_POOL / AIBOX_NODE_MIRROR             node-dist family
+CLASH_PROBE_TIME / CLASH_TAG_TIMEOUT / CLASH_DOWNLOAD_ATTEMPTS     clash binary download
+```
+
+Note the docker.io pool composes with the proxy note above: the proxy env vars
+still do not affect the daemon — the pool instead pre-pulls mirror-prefixed
+refs and `docker tag`s them to the official names, so `compose up` finds the
+images locally.
 
 ## Modules
 

@@ -30,6 +30,35 @@
 
 ## Upgrade Procedure
 
-1. Check upstream latest version: mihomo GitHub releases latest (`latest_mihomo_tag` calls the GitHub API)
+1. Check upstream latest version: mihomo GitHub releases latest (`latest_mihomo_tag` — raced through the download source pool)
 2. `aibox update clash` (upgrades the mihomo binary + refreshes the subscription)
 3. Verify: `aibox clash status` + `aibox clash test`
+
+## Download source pool (design)
+
+Same pattern as bin/aibox's `gh_pool_fetch` and pi-web's npm registry pick —
+module-local (modules are self-contained). Three pieces in lib.sh:
+
+- `clash_gh_get` — small-file first-success race (version JSONs): every
+  candidate (CLASH_MIRROR/AIBOX_GH_MIRROR, DIRECT, gh-proxy.com, ghproxy.net)
+  fetches concurrently; the first complete response serves.
+- `clash_rank_candidates` — rate ranking for the ~20MB release asset: bounded
+  (~5s, `CLASH_PROBE_TIME`) partial downloads of the ACTUAL asset per candidate,
+  concurrent; ranked by measured bytes/sec. The winner's partial is KEPT
+  (moved out of the probe tmpdir) and seeds the resumable download — it is a
+  real byte-prefix of the asset, and on fast routes the probe completes the
+  whole file (the download loop then skips straight to gunzip). Called
+  DIRECTLY with an outfile arg, never inside `$( )` — command-substitution
+  subshells would lose the CLASH_PROBE_PARTIAL global (the gh-pool lesson).
+- `download_mihomo` — resumable failover: the versioned tmp partial carries
+  across attempts AND across sources (mirrors proxy identical bytes); the
+  probe partial only replaces it when LARGER (a previous attempt's progress
+  must not be clobbered by a smaller probe partial). Per-source attempt
+  windows (`CLASH_DOWNLOAD_ATTEMPTS`, default 2) then fail over down the
+  ranking.
+
+Semantics change (1.2.0): `CLASH_MIRROR` previously HARD-PINNED the download
+base; it now joins the pool as a high-priority candidate that is raced and
+probed — the fastest route serves. Live-measured on a CN mac: the full chain
+(resolve → probe → download v1.19.31 ~20MB) survived a mid-transfer 120s
+timeout by resuming on attempt 2 through gh-proxy.com.

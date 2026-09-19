@@ -1,5 +1,5 @@
 name: gitlab
-version: 1.1.0
+version: 1.2.0
 description: "GitLab CE self-hosted (omnibus docker): web UI + git over SSH, embedded PG/Redis"
 platform: ""
 dir: tools/gitlab
@@ -52,8 +52,12 @@ upgrade:
 
 # GitLab omnibus bundles its own PostgreSQL/Redis inside the container, so this
 # module does NOT consume the shared aibox base (documented in README/DEVELOPMENT).
+# NOTE: no `docker_pull:` gate — the svc-start hook probes the daemon's direct
+# route itself and, when it is dead, pre-pulls through the ranked docker.io
+# mirror pool (see lib.sh docker_pool_prepull). A static direct-egress gate
+# would false-fail exactly the mirror-saved networks. The deps check still
+# hard-gates the docker DAEMON's existence.
 checks:
   disk_gb: 15
-  docker_pull: hello-world
   docker_images:
     - gitlab/gitlab-ce:19.2.6-ce.0

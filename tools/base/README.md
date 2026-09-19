@@ -17,7 +17,7 @@ aibox base create postgres <module> [usage]   create the <module>[_<usage>] data
 
 ## How it works
 
-```
+```text
 aibox base start
   ├─ docker compose up -d   →  aibox-base-postgres (PG 18) + aibox-base-redis (Redis 7)
   │                            network: aibox-base   (consuming modules join it by service name)
@@ -70,6 +70,23 @@ networks:
 ```
 
 See `docs/module-spec.md` (the `services` / shared-component contract) and the [`windmill`](../windmill/) / [`openmaic`](../openmaic/) modules for working examples.
+
+## Docker image source pool
+
+The compose images are pulled through the docker.io **source pool** (main
+README → "Download source pools"): at start a bounded direct daemon-route
+probe runs — healthy networks pull directly with zero overhead; when the
+direct route is dead, mirrors (docker.1ms.run, docker.m.daocloud.io,
+dockerproxy.net, hub.rat.dev — live-verified) are ranked by concurrent probe
+pulls and the images are pre-pulled via `docker pull <mirror>/<image>` +
+`docker tag` (mirrors proxy identical digests), so `compose up` finds them
+cached.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `AIBOX_DOCKER_POOL` | shipped pool | mirror list override (`direct` = no pool) |
+| `AIBOX_DOCKER_MIRROR` | (unset) | your mirror — joins the race first |
+| `AIBOX_DOCKER_FORCE_POOL` | `0` | `1` = skip the direct probe, always engage |
 
 ## Mainland-China network deployment (measured recipes)
 

@@ -7,8 +7,8 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log "Installing @agegr/pi-web as a launchd service ..."
 resolve_node
-log "npm i -g @agegr/pi-web@latest ..."
-npm install -g @agegr/pi-web@latest --silent
+npm_registry_pick
+npm_install_global
 cleanup_old
 resolve_password
 write_service

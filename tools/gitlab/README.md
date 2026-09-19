@@ -63,6 +63,23 @@ Same-major minor bumps are safe to auto-latest.
   credentials` shows it while it exists.
 - After expiry, reset: `docker exec -it aibox-gitlab gitlab-rake gitlab:password:reset USERNAME=root`
 
+## Docker image source pool
+
+The compose images are pulled through the docker.io **source pool** (main
+README → "Download source pools"): at start a bounded direct daemon-route
+probe runs — healthy networks pull directly with zero overhead; when the
+direct route is dead, mirrors (docker.1ms.run, docker.m.daocloud.io,
+dockerproxy.net, hub.rat.dev — live-verified) are ranked by concurrent probe
+pulls and the images are pre-pulled via `docker pull <mirror>/<image>` +
+`docker tag` (mirrors proxy identical digests), so `compose up` finds them
+cached.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `AIBOX_DOCKER_POOL` | shipped pool | mirror list override (`direct` = no pool) |
+| `AIBOX_DOCKER_MIRROR` | (unset) | your mirror — joins the race first |
+| `AIBOX_DOCKER_FORCE_POOL` | `0` | `1` = skip the direct probe, always engage |
+
 ## Preflight
 
 Declared in `module.yaml` `checks:` (disk 15G + daemon pull probe + cached-image

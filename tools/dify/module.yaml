@@ -83,9 +83,13 @@ upgrade:
 # pull probe is skipped and offline restarts pass. No host-curl consumers
 # (dify pulls nothing from github via curl), so no `domains:`. Disk floor
 # matches measured image weight (~5-6G) + runtime headroom.
+# NOTE: no `docker_pull:` gate — the svc-start hook probes the daemon's direct
+# route itself and, when it is dead, pre-pulls through the ranked docker.io
+# mirror pool (see lib.sh docker_pool_prepull). A static direct-egress gate
+# would false-fail exactly the mirror-saved networks. The deps check still
+# hard-gates the docker DAEMON's existence.
 checks:
   disk_gb: 10
-  docker_pull: hello-world
   docker_images:
     - langgenius/dify-api:1.17.1
     - langgenius/dify-web:1.17.1
