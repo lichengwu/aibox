@@ -7,6 +7,34 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.8.1] — 2026-09-19
+
+### Fixed
+
+- **stale-clash egress (the reported dashboard bug's root cause)**: `clash_active`
+  trusted the state file (enabled=1) without probing the port — when the kernel
+  died or its port changed, the CLI exported a DEAD socks5 proxy and every curl
+  in the process failed instantly with connection-refused (breaking not just
+  `dashboard` but all egress). The mixed port is now probed; a stale state
+  warns ("clash state says enabled but :7890 is not listening — using direct")
+  and falls back to direct. Measured: `check self` went from "core domains
+  unreachable" to ✓ via direct.
+
+### Changed
+
+- **dashboard: local-first redesign (scales to hundreds of modules)** — the
+  default view needs ZERO network (the reported error came from load_registry):
+  per-PROFILE sections (active marked), one block per installed module
+  (dashboard_info keys + ports from the local registry cache with live listen
+  marks), and a residue section for not-installed leftovers — only
+  installed/residue modules show. `--available` stays the catalog but degrades
+  to installed-only instead of dying offline; `dashboard <module>` is
+  local-first for installed modules. Latest upstream versions refresh
+  ASYNC (probes launch before the render, each as a separate process —
+  gh_pool_fetch misbehaves in nested background subshells — harvested after
+  a bounded 10s wait; up-to-date modules are suppressed so offline adds zero
+  noise). PURGE_MODULES_KNOWN now includes new-api + xiaozhi.
+
 ## [0.8.0] — 2026-09-19
 
 ### Added
