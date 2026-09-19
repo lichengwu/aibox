@@ -1,5 +1,5 @@
 name: xiaozhi
-version: 1.0.1
+version: 1.1.0
 description: "Xiaozhi ESP32 server (docker compose): backend for xiaozhi-esp32 AI voice devices (manager console + websocket relay + bundled MySQL)"
 platform: ""
 dir: tools/xiaozhi
@@ -45,6 +45,7 @@ actions:
   - stop
   - restart
   - status
+  - dashboard
   - logs
   - credentials
   - secret

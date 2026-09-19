@@ -283,9 +283,12 @@ state_load() {
   . "$(state_file)" 2>/dev/null || true
   CLASH_PORT="${CLASH_PORT:-7890}"
   CLASH_API_PORT="${CLASH_API_PORT:-9090}"
+  CLASH_MODE="${CLASH_MODE:-internal}"
 }
 
-# state_write <sub_url> <secret> <enabled> <port> <api_port> <last_refresh> <tag>
+# state_write <sub_url> <secret> <enabled> <port> <api_port> <last_refresh> <tag> [mode] [ext_port]
+# mode: internal (aibox runs its own mihomo) | external (reuse a local clash
+# client — Clash Verge etc. — on ext_port; no kernel of our own).
 state_write() {
   mkdir -p "$(clash_deploy_root)"
   local old_umask
@@ -300,9 +303,55 @@ CLASH_PORT="${4:-7890}"
 CLASH_API_PORT="${5:-9090}"
 LAST_REFRESH="${6:-0}"
 KERNEL_TAG="${7:-}"
+CLASH_MODE="${8:-internal}"
+CLASH_EXT_PORT="${9:-}"
 EOF
   umask "$old_umask"
   chmod 600 "$(state_file)"
+}
+
+# Rewrite ONLY the mode fields (keeps the 9-positional-arg call sites stable).
+_state_set_mode() { # $1=mode $2=ext_port
+  state_load
+  state_write "${SUB_URL:-}" "${CLASH_SECRET:-}" "${CLASH_ENABLED:-0}" \
+    "${CLASH_PORT}" "${CLASH_API_PORT}" "${LAST_REFRESH:-0}" "${KERNEL_TAG:-}" "${1:-internal}" "${2:-}"
+}
+
+# ---------- external clash detection (Clash Verge / ClashX / other kernels) ----------
+# Other clash clients run their own mihomo on their own ports (Verge mixed default:
+# 7897). aibox must KNOW: dual kernels double the subscription traffic and the
+# egress gets ambiguous (measured live: state said enabled/7890 while Verge ran
+# on 7897 and aibox's own kernel was dead — the stale-clash egress bug).
+# Prints "<pid>\t<desc>" lines for NON-aibox clash processes; empty when none.
+detect_external_clash() {
+  local own_pid="" line pid desc
+  [ -f "$(pid_file)" ] && own_pid="$(cat "$(pid_file)" 2>/dev/null || true)"
+  while IFS= read -r line; do
+    [ -n "${line}" ] || continue
+    pid="${line%% *}"
+    desc="${line#* }"
+    [ "${pid}" = "${own_pid}" ] && continue          # our own kernel
+    case "${desc}" in
+    *".aibox"* | *"${AIBOX_BIN_DIR:-/nonexistent}"*) continue ;;  # our binary path
+    esac
+    printf '%s\t%s\n' "${pid}" "${desc}"
+  done <<EXTCLASH
+$(pgrep -fl 'mihomo|clash-meta|clash-verge' 2>/dev/null || true)
+EXTCLASH
+}
+
+# Probe an external mixed port (TCP connect; Verge answers SOCKS/HTTP there).
+ext_port_alive() { # $1=port
+  (exec 3<>"/dev/tcp/127.0.0.1/${1}") 2>/dev/null
+}
+
+# Guess the external app from the process description.
+ext_app_name() { # $1=desc
+  case "${1}" in
+  *"Clash Verge"* | *clash-verge*) printf 'Clash Verge' ;;
+  *"ClashX"*) printf 'ClashX' ;;
+  *) printf 'clash kernel' ;;
+  esac
 }
 
 gen_secret() {
@@ -422,6 +471,112 @@ api_put() { # $1=path $2=body
 reload_config() {
   api_put '/configs?force=true' "{\"path\":\"$(config_file)\"}" &&
     log "Reloaded config" || warn "Reload failed (mihomo not running?)"
+}
+
+# ---------- dashboard (the module's rich view: state + nodes + latency) ----------
+# Nodes come from mihomo's own proxy-provider view (the kernel parses the
+# subscription, tests every node, and keeps the latency history — aibox only
+# RENDERS it). Parsed without jq (project rule): split the provider JSON on
+# `"name":` boundaries; per object keep the LAST "delay" (latest test) and
+# "alive".
+_nodes_lines() { # → "delay|alive|name" lines, sorted by delay (dead last)
+  local json
+  json="$(api_get /providers/proxies/pool 2>/dev/null || true)"
+  [ -n "${json}" ] || return 0
+  printf '%s' "${json}" | awk '
+    {
+      gsub(/"name":/, "\n")
+      n = split($0, objs, "\n")
+      # i starts at 3: chunk 2 is the PROVIDER header name ("pool") — its line
+      # also embeds the first node fields, so alive/delay would mis-attribute.
+      for (i = 3; i <= n; i++) {
+        line = objs[i]
+        # the chunk starts with the name OPENING quote: "name",... — extract
+        # between the first and the following quote (a leading-quote sub would
+        # cut the whole line — measured).
+        name = ""
+        if (match(line, /^"[^"]*"/)) name = substr(line, 2, RLENGTH - 2)
+        if (name == "") continue
+        # exclude mihomo builtin groups (they also appear in some provider views)
+        if (name == "AUTO" || name == "DIRECT" || name == "REJECT" || name == "GLOBAL") continue
+        alive = (line ~ /"alive":true/) ? 1 : 0
+        delay = ""
+        rest = line
+        while (match(rest, /"delay":[0-9]+/)) {
+          delay = substr(rest, RSTART + 9, RLENGTH - 9)
+          rest = substr(rest, RSTART + RLENGTH)
+        }
+        printf "%s|%d|%s\n", (delay == "" ? "999999" : delay), alive, name
+      }
+    }' | sort -t'|' -k1,1n
+}
+
+# Render the module dashboard (invoked by `aibox clash dashboard`).
+render_dashboard() {
+  state_load
+  local mode="${CLASH_MODE:-internal}" egress_port="${CLASH_PORT:-7890}"
+  [ "${mode}" = "external" ] && egress_port="${CLASH_EXT_PORT:-${CLASH_PORT}}"
+  printf '%s%s clash%s %s· %s mode%s\n' "${C_BOLD:-}" "" "${C_RST:-}" "${C_DIM:-}" "${mode}" "${C_RST:-}"
+
+  # --- state rows ---
+  if [ "${mode}" = "external" ]; then
+    local ext="$(detect_external_clash | head -1)" app="clash kernel"
+    [ -n "${ext}" ] && app="$(ext_app_name "${ext#*\t}")"
+    printf '  %s%-9s %s (external clash client — node control via its own app)\n' "${C_DIM:-}" "kernel:" "${app} on 127.0.0.1:${egress_port}"
+  elif kernel_running; then
+    printf '  %s%-9s mihomo v%s · pid %s\n' "${C_DIM:-}" "kernel:" "${KERNEL_TAG:-unknown}" "$(cat "$(pid_file)" 2>/dev/null)"
+  else
+    printf '  %s%-9s %snot running (aibox clash on)%s\n' "${C_DIM:-}" "kernel:" "${C_YEL:-}" "${C_RST:-}"
+  fi
+  printf '  %s%-9s 127.0.0.1:%s\n' "${C_DIM:-}" "egress:" "${egress_port}"
+  [ "${mode}" = "internal" ] && printf '  %s%-9s 127.0.0.1:%s (secret %s)\n' "${C_DIM:-}" "api:" "${CLASH_API_PORT}" "$( [ -n "${CLASH_SECRET}" ] && printf 'set' || printf 'unset')"
+  if [ -n "${SUB_URL:-}" ]; then
+    local host="${SUB_URL#*://}"; host="${host%%/*}"
+    printf '  %s%-9s %s · refreshed %s\n' "${C_DIM:-}" "sub:" "${host}" "$( [ -n "${LAST_REFRESH:-}" ] && [ "${LAST_REFRESH}" != "0" ] && date -r "${LAST_REFRESH}" '+%Y-%m-%d %H:%M' 2>/dev/null || echo 'never')"
+  else
+    printf '  %s%-9s %snone (aibox clash set <subscription-url>)%s\n' "${C_DIM:-}" "sub:" "${C_YEL:-}" "${C_RST:-}"
+  fi
+
+  # --- nodes (internal mode only — external mode has no API access) ---
+  if [ "${mode}" = "internal" ] && kernel_running; then
+    local cur="" auto
+    auto="$(api_get /proxies/AUTO 2>/dev/null || true)"
+    [ -n "${auto}" ] && cur="$(printf '%s' "${auto}" | grep -oE '"now":[[:space:]]*"[^"]*"' | sed 's/.*: *"//; s/"$//')"
+    echo
+    local total="0" shown="0" line delay alive name mark
+    while IFS='|' read -r delay alive name; do
+      [ -n "${name}" ] || continue
+      total=$((total + 1))
+    done <<NODES
+$(_nodes_lines)
+NODES
+    if [ "${total}" -gt 0 ]; then
+      printf '  %s#  %-24s %-8s%s\n' "${C_DIM:-}" "node" "latency" "${C_RST:-}"
+      while IFS='|' read -r delay alive name; do
+        [ -n "${name}" ] || continue
+        [ "${shown}" -ge 15 ] && continue
+        shown=$((shown + 1))
+        if [ "${name}" = "${cur}" ]; then mark="${C_GRN:-}✓${C_RST:-}"; else mark=""; fi
+        # Full names, NO byte-truncation: printf %.Ns / ${name:0:N} count BYTES
+        # in a C locale and cut multibyte CJK mid-character (mojibake — pitfall
+        # #6). The column goes ragged for wide names; correctness wins.
+        if [ "${alive}" = "1" ] && [ "${delay}" != "999999" ]; then
+          printf '  %-3s %-24s %-8s %s\n' "${shown}" "${name}" "${delay}ms" "${mark}"
+        else
+          printf '  %-3s %-24s %-8s %s\n' "${shown}" "${name}" "${C_DIM:-}—${C_RST:-}" "${mark}"
+        fi
+      done <<NODES2
+$(_nodes_lines)
+NODES2
+      [ "${total}" -gt "${shown}" ] && printf '  %s… %d more (full list: aibox clash select)\n' "${C_DIM:-}" "$((total - shown))"
+      printf '\n  %scurrent %s · switch: aibox clash select <name>%s\n' "${C_DIM:-}" "${cur:-none}" "${C_RST:-}"
+    else
+      printf '\n  %sno nodes loaded yet (first refresh: aibox clash refresh)\n' "${C_DIM:-}"
+    fi
+  elif [ "${mode}" = "external" ]; then
+    echo
+    printf '  %snode list unavailable in external mode (managed by the clash app itself)\n' "${C_DIM:-}"
+  fi
 }
 
 # Have mihomo immediately fetch the subscription (skip cache).

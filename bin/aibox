@@ -666,10 +666,11 @@ ask_confirm() {
   case "$ans" in y | Y | yes | YES) return 0 ;; *) return 1 ;; esac
 }
 
-# Detect whether the local clash pool (mihomo) is enabled. Reads apps/clash/state's
-# CLASH_ENABLED; does not probe the port (avoids slowing every aibox command); if
-# mihomo is down curl will fail — `clash status` shows that. state is maintained by
-# `aibox clash on/off`.
+# Detect whether the local clash pool is enabled. Reads apps/clash/state's
+# CLASH_ENABLED + CLASH_MODE: internal (aibox's own mihomo on CLASH_PORT) or
+# external (a local clash client — Clash Verge etc. — reused on CLASH_EXT_PORT).
+# The egress port follows the mode; a stale state (kernel died / port changed)
+# fails the probe and aibox falls back to direct (see _clash_stale_warn).
 CLASH_PORT="7890"
 clash_active() {
   local st="${AIBOX_HOME}/apps/clash/state"
@@ -678,6 +679,10 @@ clash_active() {
   . "$st" 2>/dev/null || return 1
   [ "${CLASH_ENABLED:-0}" = "1" ] || return 1
   CLASH_PORT="${CLASH_PORT:-7890}"
+  # mode-aware egress port: external (Verge etc.) → its own port
+  if [ "${CLASH_MODE:-internal}" = "external" ] && [ -n "${CLASH_EXT_PORT:-}" ]; then
+    CLASH_PORT="${CLASH_EXT_PORT}"
+  fi
   # The state file can go stale: the kernel died, the app changed its port, or
   # another clash took over (measured live: mihomo process up but NOT listening
   # on 7890 — the CLI exported the dead proxy and EVERY curl failed instantly
@@ -2325,11 +2330,18 @@ _installed_pairs() {
 # lives in the REGISTRY), so read the field from (1) the per-module cache
 # when a module.yaml happens to ship there, else (2) the LOCAL registry cache
 # file — a subshell source, zero network, graceful when absent/stale.
-_module_meta_local() { # $1=module $2=field
+_module_meta_local() { # $1=module $2=field (scalar OR flat list like actions)
   local m="$1" field="$2" mu v
   mu="${1//-/_}"
   if [ -f "$AIBOX_MOD_DIR/$m/module.yaml" ]; then
     v="$(sed -n "s/^${field}: *\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$AIBOX_MOD_DIR/$m/module.yaml" | head -1)"
+    [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
+    # flat list (field: followed by "  - item" lines): join space-separated
+    v="$(awk -v f="${field}" '
+      $0 == f ":" { inl=1; next }
+      inl && /^[ ]+- / { sub(/^[ ]+- /, ""); printf "%s%s", sep, $0; sep=" "; next }
+      inl { inl=0 }
+    ' "$AIBOX_MOD_DIR/$m/module.yaml" 2>/dev/null)"
     [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
   fi
   v=""$( ( . "$AIBOX_REGISTRY_CACHE" 2>/dev/null; eval "printf '%s' \"\${AIBOX_MODULE_${mu}_${field}:-}\"" ) 2>/dev/null )""
@@ -2667,10 +2679,20 @@ cmd_module_action() {
     cmd_dev_guide "$name"
     return
   fi
-  # dashboard special case: the main CLI reads module dashboard_info + health, doesn't pass to svc.sh.
-  if [ "$action" = "dashboard" ]; then
-    cmd_dashboard_detail "$name"
-    return
+  # dashboard: module-OWNED rich view wins when the module declares a dashboard
+  # action (its svc.sh renders domain data — clash shows nodes+latency, base shows
+  # databases...); otherwise the manager's generic view (dashboard_info + health).
+  if [ "${action}" = "dashboard" ]; then
+    local _acts=""
+    _acts="$(_module_meta_local "${name}" actions)"
+    [ -z "${_acts}" ] && _acts="$(module_field "${name}" actions 2>/dev/null || true)"
+    case " ${_acts} " in
+    *" dashboard "*) ;; # module-owned: fall through to the svc.sh dispatch
+    *)
+      cmd_dashboard_detail "${name}"
+      return
+      ;;
+    esac
   fi
   is_installed "$name" || die "$name not installed (first: aibox install ${name})"
   local svc="$AIBOX_MOD_DIR/$name/svc.sh"

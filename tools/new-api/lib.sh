@@ -2,6 +2,7 @@
 # Conventions: docs/module-spec.md — deploy root = $AIBOX_HOME/apps/new-api.
 
 MODULE_NAME="new-api"
+MODULE_VERSION="1.1.0"
 COMPOSE_PROJECT="new-api"
 CONTAINER="aibox-new-api"
 DEFAULT_PORT="30300"
@@ -274,4 +275,35 @@ dashboard_info() {
   else
     echo "health=stopped"
   fi
+}
+
+# ---------- dashboard (the module's rich view) ----------
+render_dashboard() {
+  load_env
+  local port ver img="docker"
+  port="$(effective_port)"
+  ver="${NEW_API_IMAGE:-${DEFAULT_IMAGE}}"
+  printf '%s%snew-api%s %s· module %s%s\n' "${C_BOLD:-}" "" "${C_RST:-}" "${C_DIM:-}" "${MODULE_VERSION:-}" "${C_RST:-}"
+  # container
+  local st=""
+  st="$(docker ps --filter "name=${CONTAINER}" --format '{{.Image}} {{.Status}}' 2>/dev/null | head -1)"
+  if [ -n "${st}" ]; then
+    printf '  %s%-9s %s\n' "${C_DIM:-}" "container:" "${st}"
+  else
+    printf '  %s%-9s %snot running (aibox new-api start)%s\n' "${C_DIM:-}" "container:" "${C_YEL:-}" "${C_RST:-}"
+  fi
+  # app health
+  if api_up "${port}"; then
+    printf '  %s%-9s http://127.0.0.1:%s · %s✓ API up%s\n' "${C_DIM:-}" "app:" "${port}" "${C_GRN:-}" "${C_RST:-}"
+  elif [ -n "${st}" ]; then
+    printf '  %s%-9s http://127.0.0.1:%s · %sstarting%s\n' "${C_DIM:-}" "app:" "${port}" "${C_YEL:-}" "${C_RST:-}"
+  else
+    printf '  %s%-9s http://127.0.0.1:%s\n' "${C_DIM:-}" "app:" "${port}"
+  fi
+  printf '  %s%-9s %s\n' "${C_DIM:-}" "upstream:" "${ver##*:}"
+  # db
+  local tbl="0"
+  tbl="$(docker exec aibox-base-postgres psql -U aibox -d new_api -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>/dev/null || echo 0)"
+  [ "${tbl}" != "0" ] && printf '  %s%-9s shared PG new_api · %s tables\n' "${C_DIM:-}" "db:" "${tbl}"
+  printf '  %s%-9s first login: root / 123456 (change it immediately)\n' "${C_DIM:-}" "auth:"
 }

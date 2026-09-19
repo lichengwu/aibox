@@ -8,6 +8,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 action="${1:-status}"
 case "$action" in
+dashboard) render_dashboard ;;
 start)
   if [ "$OS_KIND" = "Darwin" ]; then
     [ ! -f "$PLIST" ] && die "$PLIST does not exist; run: aibox install pi-web"

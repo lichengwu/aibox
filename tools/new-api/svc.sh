@@ -24,6 +24,7 @@ _ensure_base() {
 }
 
 case "${action}" in
+dashboard) render_dashboard ;;
 start)
   _ensure_base
   # docker.io source pool: bounded direct probe (healthy → compose pulls

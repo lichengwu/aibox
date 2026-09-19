@@ -11,6 +11,7 @@ action="${1:-status}"
 load_env
 
 case "$action" in
+dashboard) render_dashboard ;;
 start)
   # docker.io source pool: bounded direct probe (healthy → compose pulls direct,
   # zero overhead); direct dead → ranked mirror pre-pull + tag (see lib.sh).

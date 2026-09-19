@@ -35,4 +35,10 @@ if [ -z "${CLI}" ]; then
   die "windmill command not found, run first: aibox install windmill"
 fi
 
+# dashboard maps to the CLI's own status (dispatch-only module — the CLI's
+# output IS the rich view; no separate render here)
+case "${action}" in
+dashboard) action="status" ;;
+esac
+
 exec "${CLI}" "${action}" "$@"

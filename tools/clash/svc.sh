@@ -27,6 +27,33 @@ restart)
 status)
   show_status
   ;;
+dashboard)
+  render_dashboard
+  ;;
+use-external)
+  # Reuse a local clash client (Verge etc.) as the aibox egress — no kernel of
+  # our own. $1 = port (default: detect from the running processes' typical
+  # ports — Verge mixed is 7897).
+  port="${1:-}" ext="" desc guessed=""
+  if [ -z "${port}" ]; then
+    ext="$(detect_external_clash | head -1)"
+    if [ -n "${ext}" ]; then
+      desc="${ext#*\t}"
+      case "${desc}" in *"Clash Verge"*|*clash-verge*) guessed="7897" ;; esac
+      port="${guessed:-7890}"
+    fi
+  fi
+  [ -n "${port}" ] || die "Usage: aibox clash use-external <port> (no external clash process detected)"
+  ext_port_alive "${port}" || die "nothing listening on 127.0.0.1:${port} — start the clash app first (or pass its mixed port)"
+  _state_set_mode external "${port}"
+  ok "aibox egress now reuses the external clash on 127.0.0.1:${port} (node control stays in that app)"
+  log "revert to aibox-managed: aibox clash on"
+  ;;
+internal)
+  # Back to aibox-managed mihomo (from external mode).
+  _state_set_mode internal ""
+  log "mode: internal (aibox-managed mihomo); start: aibox clash on"
+  ;;
 refresh)
   refresh_now
   ;;
@@ -85,6 +112,6 @@ doctor)
   [ -f "$(providers_dir)/pool.yaml" ] && log "pool.yaml cached" || warn "pool.yaml not cached"
   ;;
 *)
-  die "Usage: aibox clash {start|stop|restart|status|refresh|set <url>|select <node>|test [url]|logs|doctor}"
+  die "Usage: aibox clash {start|stop|restart|status|dashboard|refresh|set <url>|select <node>|test [url]|logs|doctor|use-external <port>|internal}"
   ;;
 esac

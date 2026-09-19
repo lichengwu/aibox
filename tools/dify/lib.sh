@@ -305,3 +305,28 @@ dashboard_info() {
     echo "health=stopped"
   fi
 }
+
+# ---------- dashboard (the module's rich view) ----------
+render_dashboard() {
+  load_env
+  local port n=""
+  port="$(effective_port)"
+  printf '%s%sdify%s %s· module %s%s\n' "${C_BOLD:-}" "" "${C_RST:-}" "${C_DIM:-}" "${MODULE_VERSION:-1.17.2}" "${C_RST:-}"
+  n="$(docker ps --filter "name=dify-" --format '{{.Names}}' 2>/dev/null | grep -c . || true)"
+  if [ "${n}" -gt 0 ]; then
+    printf '  %s%-9s %s containers · %s\n' "${C_DIM:-}" "stack:" "${n}" "$(docker ps --filter 'name=dify-' --filter 'status=running' --format '{{.Names}}' 2>/dev/null | head -3 | tr '\n' ' ' | sed 's/ $//')…"
+  else
+    printf '  %s%-9s %snot running (aibox dify start)%s\n' "${C_DIM:-}" "stack:" "${C_YEL:-}" "${C_RST:-}"
+  fi
+  if http_up "${port}"; then
+    printf '  %s%-9s http://127.0.0.1:%s · %s✓ HTTP up%s\n' "${C_DIM:-}" "console:" "${port}" "${C_GRN:-}" "${C_RST:-}"
+  elif [ "${n}" -gt 0 ]; then
+    printf '  %s%-9s http://127.0.0.1:%s · %sstarting (1-2 min)%s\n' "${C_DIM:-}" "console:" "${port}" "${C_YEL:-}" "${C_RST:-}"
+  fi
+  if shared_base_enabled; then
+    printf '  %s%-9s shared base (PG + redis via base.env)\n' "${C_DIM:-}" "db:"
+  else
+    printf '  %s%-9s bundled postgres/redis\n' "${C_DIM:-}" "db:"
+  fi
+  printf '  %s%-9s first-visit INIT_PASSWORD (see: aibox dify credentials)\n' "${C_DIM:-}" "auth:"
+}

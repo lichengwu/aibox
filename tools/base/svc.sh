@@ -16,6 +16,7 @@ restart)
   cmd_start
   ;;
 status) cmd_status ;;
+dashboard) render_dashboard ;;
 logs)
   ensure_compose
   compose logs -f

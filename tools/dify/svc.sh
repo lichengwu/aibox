@@ -11,6 +11,7 @@ action="${1:-status}"
 load_env
 
 case "${action}" in
+dashboard) render_dashboard ;;
 start)
   if shared_base_enabled && [ ! -f "${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/base.env" ]; then
     die "DIFY_SHARED_BASE=1 but base.env is missing — run: aibox base start"

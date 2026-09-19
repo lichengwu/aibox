@@ -449,3 +449,38 @@ dashboard_info() {
     echo "health=stopped"
   fi
 }
+
+# ---------- dashboard (the module's rich view) ----------
+render_dashboard() {
+  load_env
+  local cport wport
+  cport="$(effective_console_port)"
+  wport="$(effective_ws_port)"
+  printf '%s%sxiaozhi%s %s· module %s%s\n' "${C_BOLD:-}" "" "${C_RST:-}" "${C_DIM:-}" "${MODULE_VERSION:-1.0.1}" "${C_RST:-}"
+  # server container
+  local st=""
+  st="$(docker ps --filter "name=${SERVER_CONTAINER}" --format '{{.Image}} {{.Status}}' 2>/dev/null | head -1)"
+  if [ -n "${st}" ]; then
+    printf '  %s%-9s %s\n' "${C_DIM:-}" "server:" "${st}"
+  else
+    printf '  %s%-9s %snot running (aibox xiaozhi start)%s\n' "${C_DIM:-}" "server:" "${C_YEL:-}" "${C_RST:-}"
+  fi
+  # web + mysql
+  local web_st mysql_st
+  web_st="$(docker ps --filter "name=${WEB_CONTAINER}" --format '{{.Status}}' 2>/dev/null | head -1)"
+  [ -n "${web_st}" ] && printf '  %s%-9s %s · %s\n' "${C_DIM:-}" "console:" "http://127.0.0.1:${cport}" "${web_st}"
+  mysql_st="$(docker ps --filter "name=${MYSQL_CONTAINER}" --format '{{.Status}}' 2>/dev/null | head -1)"
+  [ -n "${mysql_st}" ] && printf '  %s%-9s %s · %s\n' "${C_DIM:-}" "mysql:" "${MYSQL_CONTAINER}" "${mysql_st}"
+  # ws + device URL
+  if ws_listening "${wport}"; then
+    printf '  %s%-9s :%s · %s✓ listening%s · devices: ws://%s:%s/xiaozhi/v1/\n' "${C_DIM:-}" "ws:" "${wport}" "${C_GRN:-}" "${C_RST:-}" "$(_lan_ip)" "${wport}"
+  fi
+  # secret state
+  local secret_set
+  secret_set="$(grep -A3 '^manager-api:' "$(config_file)" 2>/dev/null | sed -n 's/.*secret:[[:space:]]*//p' | tr -d '"')"
+  if [ -n "${secret_set}" ] && [ "${secret_set}" != '""' ]; then
+    printf '  %s%-9s %s✓ configured%s\n' "${C_DIM:-}" "secret:" "${C_GRN:-}" "${C_RST:-}"
+  else
+    printf '  %s%-9s %snot set (start auto-applies; manual: aibox xiaozhi secret <value>)%s\n' "${C_DIM:-}" "secret:" "${C_YEL:-}" "${C_RST:-}"
+  fi
+}

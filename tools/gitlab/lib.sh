@@ -273,3 +273,27 @@ dashboard_info() {
     echo "health=stopped"
   fi
 }
+
+# ---------- dashboard (the module's rich view) ----------
+render_dashboard() {
+  load_env
+  local port
+  port="${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
+  printf '%s%sgitlab%s %s· module %s%s\n' "${C_BOLD:-}" "" "${C_RST:-}" "${C_DIM:-}" "${MODULE_VERSION:-1.2.1}" "${C_RST:-}"
+  local st=""
+  st="$(docker ps --filter "name=${CONTAINER_NAME}" --format '{{.Image}} {{.Status}}' 2>/dev/null | head -1)"
+  if [ -n "${st}" ]; then
+    printf '  %s%-9s %s\n' "${C_DIM:-}" "container:" "${st}"
+    local code
+    code="$(curl -s -o /dev/null --max-time 5 -w '%{http_code}' "http://127.0.0.1:${port}/" 2>/dev/null || echo 000)"
+    [ -z "${code}" ] && code="000"
+    case "${code}" in
+    2?? | 3?? | 401) printf '  %s%-9s http://127.0.0.1:%s · %s✓ HTTP %s%s\n' "${C_DIM:-}" "web:" "${port}" "${C_GRN:-}" "${code}" "${C_RST:-}" ;;
+    *) printf '  %s%-9s http://127.0.0.1:%s · %sHTTP %s%s\n' "${C_DIM:-}" "web:" "${port}" "${C_YEL:-}" "${code}" "${C_RST:-}" ;;
+    esac
+    printf '  %s%-9s :%s (git over SSH)\n' "${C_DIM:-}" "ssh:" "${GITLAB_SSH_PORT:-8922}"
+  else
+    printf '  %s%-9s %snot running (aibox gitlab start)%s\n' "${C_DIM:-}" "container:" "${C_YEL:-}" "${C_RST:-}"
+  fi
+  printf '  %s%-9s root / initial password (see: aibox gitlab credentials)\n' "${C_DIM:-}" "auth:"
+}

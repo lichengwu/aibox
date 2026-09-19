@@ -555,3 +555,35 @@ dashboard_info() {
   echo "log=${LOG_DIR}/pi-web.log"
   echo "health=curl -s -o /dev/null -w '%{http_code}' -u pi:${PASSWORD} http://127.0.0.1:${PORT}/"
 }
+
+# ---------- dashboard (the module's rich view) ----------
+render_dashboard() {
+  resolve_password
+  printf '%s%spi-web%s %s· module %s%s\n' "${C_BOLD:-}" "" "${C_RST:-}" "${C_DIM:-}" "${MODULE_VERSION:-1.2.1}" "${C_RST:-}"
+  # service state (platform-native)
+  local svc_state=""
+  case "$(uname -s)" in
+  Darwin)
+    if launchctl list "${SERVICE_ID}" >/dev/null 2>&1; then
+      svc_state="$(launchctl list "${SERVICE_ID}" 2>/dev/null | awk '{print "pid " $1}')"
+    else
+      svc_state="not loaded (aibox pi-web start)"
+    fi
+    ;;
+  *)
+    systemctl --user is-active "${SERVICE_ID}" >/dev/null 2>&1 && svc_state="active" || svc_state="inactive (aibox pi-web start)"
+    ;;
+  esac
+  printf '  %s%-9s %s\n' "${C_DIM:-}" "service:" "${svc_state}"
+  # health probe
+  local code
+  code="$(curl -s -o /dev/null --max-time 5 -w '%{http_code}' -u "pi:${PASSWORD}" "http://127.0.0.1:${PORT}/" 2>/dev/null || echo 000)"
+  [ -z "${code}" ] && code="000"
+  if [ "${code}" = "200" ]; then
+    printf '  %s%-9s http://127.0.0.1:%s · %s✓ HTTP %s (basic auth pi)%s\n' "${C_DIM:-}" "app:" "${PORT}" "${C_GRN:-}" "${code}" "${C_RST:-}"
+  else
+    printf '  %s%-9s http://127.0.0.1:%s · HTTP %s\n' "${C_DIM:-}" "app:" "${PORT}" "${code}"
+  fi
+  printf '  %s%-9s %s\n' "${C_DIM:-}" "log:" "${LOG_DIR}/pi-web.log"
+  printf '  %s%-9s %s\n' "${C_DIM:-}" "module:" "${AIBOX_HOME:-$HOME/.aibox}/modules/pi-web/"
+}

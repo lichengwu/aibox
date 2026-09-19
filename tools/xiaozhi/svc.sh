@@ -116,6 +116,7 @@ _staged_up() {
 }
 
 case "${action}" in
+dashboard) render_dashboard ;;
 start)
   _ensure_base
   # Source pools: ghcr (server/web) + docker.io (mysql) — bounded direct

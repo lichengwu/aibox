@@ -1,5 +1,5 @@
 name: clash
-version: 1.2.0
+version: 1.3.0
 description: "Clash subscription proxy pool — mihomo kernel orchestration (auto speed-test/switch/failover)"
 platform: ""
 dir: tools/clash
@@ -29,12 +29,15 @@ actions:
   - stop
   - restart
   - status
+  - dashboard
   - refresh
   - set
   - select
   - test
   - logs
   - doctor
+  - use-external
+  - internal
 
 upstream:
   homepage: https://github.com/MetaCubeX/mihomo
