@@ -398,7 +398,11 @@ validate_module() {
     printf '%s' "$urepo" | grep -qE '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || err "upgrade.repo must be <owner>/<repo>: $urepo"
     [ -n "$uimgs" ] || err "upgrade: present but the images list is empty"
     for tok in $uimgs; do
-      printf '%s' "$tok" | grep -qE '^[A-Z][A-Z0-9_]*=[A-Za-z0-9._/-]+:$' || err "upgrade.images entry malformed (want ENV_KEY=image:prefix:): $tok"
+      # ENV_KEY=image[:tag_prefix] — the engine APPENDS the resolved version to
+      # the whole value: classic form ends with ':' (gitlab/gitlab-ce: →
+      # :19.2.7-ce.0); upstreams that prefix their tags (xiaozhi ghcr: server_0.9.6)
+      # use a tag prefix (ghcr.io/...:server_ → ...:server_0.9.7).
+      printf '%s' "$tok" | grep -qE '^[A-Z][A-Z0-9_]*=[A-Za-z0-9._/-]+:[A-Za-z0-9._-]*$' || err "upgrade.images entry malformed (want ENV_KEY=image[:tag_prefix], engine appends the version): $tok"
     done
     if [ -n "$umap" ]; then
       printf '%s' "$umap" | grep -qE '^https?://' || err "upgrade.mapping_url must be an http(s) URL: $umap"

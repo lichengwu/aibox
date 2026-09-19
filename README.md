@@ -223,6 +223,7 @@ images locally.
 | [`gitlab`](tools/gitlab/README.md) | [GitLab CE](https://about.gitlab.com/) self-hosted (omnibus docker): web UI + git over SSH, embedded PG/Redis |
 | [`dify`](tools/dify/README.md) | [Dify](https://github.com/langgenius/dify) self-hosted (docker compose): LLM app builder, api/worker/web/nginx + weaviate (v1.17.1) |
 | [`new-api`](tools/new-api/README.md) | [New API](https://github.com/QuantumNous/new-api) self-hosted (docker compose): LLM API gateway — OpenAI-compatible relay, key/quota management, usage analytics (v0.13.2) |
+| [`xiaozhi`](tools/xiaozhi/README.md) | [Xiaozhi ESP32 server](https://github.com/xinnan-tech/xiaozhi-esp32-server) self-hosted (docker compose): backend for xiaozhi-esp32 AI voice devices — console + ws relay + bundled MySQL (v0.9.6) |
 
 ### Bundled ops CLIs
 

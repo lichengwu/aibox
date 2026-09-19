@@ -172,6 +172,7 @@ aibox --no-proxy ...  # 单次绕过
 | [`gitlab`](tools/gitlab/README.md) | [GitLab CE](https://about.gitlab.com/) 自托管（omnibus docker）：Web UI + git over SSH，内置 PG/Redis |
 | [`dify`](tools/dify/README.md) | [Dify](https://github.com/langgenius/dify) 自托管（docker compose）：LLM 应用构建平台，api/worker/web/nginx + weaviate（v1.17.1） |
 | [`new-api`](tools/new-api/README.md) | [New API](https://github.com/QuantumNous/new-api) 自托管（docker compose）：大模型 API 网关 —— OpenAI 兼容中继、令牌/额度管理、用量分析（v0.13.2） |
+| [`xiaozhi`](tools/xiaozhi/README.md) | [小智 ESP32 服务端](https://github.com/xinnan-tech/xiaozhi-esp32-server) 自托管（docker compose）：小智 ESP32 语音设备后端 —— 智控台 + ws 中继 + 自带 MySQL（v0.9.6） |
 
 ### 捆绑的运维 CLI
 

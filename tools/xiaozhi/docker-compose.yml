@@ -1,0 +1,113 @@
+# xiaozhi deploy compose — placed into $AIBOX_HOME/apps/xiaozhi by the install
+# hook. Conventions (docs/module-spec.md §Deploy directory): no hardcoded
+# credentials; ports/image tunables via the deploy .env.
+#
+# 3-service stack, ported from upstream xiaozhi-esp32-server v0.9.6
+# main/xiaozhi-server/docker-compose_all.yml:
+#   - xiaozhi-server (Python websocket relay + vision/OTA http, 8000/8003)
+#   - xiaozhi-web    (nginx + Java manager-api "智控台" console, 8002)
+#   - xiaozhi-mysql  (bundled MySQL — the shared aibox base ships no MySQL;
+#     xiaozhi's manager-api is MySQL-only: Spring druid + jdbc:mysql DSN)
+# Redis comes from the SHARED aibox base: the web service joins the external
+# aiboxbasenet network and reads AIBOX_REDIS_* from base.env (compose
+# --env-file). Base redis runs without a password → SPRING_DATA_REDIS_PASSWORD
+# stays empty. Upstream bundles redis:8.0; the shared base provides 7 — the
+# standard cache/session usage is protocol-compatible (skew documented in
+# docs/DEVELOPMENT.md, same tradeoff as dify's shared-base mode).
+services:
+  xiaozhi-server:
+    image: ${XIAOZHI_SERVER_IMAGE:-ghcr.io/xinnan-tech/xiaozhi-esp32-server:server_0.9.6}
+    container_name: aibox-xiaozhi-server
+    restart: unless-stopped
+    # Upstream ships seccomp:unconfined (audio/model syscall surface) — ported.
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+    ports:
+      # device websocket (ws://<host>:8000/xiaozhi/v1/)
+      - "${XIAOZHI_WS_PORT:-8000}:8000"
+      # http service: vision-analysis + single-server OTA
+      - "${XIAOZHI_HTTP_PORT:-8003}:8003"
+    volumes:
+      # config (.config.yaml) + runtime files — upstream mounts ./data; the
+      # install hook renders .config.yaml here BEFORE first start.
+      - ./data:/opt/xiaozhi-esp32-server/data
+      # optional local models (e.g. SenseVoiceSmall/model.pt for offline ASR);
+      # a NAMED volume (docker copies the image's existing content in on first
+      # use) — drop model files with: docker cp model.pt aibox-xiaozhi-server:/opt/xiaozhi-esp32-server/models/SenseVoiceSmall/
+      - xiaozhi_models:/opt/xiaozhi-esp32-server/models
+    networks:
+      - default
+    depends_on:
+      - xiaozhi-mysql
+
+  xiaozhi-web:
+    image: ${XIAOZHI_WEB_IMAGE:-ghcr.io/xinnan-tech/xiaozhi-esp32-server:web_0.9.6}
+    container_name: aibox-xiaozhi-web
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      # Java manager-api: bundled MySQL (container-internal name), generated
+      # root password from the deploy .env. DSN params ported verbatim from
+      # upstream's docker-compose_all.yml.
+      - SPRING_DATASOURCE_DRUID_URL=jdbc:mysql://xiaozhi-mysql:3306/xiaozhi_esp32_server?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&nullCatalogMeansCurrent=true&connectTimeout=30000&socketTimeout=30000&autoReconnect=true&failOverReadOnly=false&maxReconnects=10
+      - SPRING_DATASOURCE_DRUID_USERNAME=root
+      - SPRING_DATASOURCE_DRUID_PASSWORD=${XIAOZHI_MYSQL_PASSWORD}
+      # shared base redis (no password — base's redis runs without requirepass)
+      - SPRING_DATA_REDIS_HOST=${AIBOX_REDIS_HOST}
+      - SPRING_DATA_REDIS_PASSWORD=
+      - SPRING_DATA_REDIS_PORT=${AIBOX_REDIS_PORT}
+    ports:
+      # 智控台 console (nginx → Java :8003 internal)
+      - "${XIAOZHI_CONSOLE_PORT:-8002}:8002"
+    volumes:
+      - xiaozhi_uploadfile:/uploadfile
+    networks:
+      - default
+      - aiboxbasenet
+    depends_on:
+      xiaozhi-mysql:
+        condition: service_healthy
+
+  xiaozhi-mysql:
+    image: ${XIAOZHI_MYSQL_IMAGE:-mysql:8.0}
+    container_name: aibox-xiaozhi-mysql
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - MYSQL_ROOT_PASSWORD=${XIAOZHI_MYSQL_PASSWORD}
+      - MYSQL_DATABASE=xiaozhi_esp32_server
+      - MYSQL_INITDB_ARGS=--character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    # charset flags on the command line too — MYSQL_INITDB_ARGS only applies
+    # on FIRST volume init; the command covers re-inits and later upgrades.
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - xiaozhi_mysql:/var/lib/mysql
+    healthcheck:
+      # upstream's own check (mysqladmin ping via the local socket)
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 45s
+      interval: 10s
+      retries: 10
+    networks:
+      - default
+
+networks:
+  aiboxbasenet:
+    # The shared base network (aibox base start creates it) — the web service
+    # reaches the base redis container by name. Overridable via base.env.
+    name: ${AIBOX_BASE_NETWORK:-aibox-base}
+    external: true
+
+volumes:
+  # Explicit names: deterministic regardless of deploy dir / compose project;
+  # `aibox purge xiaozhi` removes exactly these.
+  xiaozhi_models:
+    name: ${XIAOZHI_MODELS_VOLUME:-aibox_xiaozhi_models}
+  xiaozhi_uploadfile:
+    name: ${XIAOZHI_UPLOAD_VOLUME:-aibox_xiaozhi_uploadfile}
+  xiaozhi_mysql:
+    name: ${XIAOZHI_MYSQL_VOLUME:-aibox_xiaozhi_mysql}

@@ -383,7 +383,11 @@ upgrade:
   # <VER> is substituted with the target version.
   mapping_url: https://raw.githubusercontent.com/langgenius/dify/<VER>/docker/docker-compose.yaml
   tag_pattern: '^[0-9]+\.[0-9]+\.[0-9]+-ce\.0$'   # dockerhub-tags: stable-tag filter
-  images:                          # .env key = upstream image prefix (prefix ends with ':')
+  images:                          # .env key = upstream image prefix — the engine APPENDS the
+                                   # resolved version to the whole value. Classic form ends with
+                                   # ':' (…dify-api: → :1.17.2); upstreams that prefix their
+                                   # tags use a tag prefix (…xiaozhi-esp32-server:server_ →
+                                   # :server_0.9.7 — upstream tags git v0.9.7 as server_0.9.7)
     - DIFY_API_IMAGE=langgenius/dify-api:
 ```
 
