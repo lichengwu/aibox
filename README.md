@@ -222,6 +222,7 @@ images locally.
 | [`base`](tools/base/README.md) | Shared base components (PostgreSQL 18 + Redis 7); each module gets its own DB |
 | [`gitlab`](tools/gitlab/README.md) | [GitLab CE](https://about.gitlab.com/) self-hosted (omnibus docker): web UI + git over SSH, embedded PG/Redis |
 | [`dify`](tools/dify/README.md) | [Dify](https://github.com/langgenius/dify) self-hosted (docker compose): LLM app builder, api/worker/web/nginx + weaviate (v1.17.1) |
+| [`new-api`](tools/new-api/README.md) | [New API](https://github.com/QuantumNous/new-api) self-hosted (docker compose): LLM API gateway — OpenAI-compatible relay, key/quota management, usage analytics (v0.13.2) |
 
 ### Bundled ops CLIs
 

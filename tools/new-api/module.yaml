@@ -1,0 +1,78 @@
+name: new-api
+version: 1.0.0
+description: "New API self-hosted (docker compose): LLM API gateway (OpenAI-compatible relay, key/quota management, usage analytics)"
+platform: ""
+dir: tools/new-api
+
+# Runtime deps (cmd / cmd@platform / cmd:majorVersion) — checked strictly by the
+# install/update preflight; missing deps abort unless --skip-checks.
+deps:
+  - docker
+  - docker-compose
+
+# Upstream's default is 3000; openmaic already owns 3000 in this repo (CI
+# detects port conflicts), so this module defaults to 30300 (overridable via
+# NEW_API_PORT in the deploy .env). The container's internal listen port stays
+# 3000 (upstream PORT env default) — only the HOST mapping differs.
+ports:
+  - 30300/tcp:http
+
+# The curated single-service compose (new-api only; PG + Redis come from the
+# shared aibox base via the external aiboxbasenet network + base.env).
+files:
+  - docker-compose.yml
+
+# Shared-base consumers: aibox ensure_services auto-starts base and creates
+# the `new_api` database before install.sh runs (see module-spec §services).
+services:
+  - base:postgres#new_api
+  - base:redis
+
+hooks:
+  install: install.sh
+  uninstall: uninstall.sh
+  update: update.sh
+  svc: svc.sh
+
+# Service-type: actions contains start → the full lifecycle set is mandatory
+# (validator enforces stop/restart/status/logs). `credentials` surfaces the
+# default first-login account.
+actions:
+  - start
+  - stop
+  - restart
+  - status
+  - logs
+  - credentials
+
+upstream:
+  homepage: https://github.com/QuantumNous/new-api
+  docs: https://docs.newapi.dev/
+
+dashboard:
+  endpoints: http://127.0.0.1:30300
+  hint: "First login: root / 123456 (change it immediately); tokens/keys live in the app DB (shared PG new_api)"
+
+# Pinned floor = the latest STABLE release (v0.13.2, 2026-04; the v1.0.0-rc
+# line is explicitly pre-release — reachable via `aibox upgrade new-api --to
+# v1.0.0-rc.38`). All images are pulled by the docker DAEMON (whose egress
+# differs from the host's); no static docker_pull gate here — the svc-start
+# hook probes the daemon's direct route itself and, when dead, pre-pulls
+# through the ranked docker.io mirror pool (see lib.sh docker_pool_prepull).
+# The deps check still hard-gates the docker DAEMON's existence.
+checks:
+  disk_gb: 2
+  docker_images:
+    - calciumion/new-api:v0.13.2
+
+# Component upgrades WITHOUT an aibox release: the repo pins the floor
+# (module.yaml + compose ${VAR:-pinned}); the deploy .env NEW_API_IMAGE floats
+# via `aibox upgrade new-api` (dockerhub-tags resolver). Pattern includes the
+# -rc line so `--check` can see it and `--to` can pin it explicitly; the
+# cross-major guardrail still refuses auto-jumping 0.13.x → 1.0.0-rc.
+upgrade:
+  source: dockerhub-tags
+  repo: calciumion/new-api
+  tag_pattern: ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$
+  images:
+    - NEW_API_IMAGE=calciumion/new-api:

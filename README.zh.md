@@ -171,6 +171,7 @@ aibox --no-proxy ...  # 单次绕过
 | [`base`](tools/base/README.md) | 共享基础组件（PostgreSQL 18 + Redis 7），各模块独立数据库 |
 | [`gitlab`](tools/gitlab/README.md) | [GitLab CE](https://about.gitlab.com/) 自托管（omnibus docker）：Web UI + git over SSH，内置 PG/Redis |
 | [`dify`](tools/dify/README.md) | [Dify](https://github.com/langgenius/dify) 自托管（docker compose）：LLM 应用构建平台，api/worker/web/nginx + weaviate（v1.17.1） |
+| [`new-api`](tools/new-api/README.md) | [New API](https://github.com/QuantumNous/new-api) 自托管（docker compose）：大模型 API 网关 —— OpenAI 兼容中继、令牌/额度管理、用量分析（v0.13.2） |
 
 ### 捆绑的运维 CLI
 

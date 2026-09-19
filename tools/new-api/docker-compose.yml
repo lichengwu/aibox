@@ -1,0 +1,71 @@
+# new-api deploy compose — placed into $AIBOX_HOME/apps/new-api by the install
+# hook. Conventions (docs/module-spec.md §Deploy directory): named volumes only
+# (Docker Desktop does not share /opt — bind mounts there fail with "Mounts
+# denied"); no hardcoded credentials; ports/image tunables via the deploy .env.
+#
+# Single-service stack: PG + Redis come from the SHARED aibox base (external
+# network aiboxbasenet; connection info injected from base.env via
+# `compose --env-file`). The SQL_DSN / REDIS_CONN_STRING values are built from
+# the AIBOX_POSTGRES_* / AIBOX_REDIS_* vars that base.env provides — the same
+# single-source contract as dify's shared-base mode. Schema ported from
+# upstream QuantumNous/new-api v0.13.2 docker-compose.yml (new-api service
+# block; the bundled postgres/redis services are dropped — the base owns them).
+#
+# NOTE on SQL_DSN: it is a URL — the base PG password must be URL-safe
+# (no @ / : / # chars in AIBOX_BASE_POSTGRES_PASSWORD; the default "aibox" is).
+services:
+  new-api:
+    image: ${NEW_API_IMAGE:-calciumion/new-api:v0.13.2}
+    container_name: aibox-new-api
+    restart: unless-stopped
+    # Upstream flag: write app logs to /app/logs (the mounted volume below).
+    command: --log-dir /app/logs
+    ports:
+      # host NEW_API_PORT (module default 30300 — upstream's 3000 collides with
+      # the openmaic module) → container 3000 (upstream PORT default).
+      - "${NEW_API_PORT:-30300}:3000"
+    volumes:
+      - new_api_data:/data
+      - new_api_logs:/app/logs
+    environment:
+      # Shared-base PG (database `new_api` is created by aibox ensure_services
+      # via `base create postgres new_api` before this stack ever starts).
+      - SQL_DSN=postgresql://${AIBOX_POSTGRES_USER}:${AIBOX_POSTGRES_PASSWORD}@${AIBOX_POSTGRES_HOST}:${AIBOX_POSTGRES_PORT}/new_api
+      # Base redis has NO password (base's redis:7 runs without requirepass) —
+      # no credentials in the connection string.
+      - REDIS_CONN_STRING=redis://${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}
+      - TZ=${TZ:-Asia/Shanghai}
+      # Session signing: pinned once at install (deploy .env) so restarts keep
+      # sessions stable (upstream auto-generates when unset; multi-node REQUIRES
+      # a shared value — harmless and deterministic for single-node too).
+      - SESSION_SECRET=${SESSION_SECRET}
+      - NODE_NAME=${NODE_NAME:-aibox-new-api}
+      - ERROR_LOG_ENABLED=true
+      - BATCH_UPDATE_ENABLED=true
+    networks:
+      - default
+      - aiboxbasenet
+    healthcheck:
+      # Upstream's own check (ported verbatim): /api/status must answer
+      # "success": true. wget is present in the new-api image (upstream relies
+      # on it in their shipped compose).
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+networks:
+  aiboxbasenet:
+    # The shared base network (aibox base start creates it). Name is
+    # overridable via base.env's AIBOX_BASE_NETWORK for profile isolation.
+    name: ${AIBOX_BASE_NETWORK:-aibox-base}
+    external: true
+
+volumes:
+  # Explicit names: deterministic regardless of deploy dir / compose project
+  # name; `aibox purge new-api` removes exactly these.
+  new_api_data:
+    name: ${NEW_API_DATA_VOLUME:-aibox_new_api_data}
+  new_api_logs:
+    name: ${NEW_API_LOGS_VOLUME:-aibox_new_api_logs}

@@ -2385,6 +2385,7 @@ residue_paths() { # $1=module → candidate paths (scan filters by existence)
     windmill) printf '%s\n' "$AIBOX_HOME/apps/windmill" "$AIBOX_BIN_DIR/windmill" "$(_purge_etc_root)/windmill" ;;
     gitlab)   printf '%s\n' "$AIBOX_HOME/apps/gitlab" ;;
     dify)     printf '%s\n' "$AIBOX_HOME/apps/dify" ;;
+    new-api)  printf '%s\n' "$AIBOX_HOME/apps/new-api" ;;
   esac
   return 0
 }
@@ -2395,6 +2396,7 @@ residue_volume_patterns() { # $1=module → docker volume name ERE (empty = none
     openmaic) printf '%s' '^app_openmaic' ;;
     gitlab)   printf '%s' '^gitlab_gitlab_(config|logs|data)$' ;;
     dify)     printf '%s' '^dify_(storage|db|redis|sandbox_deps|sandbox_conf|plugin_daemon|weaviate)$' ;;
+    new-api)  printf '%s' '^aibox_new_api_(data|logs)$' ;;
   esac
   return 0
 }
@@ -2405,6 +2407,7 @@ residue_container_patterns() { # $1=module → container-name ERE
     openmaic) printf '%s' '^app-(openmaic|postgres|render-service)-[0-9]+$' ;;
     gitlab)   printf '%s' '^aibox-gitlab$' ;;
     dify)     printf '%s' '^dify-' ;;
+    new-api)  printf '%s' '^aibox-new-api$' ;;
   esac
   return 0
 }
