@@ -49,12 +49,65 @@ teardown() {
   [[ "$output" == *"gitlab"* ]]
 }
 
-@test "dashboard overview carries VERSION column and the port table" {
+@test "dashboard overview: local-first (dead network OK), per-profile sections, module blocks" {
+  # installed state from installed.sh + module caches — NO registry/network.
+  # Point AIBOX_RAW at a dead host: the overview must still render.
+  export AIBOX_RAW="https://dead.invalid/aibox"
+  cat >"$AIBOX_HOME/installed.sh" <<'EOF'
+AIBOX_INSTALLED_base="1.2.1"
+AIBOX_INSTALLED_new_api__work="1.0.1"
+EOF
+  # module cache (lib.sh with dashboard_info) for base
+  mkdir -p "$AIBOX_HOME/modules/base"
+  printf 'dashboard_info() { echo "endpoint=pg://127.0.0.1:35432"; echo "health=ok"; }\n' \
+    >"$AIBOX_HOME/modules/base/lib.sh"
+  mkdir -p "$AIBOX_HOME/modules/new-api"
+  printf 'dashboard_info() { echo "endpoint=http://127.0.0.1:30300"; echo "credential=first login"; echo "version=v0.13.2"; }\n' \
+    >"$AIBOX_HOME/modules/new-api/lib.sh"
   run bash "$REPO_ROOT/bin/aibox" dashboard
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [[ "$output" == *"VERSION"* ]]
-  [[ "$output" == *"MODULE"* ]]
-  [[ "$output" == *"PORT"* ]]
+  # two profile sections (base + named profile), grouped separately
+  [[ "$output" == *"profile base"* ]]
+  [[ "$output" == *"profile work"* ]]
+  # per-module blocks: ✓ + name, endpoint/auth lines from dashboard_info
+  [[ "$output" == *"✓ base 1.2.1"* ]]
+  [[ "$output" == *"✓ new-api 1.0.1"* ]]
+  [[ "$output" == *"endpoint: pg://127.0.0.1:35432"* ]]
+  [[ "$output" == *"endpoint: http://127.0.0.1:30300"* ]]
+  [[ "$output" == *"upstream: v0.13.2"* ]]
+}
+
+@test "dashboard overview: empty state + residue section for not-installed leftovers" {
+  export AIBOX_RAW="https://dead.invalid/aibox"
+  export AIBOX_DASH_UPDATE_TIMEOUT=1
+  # base installed; gitlab NOT installed but with a residue dir → residue section
+  cat >"$AIBOX_HOME/installed.sh" <<'EOF'
+AIBOX_INSTALLED_base="1.2.1"
+EOF
+  mkdir -p "$AIBOX_HOME/modules/base" "$AIBOX_HOME/apps/gitlab"
+  printf 'dashboard_info() { echo "endpoint=pg://x"; }\n' >"$AIBOX_HOME/modules/base/lib.sh"
+  run bash "$REPO_ROOT/bin/aibox" dashboard
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"✓ base"* ]]
+  [[ "$output" == *"residue"* ]]
+  [[ "$output" == *"gitlab"* ]]
+  # gitlab is NOT in a profile section (not installed)
+  [[ "$output" != *"✓ gitlab"* ]]
+}
+
+@test "dashboard detail: local-first — installed module renders with a dead registry" {
+  export AIBOX_RAW="https://dead.invalid/aibox"
+  cat >"$AIBOX_HOME/installed.sh" <<'EOF'
+AIBOX_INSTALLED_base="1.2.1"
+EOF
+  mkdir -p "$AIBOX_HOME/modules/base"
+  printf 'dashboard_info() { echo "endpoint=pg://127.0.0.1:35432"; echo "health=ok"; }\n' \
+    >"$AIBOX_HOME/modules/base/lib.sh"
+  run bash "$REPO_ROOT/bin/aibox" dashboard base
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"base v1.2.1"* ]]
+  [[ "$output" == *"installed"* ]]
+  [[ "$output" != *"Failed to fetch module list"* ]]
 }
 
 @test "proxy check <url> = single-target mode; no proxy configured → clear die" {
