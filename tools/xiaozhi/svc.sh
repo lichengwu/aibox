@@ -26,21 +26,29 @@ _ensure_base() {
 # Auto-apply the generated server.secret: the Java manager-api GENERATES it at
 # first boot (MySQL sys_params) while the Python server REFUSES to boot with an
 # empty one (measured crash-loop). Unless the user already set one, fetch it
-# from MySQL and write data/.config.yaml.
+# from MySQL and write data/.config.yaml. BOUNDED RETRY: the console HTTP check
+# passes as soon as nginx answers — BEFORE the Java finishes Liquibase + secret
+# generation (measured live on the deploy host: first probe found sys_params
+# empty while the secret landed ~1 min later).
 _auto_secret() {
-  local cur val
+  local cur val waited=0 timeout_s
   cur="$(grep -A3 '^manager-api:' "$(config_file)" 2>/dev/null | sed -n 's/.*secret:[[:space:]]*//p' | tr -d '"')"
   if [ -n "${cur}" ] && [ "${cur}" != '""' ]; then
     log "server.secret already set (kept)"
     return 0
   fi
-  if val="$(_fetch_secret)"; then
-    _write_secret "${val}"
-    ok "server.secret auto-applied from the console (MySQL sys_params)"
-  else
-    warn "server.secret not fetchable yet — the server may crash-loop until it lands"
-    warn "manual path: console 参数管理 → server.secret, then: aibox ${MODULE_NAME} secret <value>"
-  fi
+  timeout_s="${XIAOZHI_SECRET_TIMEOUT:-120}"
+  while [ "${waited}" -lt "${timeout_s}" ]; do
+    if val="$(_fetch_secret)"; then
+      _write_secret "${val}"
+      ok "server.secret auto-applied from the console (MySQL sys_params; ${waited}s)"
+      return 0
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+  warn "server.secret not fetchable within ${timeout_s}s — the server may crash-loop until it lands"
+  warn "manual path: console 参数管理 → server.secret, then: aibox ${MODULE_NAME} secret <value>"
 }
 
 # Bounded wait for the console (nginx → Java) to answer HTTP. First boot runs
