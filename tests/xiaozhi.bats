@@ -142,6 +142,10 @@ teardown() {
   grep -q '^  vision_explain: http://[0-9.]*:8003/mcp/vision/explain$' "$cfg"
   grep -q '^  url: http://aibox-xiaozhi-web:8002/xiaozhi$' "$cfg"
   grep -q '^  secret: ""$' "$cfg"
+  # regression: the heredoc is UNQUOTED — unescaped backticks in comments would
+  # run as command substitution and eat the text (measured live on the deploy
+  # host: `aibox xiaozhi start` executed → die → empty comment)
+  grep -q 'aibox xiaozhi start' "$cfg"
 
   # --- second run: .env AND .config.yaml are never clobbered ---
   echo "# user marker" >>"$AIBOX_HOME/apps/xiaozhi/.env"

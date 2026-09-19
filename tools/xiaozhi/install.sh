@@ -86,7 +86,7 @@ manager-api:
   # container-internal: the web service in this compose stack.
   url: http://aibox-xiaozhi-web:8002/xiaozhi
   # server.secret (console 参数管理 → server.secret) — AUTO-APPLIED by
-  # `aibox xiaozhi start` (fetched from the console's MySQL sys_params).
+  # aibox xiaozhi start (fetched from the console's MySQL sys_params).
   # Manual override/rotation: aibox xiaozhi secret <value>
   secret: ""
 prompt_template: agent-base-prompt.txt
