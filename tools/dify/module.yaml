@@ -53,6 +53,15 @@ actions:
   - logs
   - credentials
 
+usage:
+  start: "Start the stack (source pool pulls images; 1-2 min first boot)"
+  stop: "Stop containers"
+  restart: "Recreate containers (applies .env changes)"
+  status: "Container + web health"
+  dashboard: "Stack summary + console health + db mode"
+  logs: "Container logs"
+  credentials: "Show the admin INIT_PASSWORD"
+
 upstream:
   homepage: https://github.com/langgenius/dify
   docs: https://docs.dify.ai/

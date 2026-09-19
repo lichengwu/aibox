@@ -97,6 +97,6 @@ credentials)
   info "channel tokens/keys are managed in the web console (stored in the shared PG new_api database)"
   ;;
 *)
-  die "unknown action: ${action} (declared: start stop restart status logs credentials)"
+  die "unknown action: ${action:-} — run: aibox new-api --help"
   ;;
 esac

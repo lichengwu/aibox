@@ -46,6 +46,15 @@ actions:
   - logs
   - credentials
 
+usage:
+  start: "Start the container (source pool pulls; health-wait)"
+  stop: "Stop the container"
+  restart: "Recreate the container"
+  status: "Container + API health"
+  dashboard: "Container + API + db + auth"
+  logs: "Container logs"
+  credentials: "First login hint + secret location"
+
 upstream:
   homepage: https://github.com/QuantumNous/new-api
   docs: https://docs.newapi.dev/

@@ -162,8 +162,8 @@ EOF2
     [ "$status" -eq 0 ] || { echo "form=[${form}] failed"; echo "$output"; false; }
     [[ "$output" == *"base · module 1.2.1"* ]]
     [[ "$output" == *"Shared base (PG + Redis)"* ]]
-    [[ "$output" == *"usage:    aibox base <action>"* ]]
-    [[ "$output" == *"actions:  start stop"* ]]
+    [[ "$output" == *"usage:  aibox base <action>"* ]]
+    [[ "$output" == *"ports:    35432/tcp:postgres"* ]]
     [[ "$output" == *"module:   "*"/modules/base/"* ]]
     [[ "$output" != *"Failed to fetch module list"* ]]
   done
@@ -171,4 +171,57 @@ EOF2
   run bash "$REPO_ROOT/bin/aibox" bas --help
   [ "$status" -ne 0 ]
   [[ "$output" == *"Unknown module: bas"* ]]
+}
+
+@test "module help: usage table renders action + description per line" {
+  # the usage: stanza drives a fixed-column action table
+  export AIBOX_RAW="https://dead.invalid/aibox"
+  cat >"$AIBOX_HOME/installed.sh" <<'EOF2'
+AIBOX_INSTALLED_base="1.2.1"
+EOF2
+  mkdir -p "$AIBOX_HOME/modules/base"
+  printf 'name: base\nversion: 1.2.1\ndescription: "Shared base"\nactions:\n  - start\n  - stop\n  - create\nusage:\n  start: "Start shared PG + Redis"\n  stop: "Stop containers (data preserved)"\n' \
+    >"$AIBOX_HOME/modules/base/module.yaml"
+  run bash "$REPO_ROOT/bin/aibox" base --help
+  [ "$status" -eq 0 ]
+  # covered actions render with their usage description
+  [[ "$output" == *"  start                    Start shared PG + Redis"* ]] \
+    || [[ "$output" =~ [[:space:]]start[[:space:]]+Start\ shared\ PG\ \+\ Redis ]]
+  [[ "$output" == *"  stop                     Stop containers (data preserved)"* ]] \
+    || [[ "$output" =~ [[:space:]]stop[[:space:]]+Stop\ containers\ \(data\ preserved\) ]]
+  # uncovered action still lists the bare name (no description, no error)
+  [[ "$output" =~ [[:space:]]create([[:space:]]*$|[[:space:]]+[^S]) ]]
+}
+
+@test "module help: hyphenated action names render (use-external etc.)" {
+  # registry parser normalizes hyphens in variable names; help reads the
+  # cached module.yaml directly — hyphenated usage keys must not break eval
+  export AIBOX_RAW="https://dead.invalid/aibox"
+  cat >"$AIBOX_HOME/installed.sh" <<'EOF2'
+AIBOX_INSTALLED_clash="1.3.0"
+EOF2
+  mkdir -p "$AIBOX_HOME/modules/clash"
+  printf 'name: clash\nversion: 1.3.0\ndescription: "Clash pool"\nactions:\n  - start\n  - use-external\nusage:\n  start: "Start the kernel"\n  use-external: "[port] — reuse a local clash client"\n' \
+    >"$AIBOX_HOME/modules/clash/module.yaml"
+  run bash "$REPO_ROOT/bin/aibox" clash --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"use-external"* ]]
+  [[ "$output" == *"reuse a local clash client"* ]]
+}
+
+@test "module unknown action: unified fallback points to --help" {
+  # svc.sh dies with a pointer to the authoritative help, not a
+  # hand-maintained action list (drift-free)
+  export AIBOX_RAW="https://dead.invalid/aibox"
+  cat >"$AIBOX_HOME/installed.sh" <<'EOF2'
+AIBOX_INSTALLED_clash="1.3.0"
+EOF2
+  mkdir -p "$AIBOX_HOME/modules/clash"
+  cp "$REPO_ROOT/tools/clash/module.yaml" "$AIBOX_HOME/modules/clash/module.yaml"
+  cp "$REPO_ROOT/tools/clash/svc.sh" "$AIBOX_HOME/modules/clash/svc.sh"
+  cp "$REPO_ROOT/tools/clash/lib.sh" "$AIBOX_HOME/modules/clash/lib.sh"
+  run bash "$REPO_ROOT/bin/aibox" clash badaction
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unknown action: badaction"* ]]
+  [[ "$output" == *"aibox clash --help"* ]]
 }

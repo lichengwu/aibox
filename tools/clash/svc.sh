@@ -112,6 +112,6 @@ doctor)
   [ -f "$(providers_dir)/pool.yaml" ] && log "pool.yaml cached" || warn "pool.yaml not cached"
   ;;
 *)
-  die "Usage: aibox clash {start|stop|restart|status|dashboard|refresh|set <url>|select <node>|test [url]|logs|doctor|use-external <port>|internal}"
+  die "unknown action: ${action:-} — run: aibox clash --help"
   ;;
 esac

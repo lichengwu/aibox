@@ -58,6 +58,27 @@ actions:
   - snapshots
   - init
 
+usage:
+  start: "Start the stack (docker compose up -d)"
+  stop: "Stop the stack"
+  restart: "Recreate containers"
+  status: "Stack health + version info"
+  dashboard: "Same as status (dispatched to the CLI)"
+  logs: "Container logs"
+  shell: "Open a shell in the server container"
+  credentials: "Show admin + database credentials"
+  systemd: "Manage the systemd backup/update timers"
+  destroy: "Tear down the deployment (dangerous; needs confirm)"
+  backup: "Snapshot data volumes"
+  upgrade: "Pull latest + redeploy with auto-backup"
+  rollback: "Restore the pre-upgrade backup"
+  check: "Readiness / consistency self-check"
+  deploy: "Deploy a specific tag (rollback pointer)"
+  restore: "Restore volumes from a backup"
+  drill: "Practice the disaster-recovery path (no-op run)"
+  snapshots: "List / manage volume snapshots"
+  init: "First-time init (secrets + config generation)"
+
 upstream:
   homepage: https://github.com/windmill-labs/windmill
   docs: https://www.windmill.dev/docs/

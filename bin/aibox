@@ -115,7 +115,7 @@ parse_yaml_module_stdin() {
     }
     END { if (listkey!="") printvar(listkey,listval) }
     function esc(s,   r) { r=s; gsub(/\\/, "\\\\", r); gsub(/"/, "\\\"", r); gsub(/\$/, "\\$", r); gsub(/`/, "\\`", r); return r }
-    function printvar(k,v) { printf "AIBOX_MODULE_%s=\"%s\"\n", k, esc(v) }
+    function printvar(k,v) { gsub(/-/, "_", k); printf "AIBOX_MODULE_%s=\"%s\"\n", k, esc(v) }
     function stripq(s) {
       if (substr(s,1,1)=="\"" && substr(s,length(s),1)=="\"") return substr(s,2,length(s)-2)
       return s
@@ -2611,8 +2611,25 @@ cmd_dashboard_detail() {
 # Per-module help (local-first: installed state + the local registry cache —
 # zero network for installed modules; unknown-module exploration may hit the
 # registry). Bare `aibox <module>`, `help`, `-h`, `--help` all route here.
+# Read one action's usage line from the per-module module.yaml (the `usage:`
+# map stanza). Cache (installed modules) → in-process registry vars (load_registry
+# already ran — file:// or remote) → registry cache file. Empty → bare action list.
+_module_usage_local() { # $1=module $2=action
+  local f v mu act
+  f="$AIBOX_MOD_DIR/$1/module.yaml"
+  if [ -f "$f" ]; then
+    v="$(sed -n "/^  $2:/p" "$f" | head -1 | sed 's/^  [^:]*: *"//; s/"$//')"
+    [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
+  fi
+  mu="${1//-/_}"; act="${2//-/_}"
+  v="$(eval "printf '%s' \"\${AIBOX_MODULE_${mu}_usage_${act}:-}\"" 2>/dev/null)"
+  [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
+  v=""$( ( . "$AIBOX_REGISTRY_CACHE" 2>/dev/null; eval "printf '%s' \"\${AIBOX_MODULE_${mu}_usage_${act}:-}\"" ) 2>/dev/null )""
+  printf '%s' "${v}"
+}
+
 cmd_module_help() {
-  local name="$1" ver desc acts ports docs
+  local name="$1" ver desc acts ports docs act usage_line
   ver="$(_module_version_local "${name}")"
   desc="$(_module_meta_local "${name}" description)"
   acts="$(_module_meta_local "${name}" actions)"
@@ -2632,8 +2649,21 @@ cmd_module_help() {
   printf '%s%s%s %s· module %s%s\n' "$C_BOLD" "${name}" "$C_RST" "$C_DIM" "${ver:-\?}" "$C_RST"
   [ -n "${desc}" ] && printf '%s\n' "${desc}"
   echo
-  info "usage:    aibox ${name} <action>"
-  [ -n "${acts}" ] && info "actions:  ${acts}"
+  info "usage:  aibox ${name} <action>"
+  echo
+  # Action table: one line per declared action, description from usage: stanza
+  # (WARN-level gap in validator; falls back to bare list for un-covered actions)
+  if [ -n "${acts}" ]; then
+    for act in ${acts}; do
+      usage_line="$(_module_usage_local "${name}" "${act}")"
+      if [ -n "${usage_line}" ]; then
+        printf '  %-24s %s\n' "${act}" "${usage_line}"
+      else
+        printf '  %-24s\n' "${act}"
+      fi
+    done
+  fi
+  echo
   [ -n "${ports}" ] && info "ports:    ${ports}"
   [ -n "${docs}" ] && info "docs:     ${docs}"
   if is_installed "${name}"; then
@@ -3273,7 +3303,7 @@ EOF
 
 EOF
 
-  info "get started: aibox install pi-web  ·  https://github.com/lichengwu/aibox"
+  info "module help: aibox <module> --help  ·  get started: aibox install pi-web  ·  https://github.com/lichengwu/aibox"
 }
 
 # ---------- global options / dispatch (only when executed, not sourced) ----------

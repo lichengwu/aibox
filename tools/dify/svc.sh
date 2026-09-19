@@ -93,6 +93,6 @@ credentials)
   warn "credentials live in $(deploy_root)/.env (mode 600) — treat as secrets"
   ;;
 *)
-  die "unknown action: ${action} (declared: start stop restart status logs credentials)"
+  die "unknown action: ${action:-} — run: aibox dify --help"
   ;;
 esac

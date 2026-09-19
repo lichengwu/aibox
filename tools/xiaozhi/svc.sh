@@ -190,6 +190,6 @@ secret)
   fi
   ;;
 *)
-  die "unknown action: ${action} (declared: start stop restart status logs credentials secret)"
+  die "unknown action: ${action:-} — run: aibox xiaozhi --help"
   ;;
 esac

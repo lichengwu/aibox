@@ -39,6 +39,21 @@ actions:
   - use-external
   - internal
 
+usage:
+  start: "Start the mihomo kernel + switch aibox egress"
+  stop: "Stop the kernel (egress falls back)"
+  restart: "Stop + start"
+  status: "Kernel + subscription state"
+  dashboard: "State + nodes + latency table"
+  refresh: "Force-refresh the subscription (auto: 1 week)"
+  set: "<subscription-url> — store the subscription + generate config"
+  select: "<node-name> — switch the active node"
+  test: "[url] — probe connectivity via the current node"
+  logs: "Follow the mihomo log"
+  doctor: "Self-check (binary/config/subscription/kernel)"
+  use-external: "[port] — reuse a local clash client (Verge etc.) as the aibox egress"
+  internal: "Revert to aibox-managed mihomo (from external mode)"
+
 upstream:
   homepage: https://github.com/MetaCubeX/mihomo
   docs: https://wiki.metacubex.one/

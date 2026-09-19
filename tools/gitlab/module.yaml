@@ -32,6 +32,15 @@ actions:
   - logs
   - credentials
 
+usage:
+  start: "Start the container (source pool pulls; 3-5 min first boot)"
+  stop: "Stop the container"
+  restart: "Recreate the container"
+  status: "Container + web health"
+  dashboard: "Container + web + SSH state"
+  logs: "Container logs"
+  credentials: "Show the initial root password"
+
 upstream:
   homepage: https://about.gitlab.com/
   docs: https://docs.gitlab.com/omnibus/docker/

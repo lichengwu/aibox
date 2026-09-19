@@ -51,6 +51,16 @@ actions:
   - create
   - profile
 
+usage:
+  start: "Start shared PG + Redis"
+  stop: "Stop containers (data preserved)"
+  restart: "Stop + start"
+  status: "Container states"
+  dashboard: "PG databases + sizes, Redis keys, network"
+  logs: "Container logs"
+  create: "<component> <resource> — create a resource (e.g. create postgres dify)"
+  profile: "List named profiles"
+
 upstream:
   homepage: https://www.postgresql.org/
   docs: https://www.postgresql.org/docs/

@@ -18,10 +18,10 @@ with exactly this flow.
 ### Checklist (definition of done)
 
 1. **Scaffold**: `scripts/new-module.sh <name>` → `tools/<name>/` skeleton (validator PASSes immediately).
-2. **`module.yaml`**: real `version`/`description`/`upstream` links; `ports` declared (unique across modules — the validator detects conflicts); `deps` (strict-checked at preflight); `services: base:<component>#<name>[_usage]` when consuming the shared base; **`checks:` is MANDATORY** (§Preflight checks below).
+2. **`module.yaml`**: real `version`/`description`/`upstream` links; `ports` declared (unique across modules — the validator detects conflicts); `deps` (strict-checked at preflight); `services: base:<component>#<name>[_usage]` when consuming the shared base; **`checks:` is MANDATORY** (§Preflight checks below); `usage:` entries for every declared action (§Per-action help).
 3. **Hooks**: `install/uninstall/update/svc.sh` per §Hook contract — bash shebang, `set -euo pipefail`, idempotent, `${VAR}` braces (AGENTS.md pitfalls #1/#8), no bash-4-only syntax (pitfall #2); shared code in `lib.sh` (sourced library: no shebang/strict line).
 4. **Deploy conventions**: root `$AIBOX_HOME/apps/<name>`, config under `/etc/<name>/`, named volumes only, no hardcoded credentials (§Deploy directory & config path conventions).
-5. **Service modules**: `actions` containing `start` MUST provide the full lifecycle `start/stop/restart/status/logs` (+ module-specific actions like `credentials`); self-starting services use the platform-native init system (AGENTS.md rule 9).
+5. **Service modules**: `actions` containing `start` MUST provide the full lifecycle `start/stop/restart/status/logs` (+ module-specific actions like `credentials`); a `dashboard` action with a module-owned rich view (`render_dashboard` in `lib.sh` — the manager prefers module-owned over its generic fallback); self-starting services use the platform-native init system (AGENTS.md rule 9).
 6. **Docs**: `README.md` (commands / ports / env overrides / preflight — ERROR if missing) + `docs/DEVELOPMENT.md` (upstream links, version-pin policy, design decisions, known quirks — WARN if missing).
 7. **Prove**: `scripts/validate-module.sh <name>` → 0 errors; `bats tests/*.bats` green; live smoke on a docker host: `aibox install <name>` → `<name> start` → `status` → `logs` → `stop` → `uninstall`.
 8. **Residue map**: extend the residue map in `bin/aibox` (`residue_*` functions) with the module's leftover locations (volumes, containers, `/etc/<name>`, units, dispatched binaries) — `aibox purge` must be able to clean up AFTER the module (or aibox itself) is uninstalled (validator WARNs when the entry is missing).
@@ -70,6 +70,9 @@ hooks:                             # required. hook filenames
 actions:                           # optional. actions svc supports (list all)
   - start
   - stop
+usage:                             # per-action help text — `aibox <module> --help` renders one
+  start: "Start the service"       # line per declared action; validator WARNs on gaps
+  stop: "Stop the service"         # format: <action>: "<one-line description, args hint>"
 upstream:                          # optional. dev-guide links (see §6 of module-system-spec.md)
   homepage: https://...
   docs: https://...
@@ -326,6 +329,26 @@ check still hard-gates the tool's existence):
 - the clash **subscription URL** — the user's own provider, fetched by mihomo (plain-curl probes 403 by design)
 - `cr.weaviate.io` (dify's vector store) — no mainstream mirror proxies it; direct-only, documented
 - openmaic's in-build npm — already accelerated via its Dockerfile patch
+
+## Per-action help (`usage:` stanza)
+
+Every module declares a `usage:` map in `module.yaml` — one entry per declared action. `aibox <module> <action> --help` (and bare `aibox <module>`, `help`, `-h`, `--help`) renders a fixed-column action table from this stanza, local-first (from the module cache's `module.yaml`, no network).
+
+```yaml
+actions:
+  - start
+  - credentials
+usage:
+  start: "Start the stack (docker compose up -d)"
+  credentials: "Show admin + database credentials"
+```
+
+Format rules:
+
+- One line per action: `<action>: "<description>"`. Args hints go in the description: `"<node-name> — switch the active node"`.
+- The **validator WARNs** when a declared action has no `usage:` entry (the table still renders, just without a description).
+- The stanza is a flat two-space-indented map (same parser subset as `checks:`) — no nesting.
+- Hyphenated action keys (`use-external`) are supported; the registry parser normalizes hyphens to underscores in variable names (`usage_use_external`), and the help renderer reads the cached `module.yaml` directly.
 
 ## User command → hook mapping
 

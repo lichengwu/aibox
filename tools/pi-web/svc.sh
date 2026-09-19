@@ -74,6 +74,6 @@ diagnose)
   port_listen_lines "$PORT" || echo "not listening"
   ;;
 *)
-  die "Usage: aibox pi-web {start|stop|restart|status|logs|diagnose}"
+  die "unknown action: ${action:-} — run: aibox pi-web --help"
   ;;
 esac

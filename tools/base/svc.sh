@@ -33,5 +33,5 @@ createdb)
 profile)
   _profile_list
   ;;
-*) die "Usage: aibox base {start|stop|restart|status|logs|create <component> <resource>|profile}" ;;
+*) die "unknown action: ${action:-} — run: aibox base --help" ;;
 esac

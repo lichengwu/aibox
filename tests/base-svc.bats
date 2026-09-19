@@ -60,9 +60,9 @@ teardown() {
   [[ "$output" == *"36336"* ]]
 }
 
-@test "unknown action: usage lists create + profile" {
+@test "unknown action: unified fallback points to --help (drift-free)" {
   run env AIBOX_MODULE=base bash "$SVC" bogus
   [ "$status" -ne 0 ]
-  [[ "$output" == *"create"* ]]
-  [[ "$output" == *"profile"* ]]
+  [[ "$output" == *"unknown action: bogus"* ]]
+  [[ "$output" == *"aibox base --help"* ]]
 }

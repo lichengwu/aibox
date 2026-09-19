@@ -39,6 +39,15 @@ actions:
   - logs
   - diagnose
 
+usage:
+  start: "Start the launchd/systemd service"
+  stop: "Stop the service"
+  restart: "Recreate the service (applies config changes)"
+  status: "Service + HTTP health"
+  dashboard: "Service + app + log state"
+  logs: "Follow the app log"
+  diagnose: "Self-check (port/auth/process/log)"
+
 upstream:
   homepage: https://github.com/agegr/pi-web
   docs: https://github.com/agegr/pi-web#readme

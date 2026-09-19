@@ -50,6 +50,16 @@ actions:
   - credentials
   - secret
 
+usage:
+  start: "Staged start: MySQL + console → secret → ws server (health-wait)"
+  stop: "Stop containers"
+  restart: "Recreate containers (applies .env changes)"
+  status: "Container + console + ws + secret state"
+  dashboard: "Server/console/mysql + ws + device URL"
+  logs: "Container logs"
+  credentials: "Admin login + secret location"
+  secret: "<value> — manually set the server.secret (console 参数管理)"
+
 upstream:
   homepage: https://github.com/xinnan-tech/xiaozhi-esp32-server
   docs: https://github.com/xinnan-tech/xiaozhi-esp32-server/tree/main/docs

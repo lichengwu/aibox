@@ -78,6 +78,6 @@ credentials)
   fi
   ;;
 *)
-  die "unknown action: $action (declared: start stop restart status logs credentials)"
+  die "unknown action: ${action:-} — run: aibox gitlab --help"
   ;;
 esac

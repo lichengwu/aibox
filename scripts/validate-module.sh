@@ -430,6 +430,15 @@ validate_module() {
     [ -n "$bad_sub" ] && err "dashboard allows only endpoints/hint; got: $bad_sub"
   fi
 
+  # --- S17b: per-action usage entries (help framework; WARN for un-covered actions) ---
+  if [ -n "$acts" ]; then
+    local a missing=""
+    for a in $acts; do
+      grep -qE "^  ${a}:" "$f" || missing="${missing}${missing:+ }${a}"
+    done
+    [ -n "$missing" ] && warn "actions without usage: entries (aibox <module> --help renders bare action names): ${missing}"
+  fi
+
   # --- S18: upstream links ---
   [ -n "$(module_field "$m" upstream_homepage)" ] || warn "upstream.homepage missing (dev-guide link)"
   [ -n "$(module_field "$m" upstream_docs)" ] || warn "upstream.docs missing (dev-guide link)"

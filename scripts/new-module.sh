@@ -120,6 +120,16 @@ actions:
   - status
   - logs
 
+# Per-action help text (one line each) — `aibox __NAME__ --help` renders this
+# table. The validator WARNs when a declared action has no usage entry.
+usage:
+  start: "TODO what start does"
+  stop: "TODO what stop does"
+  restart: "TODO what restart does"
+  status: "TODO what status shows"
+  logs: "TODO which container/service"
+  dashboard: "TODO module-owned rich view (see lib.sh render_dashboard)"
+
 upstream:
   homepage: https://example.com/TODO
   docs: https://example.com/TODO/docs
@@ -161,6 +171,11 @@ hooks:
 # CLI-dispatch style (like openmaic/windmill): list the passthrough actions.
 actions:
   - status
+
+# Per-action help text (one line each) — `aibox __NAME__ --help` renders this
+# table. The validator WARNs when a declared action has no usage entry.
+usage:
+  status: "TODO what status shows"
 
 upstream:
   homepage: https://example.com/TODO

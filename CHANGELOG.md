@@ -7,6 +7,18 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [Unreleased]
+
+### Added — help system framework
+
+- **`usage:` stanza in every `module.yaml`** — one line per declared action; `aibox <module> --help` (and bare / `help` / `-h`) renders a fixed-column action table from it, local-first (module cache → in-process registry → registry cache file, zero network when installed).
+- **Validator**: WARNs when a declared action has no `usage:` entry (gaps render as bare action names).
+- **Scaffolder**: generates a `usage:` skeleton per scaffolded action (TODO lines).
+- **Spec**: `docs/module-spec.md` §Per-action help documents the stanza schema; onboarding checklist step 2 now includes usage entries, step 5 the module-owned `dashboard` action.
+- **Unknown-action fallback unified** across all 7 compose/service modules: `unknown action: <action> — run: aibox <module> --help` (drift-free — replaces hand-maintained action lists that went stale).
+- **Registry parser**: hyphenated `usage:` keys (`use-external`) no longer produce invalid shell variable names (parse error under `set -u`).
+- Top-level `aibox help` foot now points to per-module help.
+
 ## [0.8.1] — 2026-09-19
 
 ### Fixed
