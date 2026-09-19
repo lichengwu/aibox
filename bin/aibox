@@ -1853,7 +1853,7 @@ cmd_install() {
   fi
   mark_installed "$name" "$(module_field "$name" version)"
   ensure_services "$name"
-  log "Installed $name ($(module_field "$name" version)) -> $dest"
+  log "Installed $name module $(module_field "$name" version) -> $dest"
 }
 
 # Handle a module's services deps (module.yaml services field):
@@ -1957,7 +1957,14 @@ cmd_update() {
       warn "No update hook; refreshed script cache"
     fi
     mark_installed "${name}" "$(module_field "${name}" version)"
-    log "${name} updated to $(module_field "${name}" version)"
+    # TWO version namespaces: the aibox MODULE version (module.yaml packaging —
+    # what changed here) vs the upstream APP version (pinned floor / the module's
+    # own upstream check / `aibox upgrade`). Label it explicitly — a bare
+    # "updated to 1.2.1" right after the module's "already latest (0.9.1)"
+    # read as a contradiction (measured user confusion).
+    log "${name} module scripts updated to $(module_field "${name}" version)"
+    local _usrc; _usrc="$(module_field "${name}" upgrade_source)"
+    [ -n "${_usrc}" ] && info "upstream app version floats separately: aibox upgrade ${name} [--check]"
   elif [ "$self_flag" = "1" ]; then
     log "Updating all installed modules ..."
     # Per-module failure tolerance: one bad module must not abort the remaining
