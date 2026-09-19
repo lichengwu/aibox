@@ -108,7 +108,7 @@ See `docs/module-system-spec.md` §2.3 for the full field reference.
 
   Standard vars `http_proxy` / `https_proxy` / `all_proxy` / `no_proxy` are also exported, **lowercase and uppercase both** — curl only honors lowercase `http_proxy` (it ignores uppercase `HTTP_PROXY`), while apt-style tools only honor uppercase; the two sets differ in practice. See [Proxy](#proxy) below.
 
-  The color vars `C_RST` / `C_DIM` / `C_BOLD` / `C_GRN` / `C_YEL` / `C_RED` / `C_CYA` are also exported (empty when piped or `NO_COLOR=1`). A module's `log`/`warn`/`die` should use `${C_CYA:-}` etc. and `${AIBOX_MODULE:-<name>}` as the prefix — no per-module color setup is needed (single source of truth in `bin/aibox`).
+  The color vars `C_RST` / `C_DIM` / `C_BOLD` / `C_GRN` / `C_YEL` / `C_RED` / `C_CYA` are also exported (empty when piped or `NO_COLOR=1`). A module's `log`/`warn`/`ok`/`die` should use `${C_*:-}` fallbacks and match the manager's output system — plain `log` (no prefix), symbol-prefixed `warn`/`ok`/`die` (⚠/✓/✗, two-space gap) — no per-module color setup is needed (single source of truth in `bin/aibox`).
 - `install.sh` installs the module itself (paths are self-determined, e.g. pi-web writes a launchd plist).
 - `svc.sh`: `$1` = action, rest pass through.
   - **`svc.sh` is an "action entry point", NOT "must be a daemon".** Long-lived-service modules (e.g. pi-web) implement `start/stop/restart/status/logs/diagnose`. Dispatch-only modules (e.g. openmaic) can just pass through: `exec <dispatched-cmd> "$1" "$@"`, where the action set is that command's subcommands. The contract is "the file named by `hooks.svc` receives `(action, args...)`" — nothing more.

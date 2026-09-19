@@ -67,7 +67,7 @@ EOF
     _preflight_disk fake
   "
   [ "$status" -eq 0 ]
-  [[ "$output" == *"✔ disk"* ]]
+  [[ "$output" == *"✓ disk"* ]]
 }
 
 # --- probes / routes (offline-safe: a localhost HTTP server and a dead port) ----
@@ -129,7 +129,7 @@ EOF
   "
   kill "$srv" 2>/dev/null || true; wait "$srv" 2>/dev/null || true
   [ "$status" -eq 0 ] || echo "$output"
-  [[ "$output" == *"✔"* ]]
+  [[ "$output" == *"✓"* ]]
   [[ "$output" != *"unreachable"* ]]
 
   run bash -c "
@@ -218,7 +218,7 @@ EOF
   rc="$status"
   docker rm -f aibox-base-itx-postgres >/dev/null 2>&1 || true
   [ "$rc" -eq 0 ] || echo "$output"
-  [[ "$output" == *"✔ base:postgres ready"* ]]
+  [[ "$output" == *"✓ base:postgres ready"* ]]
 }
 
 # --- preflight_module composition + skip ---------------------------------------

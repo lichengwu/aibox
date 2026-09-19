@@ -112,13 +112,13 @@ A single-point probe only proves "this url can reach out"; it doesn't prove "the
   Connectivity check (via proxy http://10.0.0.2:7897)
   Any HTTP answer counts as reachable — 401/404/405 just mean the link reached the peer
   Dev deps
-  ✔ github.com                   200   0.65s
-  ✔ docker hub                   401   1.45s
-  ✔ ghcr.io                      405   0.86s
-  ✘ google                       000   8.00s  connection failed or timed out
+  ✓ github.com                   200   0.65s
+  ✓ docker hub                   401   1.45s
+  ✓ ghcr.io                      405   0.86s
+  ✗ google                       000   8.00s  connection failed or timed out
   CN mirrors
-  ✔ npmmirror                    200   0.09s
-  ✔ tuna                         200   0.18s
+  ✓ npmmirror                    200   0.09s
+  ✓ tuna                         200   0.18s
 
   14 items: 13 ok · 1 failed
   All traffic confirmed via proxy (curl %{proxy_used})

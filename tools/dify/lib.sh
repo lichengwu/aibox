@@ -17,11 +17,11 @@ DEFAULT_WEAVIATE_IMAGE="cr.weaviate.io/semitechnologies/weaviate:1.39.2"
 
 # Output helpers: colors are inherited from aibox via exported C_* env vars
 # (single source of truth); ${C_*:-} falls back to plain output standalone.
-log()  { printf '%s[%s]%s %s\n' "${C_CYA:-}" "${AIBOX_MODULE:-$MODULE_NAME}" "${C_RST:-}" "${*}"; }
-warn() { printf '%s[!]%s %s\n' "${C_YEL:-}" "${C_RST:-}" "${*}" >&2; }
-ok()   { printf '%s[ok]%s %s\n' "${C_GRN:-}" "${C_RST:-}" "${*}"; }
+log()  { printf '%s\n' "$*"; }
+warn() { printf '%s⚠%s  %s\n' "${C_YEL:-}" "${C_RST:-}" "$*" >&2; }
+ok()   { printf '%s✓%s  %s\n' "${C_GRN:-}" "${C_RST:-}" "$*"; }
 die() {
-  printf '%s[x]%s %s\n' "${C_RED:-}" "${C_RST:-}" "${*}" >&2
+  printf '%s✗%s  %s\n' "${C_RED:-}" "${C_RST:-}" "$*" >&2
   exit 1
 }
 

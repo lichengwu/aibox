@@ -161,9 +161,9 @@ gen_password() {
 ts()   { date '+%Y-%m-%d %H:%M:%S'; }
 log()  { [ "$QUIET" = 1 ] || printf '%s\n' "$*"; }
 info() { [ "$QUIET" = 1 ] || printf '%s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
-ok()   { printf '%s✔%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
-warn() { printf '%s!%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
-err()  { printf '%s✘%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; }
+ok()   { printf '%s✓%s  %s\n' "$C_GREEN" "$C_RESET" "$*"; }
+warn() { printf '%s⚠%s  %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
+err()  { printf '%s✗%s  %s\n' "$C_RED" "$C_RESET" "$*" >&2; }
 hr()   { [ "$QUIET" = 1 ] || printf '%s\n' "────────────────────────────────────────────────────────"; }
 step() { printf '%s▸ %s%s\n' "$C_BLUE" "$*" "$C_RESET"; }
 die()  { err "$1"; exit "${2:-1}"; }

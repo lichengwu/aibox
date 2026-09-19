@@ -12,10 +12,10 @@ CLI_DEST="${OPENMAIC_BIN_DIR}/${CLI_NAME}"
 # Output helpers: colors are inherited from aibox via the exported C_* env vars (single
 # source of truth); ${C_*:-} falls back to empty when this lib is sourced standalone.
 # Prefix uses AIBOX_MODULE (injected by aibox) with the module name as a fallback.
-log() { printf '%s[%s]%s %s\n' "${C_CYA:-}" "${AIBOX_MODULE:-openmaic}" "${C_RST:-}" "${*}"; }
-warn() { printf '%s[!]%s %s\n' "${C_YEL:-}" "${C_RST:-}" "${*}" >&2; }
+log()  { printf '%s\n' "$*"; }
+warn() { printf '%s⚠%s  %s\n' "${C_YEL:-}" "${C_RST:-}" "$*" >&2; }
 die() {
-  printf '%s[x]%s %s\n' "${C_RED:-}" "${C_RST:-}" "${*}" >&2
+  printf '%s✗%s  %s\n' "${C_RED:-}" "${C_RST:-}" "$*" >&2
   exit 1
 }
 

@@ -53,7 +53,8 @@ teardown() {
   run bash "$REPO_ROOT/bin/aibox" dashboard
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"VERSION"* ]]
-  [[ "$output" == *"Port assignments:"* ]]
+  [[ "$output" == *"MODULE"* ]]
+  [[ "$output" == *"PORT"* ]]
 }
 
 @test "proxy check <url> = single-target mode; no proxy configured → clear die" {

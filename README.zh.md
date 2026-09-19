@@ -97,13 +97,13 @@ aibox --no-proxy list --available                # 单次绕过
   连通性检查（经代理 http://10.0.0.2:7897）
   能拿到应答即算通 —— 401/404/405 都只说明链路到了对端
   开发依赖
-  ✔ github.com                   200   0.65s
-  ✔ docker hub                   401   1.45s
-  ✔ ghcr.io                      405   0.86s
-  ✘ google                       000   8.00s  连接失败或超时
+  ✓ github.com                   200   0.65s
+  ✓ docker hub                   401   1.45s
+  ✓ ghcr.io                      405   0.86s
+  ✗ google                       000   8.00s  连接失败或超时
   国内镜像
-  ✔ npmmirror                    200   0.09s
-  ✔ tuna                         200   0.18s
+  ✓ npmmirror                    200   0.09s
+  ✓ tuna                         200   0.18s
 
   14 项：13 通过 · 1 失败
   流量已确认全部经代理（curl %{proxy_used}）

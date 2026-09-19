@@ -69,13 +69,16 @@ fi
 # truth. Modules' log/warn/die use ${C_*:-} (empty fallback when run standalone, not via aibox).
 export C_RST C_DIM C_BOLD C_GRN C_YEL C_RED C_CYA
 
-log()  { printf '%s[aibox]%s %s\n' "$C_CYA" "$C_RST" "$*"; }
-warn() { printf '%s[!]%s %s\n' "$C_YEL" "$C_RST" "$*" >&2; }
-die()  { printf '%s[x]%s %s\n' "$C_RED" "$C_RST" "$*" >&2; exit 1; }
-ok()   { printf '%s[ok]%s %s\n' "$C_GRN" "$C_RST" "$*"; }
-bad()  { printf '%s[!!]%s %s\n' "$C_RED" "$C_RST" "$*"; }
-# 8-space indent aligns continuation text under `log`'s message ([aibox] + space = 8 cols).
-info() { printf '        %s\n' "$*"; }
+# TUI helpers — formal, clean, consistent (design ref: gh CLI / kubectl).
+# Three visual levels: action (plain), success/warning/error (symbol prefix),
+# sub-detail (dim, indented). No bracket prefixes; symbols carry the semantics.
+log()  { printf '%s\n' "$*"; }
+warn() { printf '%s⚠%s  %s\n' "$C_YEL" "$C_RST" "$*" >&2; }
+die()  { printf '%s✗%s  %s\n' "$C_RED" "$C_RST" "$*" >&2; exit 1; }
+ok()   { printf '%s✓%s  %s\n' "$C_GRN" "$C_RST" "$*"; }
+bad()  { printf '%s✗%s  %s\n' "$C_RED" "$C_RST" "$*"; }
+# Sub-detail: 2-space indent, dim — aligns under the action line above.
+info() { printf '%s  %s%s\n' "$C_DIM" "$*" "$C_RST"; }
 
 # Parse a module.yaml subset (§2.2) from stdin into eval-able AIBOX_MODULE_<name>_* assignments.
 # BSD awk compatible (index/substr/sub, no capture groups; runs on bash 3.2's nawk).
@@ -406,9 +409,10 @@ gh_pool_fetch() { # $1 = url → content on stdout; nonzero when everything fail
     esac
     _gh_pool_cache_write "${fam}" "${ranked}"
     # stderr only — stdout is the fetched content, often captured in $( ).
-    printf '[aibox] source pool (%s): %s won the race (%ss; %s candidate(s) tried)\n' \
-      "${fam}" "$(printf '%s' "$(cat "${tmpd}/c${winner}.cand")" | awk -F'|' '{print ($2=="" ? $1 : $2)}')" \
-      "$(cat "${tmpd}/c${winner}.time" 2>/dev/null)" "${total}" >&2
+    # NB: log to stderr as a notice, not warn — it's informational (which mirror won).
+    printf '%s  source pool (%s): %s won the race (%ss; %s candidate(s) tried)\n' \
+      "${C_DIM:-}" "${fam}" "$(printf '%s' "$(cat "${tmpd}/c${winner}.cand")" | awk -F'|' '{print ($2=="" ? $1 : $2)}')" \
+      "$(cat "${tmpd}/c${winner}.time" 2>/dev/null)" "${total}" "${C_RST:-}" >&2
     cat "${tmpd}/c${winner}.body"
     rm -rf "${tmpd}"
     return 0
@@ -570,7 +574,7 @@ download_module() {
     case " $dl " in *" $extra "*) ;; *) dl="${dl:+$dl }$extra" ;; esac
   done
   for f in $dl; do
-    log "  fetch $dir/$f"
+    info "fetch $dir/$f"
     mkdir -p "$(dirname "$AIBOX_LAST_DEST/$f")"   # nested entries (e.g. cli/openmaic) need their dir
     if ! gh_pool_fetch "$AIBOX_RAW/$dir/$f" >"$AIBOX_LAST_DEST/$f"; then
       rm -f "$AIBOX_LAST_DEST/$f"
@@ -743,29 +747,30 @@ cmd_proxy() {
 
 cmd_proxy_show() {
   # Clash pool takes priority: when on, show local mihomo (static proxy as fallback hint).
+  printf '%s%s%s\n' "$C_BOLD" "proxy" "$C_RST"
   if clash_active; then
-    log "Proxy config (${AIBOX_CONFIG}) + clash pool"
-    info "Effective    socks5://127.0.0.1:${CLASH_PORT} (local mihomo, takes priority over static proxy)"
-    [ -n "$AIBOX_PROXY_URL" ] && info "Static proxy $(mask_url "$AIBOX_PROXY_URL") (fallback after 'clash off')"
-    info "Clash        aibox clash status"
+    info "config      ${AIBOX_CONFIG} + clash pool"
+    info "egress      socks5://127.0.0.1:${CLASH_PORT} (local mihomo, takes priority over static proxy)"
+    [ -n "$AIBOX_PROXY_URL" ] && info "static      $(mask_url "$AIBOX_PROXY_URL") (fallback after 'clash off')"
+    info "clash       aibox clash status"
     return 0
   fi
   if [ -z "$AIBOX_PROXY_URL" ]; then
-    log "No proxy configured (direct connection)"
-    info "Set one: aibox proxy set http://host:port  or  aibox clash set <subscription-url>"
+    info "config      none (direct connection)"
+    info "set one     aibox proxy set http://host:port  ·  aibox clash set <subscription-url>"
     return 0
   fi
   local state="enabled"
   [ "$AIBOX_PROXY_ENABLED" = "1" ] || state="disabled"
-  log "Proxy config (${AIBOX_CONFIG})"
-  info "Proxy        $(mask_url "$AIBOX_PROXY_URL")"
-  info "State        $state"
-  info "No-proxy     $AIBOX_NO_PROXY"
+  info "config      ${AIBOX_CONFIG}"
+  info "proxy       $(mask_url "$AIBOX_PROXY_URL")"
+  info "state       $state"
+  info "no-proxy    $AIBOX_NO_PROXY"
   case "$AIBOX_PROXY_SOURCE" in
-    env)      info "Effective    $(mask_url "$AIBOX_PROXY_URL") (from env vars, takes priority over this config)" ;;
-    config)   info "Effective    $(mask_url "$AIBOX_PROXY_URL")" ;;
-    disabled) info "Effective    none (proxy disabled)" ;;
-    *)        info "Effective    none (direct connection)" ;;
+    env)      info "egress      $(mask_url "$AIBOX_PROXY_URL") (from env vars, takes priority over this config)" ;;
+    config)   info "egress      $(mask_url "$AIBOX_PROXY_URL")" ;;
+    disabled) info "egress      none (proxy disabled)" ;;
+    *)        info "egress      none (direct connection)" ;;
   esac
   return 0
 }
@@ -796,7 +801,7 @@ cmd_proxy_set() {
   esac
 
   if [ "$no_test" = "0" ]; then
-    log "Testing proxy $(mask_url "$url") ..."
+    log "Testing proxy $(mask_url "$url")..."
     if proxy_probe "$url"; then
       ok "Proxy reachable"
     else
@@ -1070,11 +1075,11 @@ probe_line() {
   grade="${P_GRADE[$i]:-ok}"
   code="${P_CODE[$i]:-000}"
   t="$(probe_fmt_time "${P_TIME[$i]:-}")"
-  mark="${C_GRN}✔${C_RST}"
+  mark="${C_GRN}✓${C_RST}"
   note=""
   case "$grade" in
-    warn) mark="${C_YEL}!${C_RST}"; note="server error" ;;
-    fail) mark="${C_RED}✘${C_RST}"; note="connection failed or timed out" ;;
+    warn) mark="${C_YEL}⚠${C_RST}"; note="server error" ;;
+    fail) mark="${C_RED}✗${C_RST}"; note="connection failed or timed out" ;;
   esac
   tcol="$C_DIM"
   if [ "$grade" = "fail" ]; then
@@ -1276,22 +1281,22 @@ _preflight_adopt() {
     direct)
       unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
       export no_proxy="*" NO_PROXY="*"
-      warn "  → adopting DIRECT connection for this run (current route failed). Persist: aibox proxy off / aibox clash off" ;;
+      warn "adopting direct connection for this run (current route failed); persist: aibox proxy off / aibox clash off" ;;
     clash)
       st="${AIBOX_HOME}/apps/clash/state"; p=7890
       # shellcheck source=/dev/null
       [ -f "$st" ] && p="$( . "$st" 2>/dev/null; printf '%s' "${CLASH_PORT:-7890}" )"
       eff="socks5://127.0.0.1:${p}"
       export http_proxy="$eff" https_proxy="$eff" all_proxy="$eff" HTTP_PROXY="$eff" HTTPS_PROXY="$eff"
-      warn "  → adopting clash pool (${eff}) for this run. Persist: aibox clash on" ;;
+      warn "adopting clash pool (${eff}) for this run; persist: aibox clash on" ;;
     proxy)
       export http_proxy="$AIBOX_PROXY_URL" https_proxy="$AIBOX_PROXY_URL" all_proxy="$AIBOX_PROXY_URL" \
              HTTP_PROXY="$AIBOX_PROXY_URL" HTTPS_PROXY="$AIBOX_PROXY_URL"
-      warn "  → adopting static proxy $(mask_url "$AIBOX_PROXY_URL") for this run. Persist: aibox proxy on" ;;
+      warn "adopting static proxy $(mask_url "$AIBOX_PROXY_URL") for this run; persist: aibox proxy on" ;;
     mirror)
       # Nothing to export: a prefix mirror is not a proxy. Modules must honor
       # CLASH_MIRROR themselves (the clash module's downloader does).
-      warn "  → GitHub-family domains reachable only via mirror ${CLASH_MIRROR:-${AIBOX_GH_MIRROR:-}} — module downloads must honor CLASH_MIRROR/AIBOX_GH_MIRROR (clash does)" ;;
+      warn "GitHub-family domains reachable only via mirror ${CLASH_MIRROR:-${AIBOX_GH_MIRROR:-}} — module downloads must honor CLASH_MIRROR/AIBOX_GH_MIRROR (clash does)" ;;
   esac
   AIBOX_PROXY_SOURCE="preflight-${route}"
 }
@@ -1325,14 +1330,14 @@ _preflight_deps() {
       continue
     fi
     if dep_satisfied "$cmd" "$ver"; then
-      info "  ✔ ${cmd}${ver:+ (>=${ver})}"
+      info "✓ ${cmd}${ver:+ (>=${ver})}"
     else
-      warn "  ! ${cmd} missing — attempting auto-install..."
+      warn "${cmd} missing — attempting auto-install..."
       install_dep "$cmd" || true
       if dep_satisfied "$cmd" "$ver"; then
-        info "  ✔ ${cmd} (auto-installed)"
+        info "✓ ${cmd} (auto-installed)"
       else
-        bad "  ✘ ${cmd}${ver:+ (>=${ver})} not satisfied (required by ${name})"
+        bad "${cmd}${ver:+ (>=${ver})} not satisfied (required by ${name})"
         fail=1
       fi
     fi
@@ -1351,9 +1356,9 @@ _preflight_commands() {
     case "$c" in *@*) cmd="${c%@*}"; ptag="${c#*@}" ;; esac
     if [ -n "$ptag" ] && [ "$ptag" != "$os" ]; then continue; fi
     if command -v "$cmd" >/dev/null 2>&1; then
-      info "  ✔ $cmd"
+      info "✓ $cmd"
     else
-      bad "  ✘ $cmd not found (required by ${name})"
+      bad "$cmd not found (required by ${name})"
       fail=1
     fi
   done
@@ -1367,10 +1372,10 @@ _preflight_disk() {
   [ -n "$req" ] || return 0
   free="$(_disk_free_gb "$AIBOX_HOME")"
   if [ "$free" -lt "$req" ]; then
-    bad "  ✘ disk: ${free}G free at ${AIBOX_HOME}, ${name} requires ${req}G"
+    bad "disk: ${free}G free at ${AIBOX_HOME}, ${name} requires ${req}G"
     return 1
   fi
-  info "  ✔ disk: ${free}G free (requires ${req}G)"
+  info "✓ disk: ${free}G free (requires ${req}G)"
 }
 
 # Shared short-circuit: all checks.docker_images present locally?
@@ -1403,18 +1408,18 @@ _preflight_domains() {
   doms="$(module_field "$name" checks_domains)"
   [ -n "$doms" ] || return 0
   if _preflight_images_cached "$name"; then
-    info "  ✔ docker images cached — skipping domain probes"
+    info "✓ docker images cached — skipping domain probes"
     return 0
   fi
   for d in $doms; do
     if _preflight_probe_current "$d"; then
-      info "  ✔ ${d} reachable"
+      info "✓ ${d} reachable"
     else
       failed="${failed} ${d}"
     fi
   done
   [ -z "$failed" ] && return 0
-  warn "  ! unreachable via current route:${failed} — trying configured alternatives (direct/clash/static proxy)..."
+  warn "unreachable via current route:${failed} — trying configured alternatives (direct/clash/static proxy)..."
   for route in direct clash mirror proxy; do
     still=""
     for d in $failed; do
@@ -1422,11 +1427,11 @@ _preflight_domains() {
     done
     if [ -z "$still" ]; then
       _preflight_adopt "$route"
-      info "  ✔ all domains reachable via ${route}"
+      info "✓ all domains reachable via ${route}"
       return 0
     fi
   done
-  bad "  ✘ unreachable domains:${failed}"
+  bad "unreachable domains:${failed}"
   info "    fix: aibox proxy set <url>  /  aibox clash set <sub> + aibox clash on  /  check network"
   return 1
 }
@@ -1440,15 +1445,15 @@ _preflight_docker_pull() {
   [ -n "$img" ] || return 0
   command -v docker >/dev/null 2>&1 || return 0   # absence is reported by deps
   if _preflight_images_cached "$name"; then
-    info "  ✔ docker images cached — skipping pull probe"
+    info "✓ docker images cached — skipping pull probe"
     return 0
   fi
-  log "  probing daemon registry path (docker pull ${img}) ..."
+  info "probing daemon registry path (docker pull ${img}) ..."
   if docker pull -q "$img" >/dev/null 2>&1; then
-    info "  ✔ docker daemon can pull images (${img})"
+    info "✓ docker daemon can pull images (${img})"
     return 0
   fi
-  bad "  ✘ docker daemon cannot pull ${img}"
+  bad "docker daemon cannot pull ${img}"
   info "    daemon egress ≠ host egress: configure /etc/docker/daemon.json registry-mirrors (Linux)"
   info "    or Docker Desktop → Settings → Resources → Proxies. aibox proxy/clash settings do NOT affect the daemon."
   return 1
@@ -1466,9 +1471,9 @@ _preflight_services() {
     component="${svc#base:}"; component="${component%%#*}"
     if ! is_installed base; then
       case " ${missed} " in
-        *" base "*) bad "  ✘ base:${component} not ready (base not installed — see above)" ;;
+        *" base "*) bad "base:${component} not ready (base not installed — see above)" ;;
         *)
-          bad "  ✘ service dep base not installed (fix: aibox${suffix:+ --profile ${prof}} install base)"
+          bad "service dep base not installed (fix: aibox${suffix:+ --profile ${prof}} install base)"
           missed="${missed} base" ;;
       esac
       fail=1
@@ -1476,19 +1481,19 @@ _preflight_services() {
     fi
     cname="aibox-base${suffix}-${component}"
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$cname"; then
-      info "  ✔ base:${component} ready (${cname})"
+      info "✓ base:${component} ready (${cname})"
       continue
     fi
     # Not running — recoverable? Check base's own preflight (once per run).
-    case " ${checked_ok} " in *" base "*) info "  ✔ base:${component} startable (base verified above)"; continue ;; esac
-    case " ${checked_bad} " in *" base "*) bad "  ✘ base:${component} not ready (base preflight failed above)"; fail=1; continue ;; esac
-    warn "  ! base:${component} not running (${cname}) — checking base's own requirements..."
+    case " ${checked_ok} " in *" base "*) info "✓ base:${component} startable (base verified above)"; continue ;; esac
+    case " ${checked_bad} " in *" base "*) bad "base:${component} not ready (base preflight failed above)"; fail=1; continue ;; esac
+    warn "base:${component} not running (${cname}) — checking base's own requirements..."
     if preflight_module base; then
       checked_ok="${checked_ok} base"
-      info "  ✔ base is startable — install will bring it up (ensure_services)"
+      info "✓ base is startable — install will bring it up (ensure_services)"
     else
       checked_bad="${checked_bad} base"
-      bad "  ✘ base:${component} not ready and base's own preflight failed"
+      bad "base:${component} not ready and base's own preflight failed"
       fail=1
     fi
   done
@@ -1528,37 +1533,37 @@ cmd_check() {
 
 # Environment check = the manager's own preflight ("self is a module too").
 cmd_self_check() {
-  log "aibox environment check"
+  printf '%s%s%s\n' "$C_BOLD" "aibox environment check" "$C_RST"
   case "${AIBOX_PROXY_SOURCE:-}" in
-    clash)    info "egress: clash pool (socks5://127.0.0.1:${CLASH_PORT:-7890})" ;;
-    config)   info "egress: static proxy $(mask_url "${AIBOX_PROXY_URL:-}")" ;;
-    env)      info "egress: environment proxy $(mask_url "${AIBOX_PROXY_URL:-}")" ;;
-    disabled) info "egress: direct (proxy configured but disabled)" ;;
-    *)        info "egress: direct" ;;
+    clash)    info "egress:      clash pool (socks5://127.0.0.1:${CLASH_PORT:-7890})" ;;
+    config)   info "egress:      static proxy $(mask_url "${AIBOX_PROXY_URL:-}")" ;;
+    env)      info "egress:      environment proxy $(mask_url "${AIBOX_PROXY_URL:-}")" ;;
+    disabled) info "egress:      direct (proxy configured but disabled)" ;;
+    *)        info "egress:      direct" ;;
   esac
   local core="raw.githubusercontent.com api.github.com" d failed="" route still
   for d in $core; do
     if _preflight_probe_current "$d"; then
-      info "  ✔ ${d}"
+      info "✓ ${d}"
     else
       failed="${failed} ${d}"
     fi
   done
   if [ -n "$failed" ]; then
-    warn "  ! unreachable via current route:${failed} — trying configured alternatives..."
+    warn "unreachable via current route:${failed} — trying alternatives"
     for route in direct clash mirror proxy; do
       still=""
       for d in $failed; do _preflight_probe_route "$route" "$d" || still="${still} ${d}"; done
       if [ -z "$still" ]; then _preflight_adopt "$route"; failed=""; break; fi
     done
-    [ -n "$failed" ] && bad "  ✘ core domains unreachable:${failed}"
+    [ -n "$failed" ] && bad "core domains unreachable:${failed}"
   fi
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     ok "docker daemon reachable"
   else
     warn "docker not available (needed by base/openmaic/windmill)"
   fi
-  info "disk free at AIBOX_HOME: $(_disk_free_gb "$AIBOX_HOME")G"
+  info "disk free:    $(_disk_free_gb "$AIBOX_HOME")G at AIBOX_HOME"
   info "module preflight: aibox check <module>"
   [ -z "$failed" ]
 }
@@ -1659,7 +1664,7 @@ install_dep() {
   local cmd="$1" os pm eng comp root
   os="$(uname -s)"
   root=0; [ "$(id -u)" = "0" ] && root=1
-  log "  Auto-installing ${cmd} ..."
+  info "Auto-installing ${cmd} ..."
   if [ "$os" = "Darwin" ]; then
     if command -v brew >/dev/null 2>&1; then pm="brew"
     else warn "  No Homebrew (install brew and retry: https://brew.sh)"; return 1; fi
@@ -1670,7 +1675,7 @@ install_dep() {
   case "$cmd" in
     docker|docker-compose)
       if [ "$os" = "Darwin" ]; then
-        log "  brew install --cask docker (Docker Desktop, includes compose v2)"
+        info "brew install --cask docker (Docker Desktop, includes compose v2)"
         brew install --cask docker || { warn "  Docker Desktop install failed (download manually: https://docker.com)"; return 1; }
         warn "  After install, start Docker.app and accept the license (can't be fully automated)"
       elif [ "$root" = "1" ]; then
@@ -1683,7 +1688,7 @@ install_dep() {
           apt-get) eng="docker.io"; comp="docker-compose-v2" ;;
           *)       eng="docker-ce"; comp="docker-compose-plugin" ;;
         esac
-        log "  ${pm} install -y ${eng} ${comp} (running as root)"
+        info "${pm} install -y ${eng} ${comp} (running as root)"
         _pm_install "$pm" "$eng" "$comp" 2>/dev/null \
           || ${pm} install -y moby-engine docker-compose-plugin 2>/dev/null \
           || ${pm} install -y docker.io docker-compose-v2 2>/dev/null \
@@ -1707,7 +1712,7 @@ install_dep() {
         # node-dist source pool: the fastest dist mirror serves (measured on the
         # REAL index.json nvm fetches; DIRECT stays default on healthy networks).
         export NVM_NODEJS_ORG_MIRROR="$(_node_dist_pick)"
-        log "  node dist: ${NVM_NODEJS_ORG_MIRROR}"
+        info "node dist: ${NVM_NODEJS_ORG_MIRROR}"
         nvm install 22 && nvm use 22 >/dev/null
       elif [ "$pm" = "brew" ]; then brew install node@22
       elif [ "$root" = "1" ]; then
@@ -1744,8 +1749,8 @@ _port_is_listening() {
 
 cmd_ports() {
   load_registry
-  echo "Port assignments:"
-  printf '  %-12s %-14s %-10s %s\n' "Module" "Port/Proto" "Usage" "Status"
+  printf '%s%s%s\n' "$C_BOLD" "ports" "$C_RST"
+  printf '%s  %-14s  %-9s  %-10s  %-10s  %s%s\n' "$C_DIM" "MODULE" "PORT" "PROTO" "USAGE" "STATUS" "$C_RST"
   local m p port proto_usage proto usage status
   for m in ${AIBOX_MODULES:-}; do
     for p in $(module_field "$m" ports); do
@@ -1754,11 +1759,11 @@ cmd_ports() {
       proto="${proto_usage%%:*}"
       usage="${proto_usage#*:}"
       if _port_is_listening "$port"; then
-        status="listening"
+        status="${C_GRN}listening${C_RST}"
       else
-        status="—"
+        status="${C_DIM}—${C_RST}"
       fi
-      printf '  %-12s %-14s %-10s %s\n' "$m" "${port}/${proto}" "$usage" "$status"
+      printf '  %-14s  %-9s  %-10s  %-10s  %s\n' "$m" "$port" "$proto" "$usage" "$status"
     done
   done
 }
@@ -1829,9 +1834,9 @@ ensure_services() {
     fi
     # `base start` is idempotent (compose up -d no-ops if already running);
     # the container name is profile-dependent, so we don't hardcode it here.
-    log "  Starting shared base (${name} depends on it)…"
+    info "Starting shared base (${name} depends on it)…"
     AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" start || { warn "base start failed (start manually: aibox base start)"; continue; }
-    log "  Creating ${component} resource '${resource}' (shared base)…"
+    info "Creating ${component} resource '${resource}' (shared base)…"
     AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" create "${component}" "${resource}" || warn "base create ${component} ${resource} failed (create manually: aibox base create ${component} ${resource})"
   done
   return 0
@@ -1895,7 +1900,7 @@ cmd_update() {
   if [ -n "$name" ]; then
     if [ "$name" = self ]; then cmd_self_update; return $?; fi
     is_installed "${name}" || die "${name} not installed"
-    log "Updating ${name} (re-fetching module scripts)..."
+    log "Updating ${name} (re-fetching module scripts) ..."
     download_module "${name}"
     preflight_module "${name}" || die "Update aborted by preflight (fix the issues above, or re-run with --skip-checks)"
     local dest="$AIBOX_LAST_DEST" upd
@@ -2153,7 +2158,7 @@ cmd_upgrade() {
   for kv in "${newvals[@]}"; do
     img="${kv#*=}"
     if docker image inspect "${img}" >/dev/null 2>&1; then
-      log "already cached: ${img}"
+      log "Already cached: ${img}"
       continue
     fi
     log "pulling ${img} …"
@@ -2185,14 +2190,19 @@ cmd_upgrade() {
 
 cmd_list_available() {
   load_registry
-  echo "Available modules (registry @ ${AIBOX_BRANCH}):"
-  local m desc ver inst line
+  printf '%s%s%s\n' "$C_BOLD" "aibox module catalog" "$C_RST"
+  printf '%sregistry @ %s\n\n' "$C_DIM" "${AIBOX_BRANCH}"
+  printf '%s  %-14s  %-8s  %-30s  %s%s\n' "$C_DIM" "MODULE" "VERSION" "DESCRIPTION" "STATUS" "$C_RST"
+  local m desc ver inst
   for m in ${AIBOX_MODULES:-}; do
     desc="$(module_field "$m" description)"
     ver="$(module_field "$m" version)"
-    inst=""; is_installed "$m" && inst="  ${C_DIM}✔ installed${C_RST}"
-    line=$(printf '%-14s %-8s %s' "$m" "$ver" "$desc")
-    printf '  %s%s\n' "$line" "$inst"
+    if is_installed "$m"; then
+      inst="${C_GRN}✓ installed${C_RST}"
+    else
+      inst="${C_DIM}—${C_RST}"
+    fi
+    printf '  %-14s  %-8s  %-30s  %s\n' "$m" "$ver" "$(_trunc "${desc:-}" 30)" "$inst"
   done
 }
 
@@ -2212,41 +2222,42 @@ _trunc() { local s="$1" n="$2"; [ "${#s}" -gt "$n" ] && printf '%s…' "${s:0:$(
 
 cmd_dashboard_overview() {
   load_registry
-  printf '  %-16s  %-8s  %-26s  %s\n' "MODULE" "VERSION" "ENDPOINT" "CREDENTIALS"
-  echo "  ───────────────────────────────────────────────────────────────────────────────"
+  printf '%s%s%s\n' "$C_BOLD" "aibox modules" "$C_RST"
+  printf '%s%s\n\n' "$C_DIM" "$(date '+%Y-%m-%d %H:%M')${C_RST}"
+  printf '%s    %-14s  %-8s  %-28s  %s%s\n' "$C_DIM" "MODULE" "VERSION" "ENDPOINT" "CREDENTIALS" "$C_RST"
   local m info endpoint cred mark ver
   for m in ${AIBOX_MODULES:-}; do
     ver="$(module_field "$m" version)"
     if is_installed "$m"; then
-      mark="${C_GRN}✔${C_RST}"
+      mark="${C_GRN}✓${C_RST}"
       info=""
       [ -f "$AIBOX_MOD_DIR/$m/lib.sh" ] && \
         info="$(AIBOX_MODULE="$m" AIBOX_HOME="$AIBOX_HOME" bash -c ". '$AIBOX_MOD_DIR/$m/lib.sh' 2>/dev/null && type dashboard_info >/dev/null 2>&1 && dashboard_info 2>/dev/null || true" 2>/dev/null)"
       endpoint=$(printf '%s\n' "$info" | sed -n 's/^endpoint=//p')
       cred=$(printf '%s\n' "$info" | sed -n 's/^credential=//p')
     else
-      mark="${C_RED}✘${C_RST}"
+      mark="${C_DIM}·${C_RST}"
       endpoint="—"; cred="not installed"
     fi
-    endpoint=$(_trunc "${endpoint:-—}" 26)
+    endpoint=$(_trunc "${endpoint:-—}" 28)
     cred=$(_trunc "${cred:-—}" 42)
-    printf '  %s %-14s  %-8s  %-26s  %s\n' "$mark" "$m" "${ver:-—}" "$endpoint" "$cred"
+    printf '  %s %-14s  %-8s  %-28s  %s\n' "$mark" "$m" "${ver:-—}" "$endpoint" "$cred"
   done
   echo
   cmd_ports
   echo
-  info "✔ installed  ✘ not installed  —  detail + health: aibox dashboard <module>; catalog: aibox dashboard --available"
+  info "detail: aibox dashboard <module>  ·  catalog: aibox dashboard --available"
 }
 
 cmd_dashboard_detail() {
   local name="$1"
   load_registry
   module_exists "$name" || die "Unknown module: $name"
-  echo "=== $name ==="
+  printf '%s%s v%s%s\n' "$C_BOLD" "$name" "$(module_field "$name" version)" "$C_RST"
   if ! is_installed "$name"; then
-    warn "$name not installed"
-    log "credentials: $(module_field "$name" dashboard_hint)"
-    log "install: aibox install $name"
+    warn "$name is not installed"
+    info "credentials: $(module_field "$name" dashboard_hint)"
+    info "install: aibox install $name"
     return
   fi
   local info endpoint cred logf health code
@@ -2255,21 +2266,21 @@ cmd_dashboard_detail() {
   cred=$(printf '%s\n' "$info" | sed -n 's/^credential=//p')
   logf=$(printf '%s\n' "$info" | sed -n 's/^log=//p')
   health=$(printf '%s\n' "$info" | sed -n 's/^health=//p')
-  log "status: installed"
-  [ -n "$endpoint" ] && log "endpoint: $endpoint"
-  [ -n "$cred" ] && log "credentials: $cred"
-  [ -n "$logf" ] && log "log: $logf"
+  ok "installed"
+  [ -n "$endpoint" ] && log "endpoint:  $endpoint"
+  [ -n "$cred" ]    && log "auth:      $cred"
+  [ -n "$logf" ]    && log "log:       $logf"
   if [ -n "$endpoint" ]; then
     case "$endpoint" in
       http://*|https://*)
         code=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "$endpoint" 2>/dev/null) || code="000"
         [ -n "$code" ] || code="000"
         case "$code" in
-          200|204|301|302|307|308|401) ok "health: ok HTTP $code" ;;
-          000) bad "health: unreachable" ;;
-          *) warn "health: HTTP $code" ;;
+          200|204|301|302|307|308|401) ok "health: HTTP $code" ;;
+          000) bad "unreachable" ;;
+          *) warn "HTTP $code" ;;
         esac ;;
-      *) [ -n "$health" ] && log "health probe: $health" ;;
+      *) [ -n "$health" ] && log "probe:     $health" ;;
     esac
   fi
 }
@@ -2279,12 +2290,12 @@ cmd_dev_guide() {
   local name="$1"
   load_registry
   module_exists "$name" || die "Unknown module: $name"
-  echo "Module: $name v$(module_field "$name" version)"
-  echo "homepage: $(module_field "$name" upstream_homepage)"
-  echo "docs: $(module_field "$name" upstream_docs)"
-  echo "install: $(module_field "$name" upstream_install)"
-  echo "test: $(module_field "$name" upstream_test)"
-  echo "dev guide: tools/$name/docs/DEVELOPMENT.md"
+  printf '%s%s v%s%s\n' "$C_BOLD" "$name" "$(module_field "$name" version)" "$C_RST"
+  info "homepage:   $(module_field "$name" upstream_homepage)"
+  info "docs:       $(module_field "$name" upstream_docs)"
+  info "install:    $(module_field "$name" upstream_install)"
+  info "test:       $(module_field "$name" upstream_test)"
+  info "dev guide:  tools/$name/docs/DEVELOPMENT.md"
 }
 
 # Dispatch a module action. NOTE: svc.sh is an "action entry point", NOT necessarily
@@ -2298,9 +2309,10 @@ cmd_module_action() {
   local action="${1:-}"
   if [ -z "$action" ]; then
     load_registry
-    echo "Module ${name}. Usage: aibox ${name} <action>"
+    printf '%s%s%s\n' "$C_BOLD" "${name} v$(module_field "${name}" version 2>/dev/null)" "$C_RST"
     local acts; acts="$(module_field "${name}" actions)"
-    [ -n "$acts" ] && echo "Available actions: ${acts}"
+    [ -n "$acts" ] && printf '%s\n' "actions:  ${acts}"
+    info "usage: aibox ${name} <action>"
     return
   fi
   shift
@@ -2501,7 +2513,7 @@ _purge_apply_item() { # $1=kind $2=target $3=stop(0|1)
   case "$k" in
     dir|file)
       if rm -rf "$t"; then
-        PURGE_DELETED=$((PURGE_DELETED + 1)); log "  removed ${k}: $t"
+        PURGE_DELETED=$((PURGE_DELETED + 1)); info "removed ${k}: $t"
       else
         PURGE_SKIPPED=$((PURGE_SKIPPED + 1)); warn "  failed to remove ${k}: $t"
       fi ;;
@@ -2511,7 +2523,7 @@ _purge_apply_item() { # $1=kind $2=target $3=stop(0|1)
         if [ "$stop" = 1 ]; then
           docker stop -t 15 "$t" >/dev/null 2>&1 || true
           if docker rm -f "$t" >/dev/null 2>&1; then
-            PURGE_DELETED=$((PURGE_DELETED + 1)); log "  stopped+removed container: $t"
+            PURGE_DELETED=$((PURGE_DELETED + 1)); info "stopped+removed container: $t"
           else
             PURGE_SKIPPED=$((PURGE_SKIPPED + 1)); warn "  failed to remove container: $t"
           fi
@@ -2520,36 +2532,36 @@ _purge_apply_item() { # $1=kind $2=target $3=stop(0|1)
         fi
       else
         if docker rm -f "$t" >/dev/null 2>&1; then
-          PURGE_DELETED=$((PURGE_DELETED + 1)); log "  removed container: $t"
+          PURGE_DELETED=$((PURGE_DELETED + 1)); info "removed container: $t"
         else
           PURGE_SKIPPED=$((PURGE_SKIPPED + 1)); warn "  failed to remove container: $t"
         fi
       fi ;;
     volume)
       if docker volume rm "$t" >/dev/null 2>&1; then
-        PURGE_DELETED=$((PURGE_DELETED + 1)); log "  removed volume: $t"
+        PURGE_DELETED=$((PURGE_DELETED + 1)); info "removed volume: $t"
       else
         PURGE_SKIPPED=$((PURGE_SKIPPED + 1)); warn "  volume busy or gone: $t"
       fi ;;
     systemd)
       unit="$(basename "$t")"
       if command -v systemctl >/dev/null 2>&1; then systemctl disable --now "$unit" >/dev/null 2>&1 || true; fi
-      if rm -f "$t"; then PURGE_DELETED=$((PURGE_DELETED + 1)); log "  removed systemd unit: $t"; fi ;;
+      if rm -f "$t"; then PURGE_DELETED=$((PURGE_DELETED + 1)); info "removed systemd unit: $t"; fi ;;
     npm)
       if command -v npm >/dev/null 2>&1 && npm uninstall -g "$t" >/dev/null 2>&1; then
-        PURGE_DELETED=$((PURGE_DELETED + 1)); log "  removed npm global: $t"
+        PURGE_DELETED=$((PURGE_DELETED + 1)); info "removed npm global: $t"
       else
         PURGE_SKIPPED=$((PURGE_SKIPPED + 1)); warn "  npm uninstall failed: $t (manual: npm uninstall -g $t)"
       fi ;;
     process)
       if [ "$stop" = 1 ]; then
         pkill -x "$t" >/dev/null 2>&1 || true
-        PURGE_DELETED=$((PURGE_DELETED + 1)); log "  terminated process: $t"
+        PURGE_DELETED=$((PURGE_DELETED + 1)); info "terminated process: $t"
       else
         PURGE_SKIPPED=$((PURGE_SKIPPED + 1)); warn "  process '$t' still running — rerun with --stop"
       fi ;;
     rc)
-      if _purge_rc_strip "$t"; then PURGE_DELETED=$((PURGE_DELETED + 1)); log "  removed # aibox block from $t"; fi ;;
+      if _purge_rc_strip "$t"; then PURGE_DELETED=$((PURGE_DELETED + 1)); info "removed # aibox block from $t"; fi ;;
   esac
   return 0
 }
@@ -2701,9 +2713,9 @@ _self_teardown_one() { # $1=module $2=profile $3=purge(0|1)
   local dest="$AIBOX_MOD_DIR/$m"
   if [ -f "$dest/uninstall.sh" ]; then
     if [ "$purge_env" = 1 ]; then
-      log "  removing ${m}@${p} via its uninstall hook (PURGE: hook will delete data) ..."
+      info "removing ${m}@${p} via its uninstall hook (PURGE: hook will delete data) ..."
     else
-      log "  removing ${m}@${p} via its uninstall hook ..."
+      info "removing ${m}@${p} via its uninstall hook ..."
     fi
     ( AIBOX_MODULE="$m" AIBOX_PROFILE="$p" AIBOX_PURGE_DATA="$purge_env" \
       bash "$dest/uninstall.sh" ) || warn "  hook for ${m}@${p} exited non-zero (continuing)"
@@ -2720,9 +2732,9 @@ _self_rc_cleanup() {
     grep -q '^# aibox$' "$rc" || continue
     _purge_rc_strip "$rc"
     n=$((n + 1))
-    log "  removed the aibox PATH block from $rc"
+    info "removed the aibox PATH block from $rc"
   done
-  if [ "$n" = 0 ]; then log "  no marked aibox PATH block found in shell rc files"; fi
+  if [ "$n" = 0 ]; then info "no marked aibox PATH block found in shell rc files"; fi
   return 0
 }
 
@@ -2752,28 +2764,28 @@ cmd_self_uninstall() {
   # ---- inventory ----
   entries="$(_self_uninstall_entries)"
   log "aibox self uninstall — inventory"
-  log "  manager : $AIBOX_BIN_DIR/aibox + $AIBOX_HOME"
+  info "manager : $AIBOX_BIN_DIR/aibox + $AIBOX_HOME"
   if [ -n "$entries" ]; then
-    log "  installed (module@profile):"
+    info "installed (module@profile):"
     printf '%s\n' "$entries" | while IFS=' ' read -r em ep; do
-      if [ -n "$em" ]; then log "    - ${em}@${ep}"; fi
+      if [ -n "$em" ]; then info "  - ${em}@${ep}"; fi
     done
   else
-    log "  installed modules: none"
+    info "installed modules: none"
   fi
   if [ -d "$AIBOX_HOME/apps" ]; then
     for d in "$AIBOX_HOME"/apps/*/; do
-      if [ -d "$d" ]; then log "  deploy  : ${d%/}"; fi
+      if [ -d "$d" ]; then info "deploy  : ${d%/}"; fi
     done
   fi
   if _purge_docker_up; then
     ctrs="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^(aibox-|windmill|gitlab|app-|openmaic|dify-)' | tr '\n' ' ' || true)"
-    if [ -n "$ctrs" ]; then log "  running containers: ${ctrs}"; fi
+    if [ -n "$ctrs" ]; then info "running containers: ${ctrs}"; fi
   fi
   if [ "$purge" = 1 ]; then
-    log "  plan    : PURGE — uninstall every module WITH its data (hooks), then remove manager + rc block"
+    info "plan    : PURGE — uninstall every module WITH its data (hooks), then remove manager + rc block"
   else
-    log "  plan    : remove the manager only; module services and data are KEPT"
+    info "plan    : remove the manager only; module services and data are KEPT"
   fi
 
   # ---- confirm ----
@@ -2825,70 +2837,48 @@ ENTRIES
 }
 
 usage() {
-  cat <<EOF
-aibox $AIBOX_VERSION — a lightweight, zero-dependency module manager for AI coding toolkits
-Repo: https://github.com/lichengwu/aibox
+  printf '%s%saibox %s%s %s— module manager for AI coding toolkits%s\n\n' "$C_BOLD" "$C_CYA" "$AIBOX_VERSION" "$C_RST" "$C_DIM" "$C_RST"
 
-Usage (one grammar: everything is a module — 'self' is the manager module):
-  aibox install <module> [--skip-checks]   install a module (preflight-gated)
-  aibox uninstall <module>|self [--purge] [--yes]
-                                    uninstall a module; --purge also deletes its DATA.
-                                    'self' = the manager: by default removes ONLY aibox
-                                    (services/data KEPT, apps/ preserved); --purge =
-                                    cascade full teardown (every module's uninstall
-                                    --purge, then manager + rc block)
-  aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks]
-                                    update modules; self = aibox itself; --all = modules + self
-  aibox upgrade <module> [--check] [--to <version>] [--yes]
-                                    upgrade the deployed COMPONENT to a newer upstream release
-                                    WITHOUT an aibox release (repo pins the install floor, the
-                                    deploy .env floats; auto-rollback on failed health check)
-  aibox <module> <action> [args]    invoke a module action (e.g. aibox pi-web start)
+  printf '%sCommands\n\n' "${C_BOLD}${C_CYA}"
+  cat <<'EOF'
+  install <module>            Install a module (preflight-gated; --skip-checks to bypass)
+  uninstall <module>|self     Uninstall a module; --purge also deletes data
+  update <module>|self|--all  Update module scripts (self = manager; --all = everything)
+  upgrade <module>            Upgrade deployed component without an aibox release
+                              (repo pins the floor, deploy .env floats; auto-rollback)
+  <module> <action>           Invoke a module action (e.g. aibox pi-web start)
 
-  aibox check <module>|self         module preflight; 'self' = environment check
-                                    (egress route, core domains, docker, disk)
-  aibox dashboard [--available] [<module>]
-                                    overview: modules + versions + endpoints + credentials
-                                    + port table;  --available: registry catalog;
-                                    <module>: single-module detail + health
-  aibox purge [<module>...|self] [--apply] [--stop] [--yes]
-                                    residue scan/cleanup (dry-run by default): volumes,
-                                    apps/, /etc dirs, units, binaries left after uninstalls
-  aibox version | -v | --version
-  aibox help | -h | --help
-
-Proxy (set once; covers aibox itself and module hooks):
-  aibox proxy                      show current config and state
-  aibox proxy set <url>            set: test -> save -> verify site connectivity
-                                    (--no-test skips all; --no-check skips site verification)
-  aibox proxy check [url]          no url: dev-site matrix (github/docker/npm; revert prompt)
-                                    with url: single-target + direct-connection control
-  aibox proxy on | off             enable / disable (config retained)
-  aibox proxy unset                clear the config
-  aibox proxy env [--remote]       print export statements / remote-ship format
-  aibox --no-proxy <command>       bypass the proxy for this invocation
-  aibox --profile <name> <command>  use a named profile (default: base; named profiles derive
-                                    ports/containers/volumes deterministically from the name)
-
-  The site list is overridable via AIBOX_PROBE_SITES, format: "label|url|group" per line.
-
-Clash subscription proxy pool (mihomo kernel, auto speed-test/switch; see aibox clash --help):
-  aibox install clash              install the mihomo kernel (aibox downloads the binary)
-  aibox clash set <sub-url>         store the subscription + generate config
-  aibox clash on | off              start/stop (on switches aibox egress to local mihomo)
-  aibox clash status                status + current node
-  aibox clash refresh               force-refresh the subscription (auto-refreshes after 1 week)
-  aibox clash select <node>         switch node manually
-  aibox clash test | logs | doctor  probe / logs / self-check
-
-  Clash takes priority over the static proxy when on; reverts on off. See tools/clash/README.md.
-
-Verification (defense in depth for the curl|bash bootstrap):
-  AIBOX_SHA256=<hash>              verify the downloaded bin/aibox against this checksum
-  AIBOX_VERIFY=1                   fetch and check the release SHA256SUMS sidecar if present
-
-First module: aibox install pi-web
 EOF
+
+  printf '%sInspection\n\n' "${C_BOLD}${C_CYA}"
+  cat <<'EOF'
+  check <module>|self        Preflight check (self = environment: egress, docker, disk)
+  dashboard [--available]    Module overview + ports; --available = registry catalog
+  purge [module...|self]     Residue scan/cleanup (dry-run by default)
+
+EOF
+
+  printf '%sProxy & Clash\n\n' "${C_BOLD}${C_CYA}"
+  cat <<'EOF'
+  proxy show|set|on|off      Static proxy management (set once; covers module hooks)
+  proxy check [url]          Site connectivity test (no url = full matrix)
+  clash on|off|status        Clash pool (mihomo kernel; takes priority when on)
+  clash set <sub-url>        Store subscription + generate config
+  --no-proxy <command>       Bypass proxy for one invocation
+  --profile <name>           Use a named profile (deterministic ports/volumes)
+
+EOF
+
+  printf '%sGlobal Flags\n\n' "${C_BOLD}${C_CYA}"
+  cat <<'EOF'
+  --yes, -y                  Skip interactive confirmations
+  --skip-checks              Bypass preflight checks
+  AIBOX_SHA256=<hash>        Verify bin/aibox checksum (bootstrap defense)
+  AIBOX_VERIFY=1             Check release SHA256SUMS sidecar
+
+EOF
+
+  info "get started: aibox install pi-web  ·  https://github.com/lichengwu/aibox"
 }
 
 # ---------- global options / dispatch (only when executed, not sourced) ----------

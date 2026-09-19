@@ -8,11 +8,11 @@ CLI_NAME="base"
 # Colors are inherited from aibox via the exported C_* env vars (single source of truth);
 # ${C_*:-} falls back to empty when this lib is sourced standalone.
 # Prefix uses AIBOX_MODULE (injected by aibox) with the module name as a fallback.
-log() { printf '%s[%s]%s %s\n' "${C_CYA:-}" "${AIBOX_MODULE:-base}" "${C_RST:-}" "${*}"; }
-warn() { printf '%s[!]%s %s\n' "${C_YEL:-}" "${C_RST:-}" "${*}" >&2; }
-ok()   { printf '%s[ok]%s %s\n' "${C_GRN:-}" "${C_RST:-}" "${*}"; }
+log()  { printf '%s\n' "$*"; }
+warn() { printf '%s⚠%s  %s\n' "${C_YEL:-}" "${C_RST:-}" "$*" >&2; }
+ok()   { printf '%s✓%s  %s\n' "${C_GRN:-}" "${C_RST:-}" "$*"; }
 die() {
-  printf '%s[x]%s %s\n' "${C_RED:-}" "${C_RST:-}" "${*}" >&2
+  printf '%s✗%s  %s\n' "${C_RED:-}" "${C_RST:-}" "$*" >&2
   exit 1
 }
 

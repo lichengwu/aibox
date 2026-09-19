@@ -138,9 +138,9 @@ fi
 # =============================================================================
 say()  { [ "$QUIET" = 1 ] || printf '%s\n' "$*"; }
 info() { [ "$QUIET" = 1 ] || printf '%s%s%s\n' "$C_BOLD" "$*" "$C_RST"; }
-ok()   { [ "$QUIET" = 1 ] || printf '%s✔%s %s\n' "$C_GRN" "$C_RST" "$*"; }
-warn() { printf '%s!%s %s\n' "$C_YEL" "$C_RST" "$*" >&2; }
-err()  { printf '%s✘%s %s\n' "$C_RED" "$C_RST" "$*" >&2; }
+ok()   { [ "$QUIET" = 1 ] || printf '%s✓%s  %s\n' "$C_GRN" "$C_RST" "$*"; }
+warn() { printf '%s⚠%s  %s\n' "$C_YEL" "$C_RST" "$*" >&2; }
+err()  { printf '%s✗%s  %s\n' "$C_RED" "$C_RST" "$*" >&2; }
 dim()  { [ "$QUIET" = 1 ] || printf '%s%s%s\n' "$C_DIM" "$*" "$C_RST"; }
 step() { [ "$QUIET" = 1 ] || printf '\n%s▸ %s%s\n' "$C_BLU" "$*" "$C_RST"; }
 hint() { [ "$QUIET" = 1 ] || printf '  %s%s%s\n' "$C_DIM" "$*" "$C_RST"; }

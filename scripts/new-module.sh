@@ -181,13 +181,14 @@ render "$DEST/lib.sh" <<'EOF'
 
 MODULE_NAME="__NAME__"
 
-# Output helpers: colors are inherited from aibox via exported C_* env vars
-# (single source of truth); ${C_*:-} falls back to plain output when this lib
-# is sourced standalone.
-log()  { printf '%s[%s]%s %s\n' "${C_CYA:-}" "${AIBOX_MODULE:-$MODULE_NAME}" "${C_RST:-}" "${*}"; }
-warn() { printf '%s[!]%s %s\n' "${C_YEL:-}" "${C_RST:-}" "${*}" >&2; }
-ok()   { printf '%s[ok]%s %s\n' "${C_GRN:-}" "${C_RST:-}" "${*}"; }
-die()  { printf '%s[x]%s %s\n' "${C_RED:-}" "${C_RST:-}" "${*}" >&2; exit 1; }
+# Output helpers: symbols align with the manager's output system (bin/aibox):
+# log = plain action line; warn/ok/die = symbol prefix (⚠/✓/✗, two-space gap);
+# colors are inherited from aibox via exported C_* env vars (single source of
+# truth); ${C_*:-} falls back to plain output when this lib is sourced standalone.
+log()  { printf '%s\n' "$*"; }
+warn() { printf '%s⚠%s  %s\n' "${C_YEL:-}" "${C_RST:-}" "$*" >&2; }
+ok()   { printf '%s✓%s  %s\n' "${C_GRN:-}" "${C_RST:-}" "$*"; }
+die()  { printf '%s✗%s  %s\n' "${C_RED:-}" "${C_RST:-}" "$*" >&2; exit 1; }
 
 # Deploy root per the aibox convention ($AIBOX_HOME/apps/<name>; module-spec
 # §Deploy directory). The guard is mandatory: systemd service contexts may
