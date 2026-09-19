@@ -105,14 +105,16 @@ teardown() {
 _pulls() { grep -c "PULL" "$FAKE_DOCKER_PULLLOG" || true; }
 _mirror_pulls() { grep -cE "PULL (docker\.[0-9a-z.]+|dockerproxy|hub\.rat)" "$FAKE_DOCKER_PULLLOG" || true; }
 
-@test "_dk_is_dockerio: docker.io vs foreign-registry refs" {
+@test "_dk_is_dockerio: docker.io vs foreign-registry refs (incl. the explicit docker.io/ form)" {
+  _dk_is_dockerio "docker.io/library/mysql:8.0"
   _dk_is_dockerio "langgenius/dify-api:1.17.1" && _dk_is_dockerio "postgres:15-alpine" \
     && _dk_is_dockerio "nginx:latest" \
     && ! _dk_is_dockerio "cr.weaviate.io/semitechnologies/weaviate:1.39.2" \
     && ! _dk_is_dockerio "localhost:5000/foo"
 }
 
-@test "_dk_pool_ref: official images get the library/ prefix" {
+@test "_dk_pool_ref: official images get the library/ prefix; docker.io/ prefix is stripped" {
+  [ "$(_dk_pool_ref docker.1ms.run "docker.io/library/mysql:8.0")" = "docker.1ms.run/library/mysql:8.0" ]
   [ "$(_dk_pool_ref docker.1ms.run "postgres:15-alpine")" = "docker.1ms.run/library/postgres:15-alpine" ]
   [ "$(_dk_pool_ref docker.1ms.run "langgenius/dify-api:1.17.1")" = "docker.1ms.run/langgenius/dify-api:1.17.1" ]
 }

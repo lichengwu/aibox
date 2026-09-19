@@ -171,6 +171,7 @@ DOCKER_POOL_MIRRORS="docker.1ms.run docker.m.daocloud.io dockerproxy.net hub.rat
 # not a port (tag-stripping first would misread localhost:5000/foo's port).
 _dk_is_dockerio() {
   case "${1}" in
+  docker.io/*) return 0 ;;   # explicit default-registry form is still docker.io
   */*)
     case "${1%%/*}" in
     *.* | *:*) return 1 ;;
@@ -183,7 +184,9 @@ _dk_is_dockerio() {
 
 # Mirror-prefixed ref (official images live under library/).
 _dk_pool_ref() { # $1=mirror-host $2=image-ref
+  # Branch order matters: docker.io/* must come before the wildcard */*.
   case "${2}" in
+  docker.io/*) printf '%s/%s' "${1}" "${2#docker.io/}" ;;
   */*) printf '%s/%s' "${1}" "${2}" ;;
   *) printf '%s/library/%s' "${1}" "${2}" ;;
   esac

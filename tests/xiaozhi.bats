@@ -166,10 +166,14 @@ teardown() {
   [ "$(effective_http_port)" = "18003" ]
 }
 
-@test "_ghcr_mirror_ref: only ghcr.io refs get mirror-prefixed" {
+@test "_ghcr_mirror_ref: only ghcr.io refs get mirror-prefixed; docker.io/ form handled by the docker.io pool" {
   [ "$(_ghcr_mirror_ref ghcr.nju.edu.cn "ghcr.io/xinnan-tech/xiaozhi-esp32-server:server_0.9.6")" = "ghcr.nju.edu.cn/xinnan-tech/xiaozhi-esp32-server:server_0.9.6" ]
   [ -z "$(_ghcr_mirror_ref ghcr.nju.edu.cn "mysql:8.0")" ]
   [ -z "$(_ghcr_mirror_ref ghcr.nju.edu.cn "docker.io/library/mysql:8.0")" ]
+  # regression: the explicit docker.io/ prefix is the default registry (not
+  # foreign) and its mirror ref strips the prefix (windmill's branch-order rule)
+  _dk_is_dockerio "docker.io/library/mysql:8.0"
+  [ "$(_dk_pool_ref docker.1ms.run "docker.io/library/mysql:8.0")" = "docker.1ms.run/library/mysql:8.0" ]
 }
 
 @test "ghcr pool: everything cached → no-op, zero pulls" {

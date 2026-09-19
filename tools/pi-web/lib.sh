@@ -141,7 +141,7 @@ ask_yn() {
     def=n
     ;;
   esac
-  printf '%s[?]%s %s %s ' "${C_YEL:-}" "${C_RST:-}" "$prompt" "$hint"
+  printf '%s⚠%s  %s %s ' "${C_YEL:-}" "${C_RST:-}" "$prompt" "$hint"
   read -r ans || return 1
   case "$def" in
   y | Y) case "$ans" in [nN]*) return 1 ;; *) return 0 ;; esac ;;

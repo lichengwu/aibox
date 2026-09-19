@@ -410,7 +410,7 @@ gh_pool_fetch() { # $1 = url → content on stdout; nonzero when everything fail
     _gh_pool_cache_write "${fam}" "${ranked}"
     # stderr only — stdout is the fetched content, often captured in $( ).
     # NB: log to stderr as a notice, not warn — it's informational (which mirror won).
-    printf '%s  source pool (%s): %s won the race (%ss; %s candidate(s) tried)\n' \
+    printf '%s  source pool (%s): %s won the race (%ss; %s candidate(s) tried)%s\n' \
       "${C_DIM:-}" "${fam}" "$(printf '%s' "$(cat "${tmpd}/c${winner}.cand")" | awk -F'|' '{print ($2=="" ? $1 : $2)}')" \
       "$(cat "${tmpd}/c${winner}.time" 2>/dev/null)" "${total}" "${C_RST:-}" >&2
     cat "${tmpd}/c${winner}.body"
@@ -640,6 +640,7 @@ proxy_probe() {
     -w '%{http_code} %{proxy_used}' "$target" 2>/dev/null) || out=""
   code="${out%% *}"
   used="${out##* }"
+  # SC2034-exempt: consumed by tests/proxy.bats (cross-file contract).
   PROBE_CONFIRMED=0
   [ "$code" = "200" ] || return 1
   [ "$used" = "1" ] && PROBE_CONFIRMED=1
@@ -654,7 +655,7 @@ ask_confirm() {
     return 1
   }
   local ans
-  printf '\033[33m[?]\033[0m %s [y/N] ' "$1"
+  printf '%s⚠%s  %s [y/N] ' "$C_YEL" "$C_RST" "$1"
   read -r ans || return 1
   case "$ans" in y | Y | yes | YES) return 0 ;; *) return 1 ;; esac
 }
@@ -1711,8 +1712,13 @@ install_dep() {
         . "$HOME/.nvm/nvm.sh"
         # node-dist source pool: the fastest dist mirror serves (measured on the
         # REAL index.json nvm fetches; DIRECT stays default on healthy networks).
-        export NVM_NODEJS_ORG_MIRROR="$(_node_dist_pick)"
-        info "node dist: ${NVM_NODEJS_ORG_MIRROR}"
+        # SC2155-exempt pattern: a failed pick must NOT silently export an empty
+        # mirror — warn so the fallback (nodejs.org direct) is diagnosable.
+        node_mirror=""
+        [ "${AIBOX_NODE_POOL:-}" = "direct" ] || node_mirror="$(_node_dist_pick 2>/dev/null || true)"
+        [ -n "${node_mirror}" ] || warn "  node-dist pool unavailable — nvm will fetch from nodejs.org directly"
+        export NVM_NODEJS_ORG_MIRROR="${node_mirror}"
+        info "node dist: ${NVM_NODEJS_ORG_MIRROR:-nodejs.org (direct)}"
         nvm install 22 && nvm use 22 >/dev/null
       elif [ "$pm" = "brew" ]; then brew install node@22
       elif [ "$root" = "1" ]; then

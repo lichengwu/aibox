@@ -210,6 +210,7 @@ DOCKER_POOL_MIRRORS="docker.1ms.run docker.m.daocloud.io dockerproxy.net hub.rat
 # DEFAULT registry — its colon is the TAG separator, not a port.
 _dk_is_dockerio() {
   case "${1}" in
+  docker.io/*) return 0 ;;   # explicit default-registry form is still docker.io
   */*)
     case "${1%%/*}" in
     *.* | *:*) return 1 ;;
@@ -222,7 +223,9 @@ _dk_is_dockerio() {
 
 # Mirror-prefixed ref (official images live under library/).
 _dk_pool_ref() { # $1=mirror-host $2=image-ref
+  # Branch order matters: docker.io/* must come before the wildcard */*.
   case "${2}" in
+  docker.io/*) printf '%s/%s' "${1}" "${2#docker.io/}" ;;
   */*) printf '%s/%s' "${1}" "${2}" ;;
   *) printf '%s/library/%s' "${1}" "${2}" ;;
   esac
@@ -373,13 +376,16 @@ _fetch_secret() {
 
 # Write manager-api.secret into data/.config.yaml (the only 'secret:' key).
 _write_secret() { # $1 = value
-  local cfg
+  local cfg val
   cfg="$(config_file)"
   [ -f "${cfg}" ] || die "missing ${cfg} (re-run: aibox install ${MODULE_NAME})"
+  # Escape sed replacement metachars (| is the delimiter, & expands to the
+  # match, \ escapes) — the value is user-supplied via `aibox xiaozhi secret`.
+  val="$(printf '%s' "$1" | sed -e 's/[&|\\\\]/\\\\&/g')"
   if grep -q '^  secret:' "${cfg}"; then
-    sed -i.bak "s|^  secret:.*|  secret: \"${1}\"|" "${cfg}" && rm -f "${cfg}.bak"
+    sed -i.bak "s|^  secret:.*|  secret: \"${val}\"|" "${cfg}" && rm -f "${cfg}.bak"
   else
-    printf '  secret: "%s"\n' "${1}" >>"${cfg}"
+    printf '  secret: "%s"\n' "$1" >>"${cfg}"
   fi
 }
 
