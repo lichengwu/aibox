@@ -418,6 +418,11 @@ gh_pool_fetch() { # $1 = url → content on stdout; nonzero when everything fail
     return 0
   fi
   # No winner: do not cache a failed ranking — the next fetch re-races.
+  # Explicit stderr diagnostic: this path used to return 1 SILENTLY (measured
+  # live: `update self` failed with zero output — callers without their own
+  # die left the user with nothing). One dim line; callers add their context.
+  printf '%s  gh pool: no source could fetch %s (%s candidate(s) tried; hints: aibox clash on, AIBOX_GH_MIRROR=<mirror>)%s\n' \
+    "${C_DIM:-}" "${url}" "${total}" "${C_RST:-}" >&2
   rm -rf "${tmpd}"
   return 1
 }
@@ -1942,8 +1947,12 @@ cmd_update() {
     local dest="$AIBOX_LAST_DEST" upd
     upd="$(module_field "${name}" update)"
     if [ -n "$upd" ] && [ -f "$dest/$upd" ]; then
+      # The hook's own output shows above; wrap its failure with module context
+      # (previously set -e killed the command here with no wrapper message).
       # shellcheck disable=SC2086
-      AIBOX_MODULE="${name}" bash "$dest/$upd" ${restart_arg:+"$restart_arg"}
+      if ! AIBOX_MODULE="${name}" bash "$dest/$upd" ${restart_arg:+"$restart_arg"}; then
+        die "update ${name} FAILED: the module's update hook did not complete (script cache WAS refreshed — apply manually: aibox ${name} restart)"
+      fi
     else
       warn "No update hook; refreshed script cache"
     fi
@@ -1951,8 +1960,17 @@ cmd_update() {
     log "${name} updated to $(module_field "${name}" version)"
   elif [ "$self_flag" = "1" ]; then
     log "Updating all installed modules ..."
-    local m
-    for m in $(installed_names); do cmd_update "$m"; done
+    # Per-module failure tolerance: one bad module must not abort the remaining
+    # updates (previously set -e killed the whole loop at the first failure,
+    # silently skipping the rest + the self-update never ran).
+    local m failed_list=""
+    for m in $(installed_names); do
+      if ! cmd_update "${m}"; then
+        warn "update ${m} failed — continuing with the remaining modules"
+        failed_list="${failed_list} ${m}"
+      fi
+    done
+    [ -n "${failed_list}" ] && bad "update --all: FAILED for:${failed_list} (see each module's output above)"
   else
     die "Usage: aibox update <module> [--restart|--no-restart] [--all] | --all"
   fi
@@ -2950,29 +2968,50 @@ PF2
 # tries to fetch and check the release SHA256SUMS sidecar (graceful if absent).
 
 cmd_self_update() {
-  local before after
+  local before after boot_body
   before="$AIBOX_VERSION"
   log "aibox self-update: currently ${before}, re-bootstrapping ..."
   # AIBOX_RAW must be PASSED THROUGH to install.sh (it re-derives RAW from its
   # own env): without this, a pinned/mirrored AIBOX_RAW only affects the
   # install.sh fetch here while the payload still comes from the default branch
-  # CDN — measured live on remote1: SHA-pinned `update self` silently kept the
-  # stale binary (branch-CDN lag), defeating the pin.
-  if gh_pool_fetch "$AIBOX_RAW/install.sh" | AIBOX_RAW="$AIBOX_RAW" AIBOX_VERIFY="${AIBOX_VERIFY:-0}" AIBOX_SHA256="${AIBOX_SHA256:-}" bash; then
-    # New CLI and new module metadata go together: drop the registry cache so the
-    # next load_registry refetches (measured live: `aibox ports` kept showing a
-    # stale declared port for up to the 1h TTL after self-update).
-    rm -f "$AIBOX_REGISTRY_CACHE" 2>/dev/null || true
-    after="$("$AIBOX_BIN_DIR/aibox" version 2>/dev/null | awk '{print $2}')"
-    [ -z "$after" ] && after="unknown"
-    if [ "$before" = "$after" ]; then
-      log "aibox self-update complete: already latest ($after)"
-    else
-      log "aibox self-update complete: $before -> $after"
-    fi
-    return 0
+  # CDN (measured live on remote1: SHA-pinned `update self` silently kept the
+  # stale binary via branch-CDN lag, defeating the pin).
+  #
+  # The fetch is separated from the pipe (previously `gh_pool_fetch | bash`):
+  # a failed fetch could leave bash running EMPTY input (exit 0) and the wrapper
+  # printed "already latest" (a FALSE success). Every failure mode now has an
+  # explicit message (the silent ones were measured live: the pool's no-winner
+  # path returns 1 with zero output, and the old else-branch was a bare
+  # `return 1` with no message at all).
+  if ! boot_body="$(gh_pool_fetch "$AIBOX_RAW/install.sh" 2>/dev/null)"; then
+    bad "self-update FAILED: could not fetch install.sh from ${AIBOX_RAW} (the source pool was tried — the binary is UNCHANGED at ${before})"
+    warn "network? try: aibox clash on / aibox proxy on; or pin a mirror: AIBOX_GH_MIRROR=https://gh-proxy.com"
+    return 1
   fi
-  return 1
+  if [ -z "${boot_body}" ]; then
+    bad "self-update FAILED: install.sh came back EMPTY (broken mirror?) — the binary is UNCHANGED at ${before}"
+    return 1
+  fi
+  if ! printf '%s' "${boot_body}" | AIBOX_RAW="$AIBOX_RAW" AIBOX_VERIFY="${AIBOX_VERIFY:-0}" AIBOX_SHA256="${AIBOX_SHA256:-}" bash; then
+    bad "self-update FAILED: the bootstrap (download/checksum) did not complete — the binary is UNCHANGED at ${before}"
+    warn "see the bootstrap's message above; network hints: aibox clash on / aibox proxy on"
+    return 1
+  fi
+  # New CLI and new module metadata go together: drop the registry cache so the
+  # next load_registry refetches (measured live: `aibox ports` kept showing a
+  # stale declared port for up to the 1h TTL after self-update).
+  rm -f "$AIBOX_REGISTRY_CACHE" 2>/dev/null || true
+  after="$($AIBOX_BIN_DIR/aibox version 2>/dev/null | awk '{print $2}')"
+  if [ -z "${after}" ]; then
+    warn "self-update: the new binary did not report a version — inspect: $AIBOX_BIN_DIR/aibox version"
+    after="unknown"
+  fi
+  if [ "${before}" = "${after}" ]; then
+    log "aibox self-update complete: already latest (${after})"
+  else
+    log "aibox self-update complete: ${before} -> ${after}"
+  fi
+  return 0
 }
 
 # Fail-closed: $AIBOX_HOME/apps/ holds deploy instances (databases, backups, logs, data

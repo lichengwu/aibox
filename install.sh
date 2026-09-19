@@ -18,10 +18,17 @@ RAW="${AIBOX_RAW:-https://raw.githubusercontent.com/${REPO}/${BRANCH}}"
 BIN_DIR="${AIBOX_BIN_DIR:-$HOME/.local/bin}"
 HOME_DIR="${AIBOX_HOME:-$HOME/.aibox}"
 
-log() { printf '\033[36m[aibox]\033[0m %s\n' "$*"; }
-warn() { printf '\033[33m[!]\033[0m %s\n' "$*"; }
+# Output helpers aligned with the manager's symbol system (bin/aibox):
+# log = plain; warn = ⚠ (stderr); die = ✗ (stderr, exit 1). Raw ANSI here (the
+# bootstrap runs before the CLI's color system exists; NO_COLOR honored).
+_C_RST="$( [ "${NO_COLOR:-}" = "1" ] && printf '' || printf '\033[0m' )"
+_C_DIM="$( [ "${NO_COLOR:-}" = "1" ] && printf '' || printf '\033[2m' )"
+_C_YEL="$( [ "${NO_COLOR:-}" = "1" ] && printf '' || printf '\033[33m' )"
+_C_RED="$( [ "${NO_COLOR:-}" = "1" ] && printf '' || printf '\033[31m' )"
+log() { printf '%s\n' "$*"; }
+warn() { printf '%s⚠%s  %s\n' "${_C_YEL}" "${_C_RST}" "$*" >&2; }
 die() {
-  printf '\033[31m[x]\033[0m %s\n' "$*" >&2
+  printf '%s✗%s  %s\n' "${_C_RED}" "${_C_RST}" "$*" >&2
   exit 1
 }
 
