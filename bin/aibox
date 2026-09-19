@@ -1712,12 +1712,20 @@ install_dep() {
         . "$HOME/.nvm/nvm.sh"
         # node-dist source pool: the fastest dist mirror serves (measured on the
         # REAL index.json nvm fetches; DIRECT stays default on healthy networks).
-        # SC2155-exempt pattern: a failed pick must NOT silently export an empty
-        # mirror — warn so the fallback (nodejs.org direct) is diagnosable.
+        # A failed pick must NOT silently export an empty mirror (nvm's :-
+        # default would mask it) — warn so the fallback is diagnosable. Deliberate
+        # AIBOX_NODE_POOL=direct skips the pick WITHOUT the warn. Empty → unset
+        # (semantically "use nvm's default"), not export "".
         node_mirror=""
-        [ "${AIBOX_NODE_POOL:-}" = "direct" ] || node_mirror="$(_node_dist_pick 2>/dev/null || true)"
-        [ -n "${node_mirror}" ] || warn "  node-dist pool unavailable — nvm will fetch from nodejs.org directly"
-        export NVM_NODEJS_ORG_MIRROR="${node_mirror}"
+        if [ "${AIBOX_NODE_POOL:-}" != "direct" ]; then
+          node_mirror="$(_node_dist_pick 2>/dev/null || true)"
+          [ -n "${node_mirror}" ] || warn "  node-dist pool unavailable — nvm will fetch from nodejs.org directly"
+        fi
+        if [ -n "${node_mirror}" ]; then
+          export NVM_NODEJS_ORG_MIRROR="${node_mirror}"
+        else
+          unset NVM_NODEJS_ORG_MIRROR
+        fi
         info "node dist: ${NVM_NODEJS_ORG_MIRROR:-nodejs.org (direct)}"
         nvm install 22 && nvm use 22 >/dev/null
       elif [ "$pm" = "brew" ]; then brew install node@22
@@ -2602,7 +2610,7 @@ cmd_purge() {
   fi
 
   # ---- report ----
-  printf '\n%s── aibox residue scan%s (%s)\n' "$C_CYA" "$C_RST" "$([ "$apply" = 1 ] && printf 'apply mode' || printf 'dry-run — nothing will be deleted')"
+  printf '\n%s%saibox residue scan%s (%s)\n' "$C_BOLD" "$C_CYA" "$C_RST" "$([ "$apply" = 1 ] && printf 'apply mode' || printf 'dry-run — nothing will be deleted')"
   printf '%s' "$PURGE_FINDINGS" | while IFS="$(printf '\t')" read -r s k t n; do
     [ -n "$s" ] || continue
     if [ "$s" != "$scope_seen" ]; then
