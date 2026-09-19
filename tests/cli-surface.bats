@@ -146,3 +146,29 @@ YAML
   # install.sh fetch; the payload silently comes from the default branch CDN.
   grep -q 'AIBOX_RAW="$AIBOX_RAW" AIBOX_VERIFY=' "$REPO_ROOT/bin/aibox"
 }
+
+@test "module help: bare / help / -h / --help all route to it, offline (local-first)" {
+  # installed module + module.yaml in the per-module cache (standard 6) →
+  # the help renders with a DEAD registry (local-first, zero network)
+  export AIBOX_RAW="https://dead.invalid/aibox"
+  cat >"$AIBOX_HOME/installed.sh" <<'EOF2'
+AIBOX_INSTALLED_base="1.2.1"
+EOF2
+  mkdir -p "$AIBOX_HOME/modules/base"
+  printf 'name: base\nversion: 1.2.1\ndescription: "Shared base (PG + Redis)"\nactions:\n  - start\n  - stop\nports:\n  - 35432/tcp:postgres\n' \
+    >"$AIBOX_HOME/modules/base/module.yaml"
+  for form in "" "help" "-h" "--help"; do
+    run bash "$REPO_ROOT/bin/aibox" base ${form}
+    [ "$status" -eq 0 ] || { echo "form=[${form}] failed"; echo "$output"; false; }
+    [[ "$output" == *"base · module 1.2.1"* ]]
+    [[ "$output" == *"Shared base (PG + Redis)"* ]]
+    [[ "$output" == *"usage:    aibox base <action>"* ]]
+    [[ "$output" == *"actions:  start stop"* ]]
+    [[ "$output" == *"module:   "*"/modules/base/"* ]]
+    [[ "$output" != *"Failed to fetch module list"* ]]
+  done
+  # unknown module (typo): needs the registry → clean die, not a stack of noise
+  run bash "$REPO_ROOT/bin/aibox" bas --help
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Unknown module: bas"* ]]
+}

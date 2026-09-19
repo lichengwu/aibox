@@ -60,7 +60,7 @@ deps:                              # optional. runtime deps (command names)
   - npm                            #   bare = no version/platform constraint
 ports:                             # optional. ports occupied (port/proto:usage) — CI detects conflicts
   - 30141/tcp:http
-files:                             # optional. extra files only; the standard 5 (lib.sh/install.sh/uninstall.sh/update.sh/svc.sh) are implicit
+files:                             # optional. extra files only; the standard 6 (module.yaml + lib.sh/install.sh/uninstall.sh/update.sh/svc.sh) are implicit — module.yaml rides in the cache so per-module help/metadata is local
   - docker-compose.yml
 hooks:                             # required. hook filenames
   install: install.sh
@@ -92,7 +92,7 @@ See `docs/module-system-spec.md` §2.3 for the full field reference.
 
 ## Hook contract
 
-- aibox downloads the files listed in `files` (plus the standard 5 implicitly) to `~/.aibox/modules/<name>/`, then invokes them as `bash <dest>/<hook>.sh [args]`.
+- aibox downloads the files listed in `files` (plus the standard 6 — module.yaml + the 5 hooks — implicitly) to `~/.aibox/modules/<name>/`, then invokes them as `bash <dest>/<hook>.sh [args]`.
 - Hooks can `source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"` to reuse shared functions.
 - aibox injects these environment variables:
 

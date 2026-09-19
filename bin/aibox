@@ -572,9 +572,10 @@ download_module() {
   [ -n "$dir" ] || die "Module $name is missing the dir field"
   AIBOX_LAST_DEST="$AIBOX_MOD_DIR/$name"
   mkdir -p "$AIBOX_LAST_DEST"
-  # Standard set (lib.sh/install.sh/uninstall.sh/update.sh/svc.sh) is implicitly downloaded;
-  # files only lists extras; union dedup.
-  dl="lib.sh install.sh uninstall.sh update.sh svc.sh"
+  # Standard set (module.yaml + lib.sh/install.sh/uninstall.sh/update.sh/svc.sh)
+  # is implicitly downloaded — module.yaml rides along so the LOCAL cache carries
+  # the module's own metadata (per-module help / dashboard / ports work offline).
+  dl="module.yaml lib.sh install.sh uninstall.sh update.sh svc.sh"
   for extra in $files; do
     case " $dl " in *" $extra "*) ;; *) dl="${dl:+$dl }$extra" ;; esac
   done
@@ -2595,6 +2596,41 @@ cmd_dashboard_detail() {
 }
 
 # Print a module dev guide (upstream links + DEVELOPMENT.md path), read from module.yaml upstream.
+# Per-module help (local-first: installed state + the local registry cache —
+# zero network for installed modules; unknown-module exploration may hit the
+# registry). Bare `aibox <module>`, `help`, `-h`, `--help` all route here.
+cmd_module_help() {
+  local name="$1" ver desc acts ports docs
+  ver="$(_module_version_local "${name}")"
+  desc="$(_module_meta_local "${name}" description)"
+  acts="$(_module_meta_local "${name}" actions)"
+  ports="$(_module_meta_local "${name}" ports)"
+  docs="$(_module_meta_local "${name}" upstream_homepage)"
+  if [ -z "${desc}" ] && [ -z "${acts}" ]; then
+    # not in the local metadata → the registry (dies cleanly when unreachable);
+    # also gives the authoritative "Unknown module" for typos.
+    load_registry
+    module_exists "${name}" || die "Unknown module: ${name} (aibox dashboard --available shows available modules)"
+    ver="$(module_field "${name}" version)"
+    desc="$(module_field "${name}" description)"
+    acts="$(module_field "${name}" actions)"
+    ports="$(module_field "${name}" ports)"
+    docs="$(module_field "${name}" upstream_homepage)"
+  fi
+  printf '%s%s%s %s· module %s%s\n' "$C_BOLD" "${name}" "$C_RST" "$C_DIM" "${ver:-\?}" "$C_RST"
+  [ -n "${desc}" ] && printf '%s\n' "${desc}"
+  echo
+  info "usage:    aibox ${name} <action>"
+  [ -n "${acts}" ] && info "actions:  ${acts}"
+  [ -n "${ports}" ] && info "ports:    ${ports}"
+  [ -n "${docs}" ] && info "docs:     ${docs}"
+  if is_installed "${name}"; then
+    info "module:   $AIBOX_MOD_DIR/${name}/"
+  else
+    info "install:  aibox install ${name}"
+  fi
+}
+
 cmd_dev_guide() {
   local name="$1"
   load_registry
@@ -2616,14 +2652,15 @@ cmd_module_action() {
   [ -n "$name" ] || die "Usage: aibox <module> <action>  or  aibox help"
   shift
   local action="${1:-}"
-  if [ -z "$action" ]; then
-    load_registry
-    printf '%s%s%s\n' "$C_BOLD" "${name} v$(module_field "${name}" version 2>/dev/null)" "$C_RST"
-    local acts; acts="$(module_field "${name}" actions)"
-    [ -n "$acts" ] && printf '%s\n' "actions:  ${acts}"
-    info "usage: aibox ${name} <action>"
+  # Per-module help: bare, help, -h, --help all route to it (aligned with the
+  # top-level `aibox help`). Previously `aibox <module> --help` fell through to
+  # the module's svc.sh which died with its unknown-action usage.
+  case "${action}" in
+  "" | help | -h | --help)
+    cmd_module_help "${name}"
     return
-  fi
+    ;;
+  esac
   shift
   # dev-guide special case: the main CLI reads module.yaml upstream, doesn't pass to svc.sh (works uninstalled).
   if [ "$action" = "dev-guide" ]; then
