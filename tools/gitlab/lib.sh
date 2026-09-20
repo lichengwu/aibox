@@ -69,7 +69,10 @@ compose_images() {
 http_up() {
   local port code
   port="${1:-$DEFAULT_HTTP_PORT}"
-  code="$(curl -s -o /dev/null --max-time 5 -w '%{http_code}' "http://127.0.0.1:${port}/users/sign_in" 2>/dev/null || true)"
+  # --noproxy: this probes 127.0.0.1 — an inherited http_proxy env (manual
+  # exports; aibox's own proxy flow already sets no_proxy) would route the
+  # loopback probe through the proxy and return 000 (measured live).
+  code="$(curl -s --noproxy '*' -o /dev/null --max-time 5 -w '%{http_code}' "http://127.0.0.1:${port}/users/sign_in" 2>/dev/null || true)"
   case "$code" in
   200 | 302) return 0 ;;
   *) return 1 ;;
@@ -136,4 +139,54 @@ render_dashboard() {
     printf '  %s%-9s %snot running (aibox gitlab start)%s\n' "${C_DIM:-}" "container:" "${C_YEL:-}" "${C_RST:-}"
   fi
   printf '  %s%-9s root / initial password (see: aibox gitlab credentials)\n' "${C_DIM:-}" "auth:"
+}
+
+# ---------- GitLab upgrade path (required upgrade stops) ----------
+# Official rule (docs.gitlab.com/update/upgrade_paths): cross-version upgrades
+# must pass through every required upgrade stop between current and target;
+# each hop lands on the LATEST PATCH of that minor; background migrations must
+# finish before the next hop. Data source decision: the pre-17.5 stops are a
+# FROZEN historical table (verified line-by-line against gitlab-org/gitlab
+# config/upgrade_path.yml); from 18.0 the official cadence is fixed (x.2/x.5/
+# x.8/x.11) so future stops are DERIVED — no table chasing, no network needed
+# for path computation.
+#
+# Contract: the manager's upgrade engine sources this lib and calls
+# upgrade_stops() when present → multi-hop upgrades engage. Modules without
+# this function keep the single-hop behavior (module-spec §Component upgrades).
+upgrade_stops() { # $1=cur_major.minor $2=tgt_major.minor (range for derivation)
+  local cur="${1:-0.0}" tgt="${2:-0.0}"
+  # Frozen history ≤17.4 (upstream config/upgrade_path.yml; conditional stops
+  # 16.0/16.1/16.2/17.1 included — safe default, they only cost minutes)
+  printf '%s\n' 8.11 8.12 8.17 9.5 10.0 10.8 11.0 11.11 \
+    12.0 12.1 12.10 13.0 13.1 13.8 13.12 \
+    14.0 14.3 14.9 14.10 15.0 15.4 15.11 \
+    16.0 16.1 16.2 16.3 16.7 16.11 17.1 17.3 17.5 17.8 17.11
+  # ≥18: derived from the official cadence — generate x.2/x.5/x.8/x.11 for
+  # every major from 18 up to the target's major (one extra major is harmless).
+  local cmin tmin cmaj tmaj mj mn
+  cmaj="${cur%%.*}"; cmin="${cur#*.}"; [ "${cmin}" = "${cur}" ] && cmin=0
+  tmaj="${tgt%%.*}"; tmin="${tgt#*.}"; [ "${tmin}" = "${tgt}" ] && tmin=0
+  for (( mj = 18; mj <= tmaj; mj++ )); do
+    for mn in 2 5 8 11; do
+      printf '%s.%s\n' "${mj}" "${mn}"
+    done
+  done
+}
+
+# Hop gate: omnibus /-/readiness (includes the db-migrations checks) — enabled
+# by monitoring_whitelist in the compose config (see docker-compose.yml).
+# MEASURED: the whitelist is 127.0.0.1, and the host's port-mapped requests
+# arrive with the docker-bridge source IP — rejected with 404. So the probe
+# runs FROM INSIDE the container (docker exec → source 127.0.0.1; same exec
+# pattern as the credentials flow). Falls back to http_up when the exec probe
+# is unavailable (older deploys without the whitelist, curl-less images) so
+# the gate never BLOCKS an otherwise-healthy hop.
+http_up_readiness() {
+  local port="${1:-$DEFAULT_HTTP_PORT}" code
+  code="$(docker exec "${CONTAINER_NAME}" curl -s -o /dev/null --max-time 5 -w '%{http_code}'     "http://127.0.0.1:8080/-/readiness" 2>/dev/null || true)"
+  case "$code" in
+  200) return 0 ;;
+  *) http_up "${port}" ;;
+  esac
 }

@@ -2037,6 +2037,47 @@ upgrade_ver_cmp() { # $1 $2
   printf -- '0'
 }
 
+# Compare two major.minor pairs numerically ($1 $2 like "17.3"). Prints -1/0/1.
+_upgrade_mm_cmp() {
+  local a="${1}" b="${2}" a1 a2 b1 b2
+  a1="${a%%.*}"; a2="${a#*.}"; [ "${a2}" = "${a}" ] && a2=0
+  b1="${b%%.*}"; b2="${b#*.}"; [ "${b2}" = "${b}" ] && b2=0
+  a1="${a1//[!0-9]/}"; a2="${a2//[!0-9]/}"; b1="${b1//[!0-9]/}"; b2="${b2//[!0-9]/}"
+  if [ "${a1:-0}" -lt "${b1:-0}" ] || { [ "${a1:-0}" = "${b1:-0}" ] && [ "${a2:-0}" -lt "${b2:-0}" ]; }; then
+    printf -- '-1'; return 0
+  fi
+  if [ "${a1:-0}" -gt "${b1:-0}" ] || { [ "${a1:-0}" = "${b1:-0}" ] && [ "${a2:-0}" -gt "${b2:-0}" ]; }; then
+    printf -- '1'; return 0
+  fi
+  printf -- '0'
+}
+
+# Compute the upgrade hop path between two versions (multi-hop modules).
+# stdin: the module's upgrade_stops() output (one major.minor per line).
+# $1 = current version (may carry a tag suffix like "19.2.6-ce.0"),
+# $2 = target version. Prints one hop version per line, IN ORDER:
+#   every required stop strictly AFTER the current major.minor and AT/BEFORE the
+#   target major.minor — deduped, sorted; the LAST hop is the target itself.
+# Each intermediate stop prints as "major.minor" (the caller resolves its latest
+# patch from the tag list); same-minor/patch-only upgrades print NOTHING (single hop).
+_upgrade_path_compute() {
+  local cur="${1}" tgt="${2}" stop cm tm hop out=""
+  cm="$(printf '%s' "${cur%%-*}" | cut -d. -f1,2)"
+  tm="$(printf '%s' "${tgt%%-*}" | cut -d. -f1,2)"
+  while IFS= read -r stop; do
+    stop="$(printf '%s' "${stop}" | tr -d '[:space:]')"
+    [ -n "${stop}" ] || continue
+    # strictly after current, at/before target
+    [ "$(_upgrade_mm_cmp "${stop}" "${cm}")" = "1" ] || continue
+    [ "$(_upgrade_mm_cmp "${stop}" "${tm}")" = "-1" ] || continue
+    case " ${out} " in *" ${stop} "*) continue ;; esac
+    out="${out}${out:+ }${stop}"
+  done
+  # sort the collected stops ascending (major.minor numeric), one per line
+  [ -n "${out}" ] && printf '%s\n' ${out} | sort -t. -k1,1n -k2,2n
+  return 0
+}
+
 # Highest version tag among the stdin lines (optional ERE filter in $1). Prints the tag.
 upgrade_pick_tag() {
   local pat="${1:-}" line best=""
@@ -2113,6 +2154,99 @@ upgrade_fetch() {
   gh_pool_fetch "$1"
 }
 
+# Resolve the LATEST PATCH tag of a given major.minor from dockerhub (gitlab hops
+# must land on the latest patch, never the first: official rule). stdin (optional)
+# = an already-fetched tag-name list to reuse; empty result triggers a targeted
+# ?name=<major.minor> fetch (substring filter — the strict tag pattern weeds out
+# the cross matches like 8.17.8 vs 17.8).
+# Resolve the LATEST PATCH tag of a given major.minor from dockerhub (gitlab
+# hops must land on the latest patch of the stop's minor, never the first —
+# official rule). Targeted ?name=<major.minor> fetch (substring filter: the
+# ^<stop>. prefix anchor weeds out the cross matches like 8.17.8 vs 17.8);
+# the module's official tag pattern is the final cross-check.
+_upgrade_hop_latest_patch() { # $1=repo $2=pattern $3=stop(major.minor)
+  local repo="$1" pat="$2" stop="$3" anchor cand
+  anchor="^${stop//./\.}\.[0-9]"
+  cand="$(upgrade_fetch "https://hub.docker.com/v2/repositories/${repo}/tags?name=${stop}&page_size=100" \
+    | grep -oE '"name": *"[^"]+"' | cut -d'"' -f4 \
+    | upgrade_pick_tag "${anchor}" || true)"
+  if [ -n "${cand}" ] && [ -n "${pat}" ] && ! printf '%s' "${cand}" | grep -qE "${pat}"; then
+    cand=""
+  fi
+  printf '%s' "${cand}"
+}
+
+# Multi-hop upgrade execution (gitlab-style required upgrade stops).
+# $1=module $2=cur_ver $3=envf $4=svc $5=images $6=pattern $7=repo $8=src
+# $9...=hop versions (intermediate "major.minor" stops + the final full version).
+# Each hop: resolve version → pull → backup .env → rewrite → svc start (health
+# gate incl. readiness) → settle → mark_installed. Failure rolls back to the
+# PREVIOUS hop's version (the .env backup taken at hop start holds it) → exit 20.
+_upgrade_multi_hop() {
+  local name="$1" cur_ver="$2" envf="$3" svc="$4" images="$5" pattern="$6" repo="$7" src="$8"
+  shift 8
+  local hop_list=("$@")
+  local n_hops="${#hop_list[@]}" i=0 hop_spec hop_ver k first prefix tag bak ts img
+  first="$(printf '%s' "${images}" | awk '{print $1}')"
+  k="${first%%=*}"
+  prefix="${first#*=}"
+
+  log "hop path: ${cur_ver} → ${hop_list[*]} ($((n_hops - 1)) required stop(s); omnibus boots 3-5 min each)"
+  for hop_spec in "${hop_list[@]}"; do
+    i=$((i + 1))
+    # intermediate stops arrive as "major.minor" — resolve the latest patch; the
+    # final hop is the user's/target full version.
+    case "${hop_spec}" in
+    *.*.*) hop_ver="${hop_spec}" ;;
+    *)
+      hop_ver="$(_upgrade_hop_latest_patch "${repo}" "${pattern}" "${hop_spec}")"
+      [ -n "${hop_ver}" ] || die "cannot resolve the latest patch for required stop ${hop_spec} (dockerhub tags unreachable? retry, or hop manually: aibox upgrade ${name} --to ${hop_spec}.<latest-patch>-ce.0, then re-run)"
+      ;;
+    esac
+
+    log ""
+    log "hop ${i}/${n_hops}: ${hop_ver}"
+    img="${prefix}${hop_ver}"
+    if docker image inspect "${img}" >/dev/null 2>&1; then
+      log "  image cached: ${img}"
+    else
+      log "  pulling ${img} …"
+      if ! docker pull "${img}" >/dev/null 2>&1; then
+        warn "  direct docker pull failed — continuing (mirror pool retries at svc start; health gate + rollback protect)"
+      fi
+    fi
+
+    ts="$(date +%Y%m%d%H%M%S)"
+    bak="${envf}.hop${i}.${ts}"
+    cp "${envf}" "${bak}"
+    upgrade_env_rewrite "${envf}" "${k}=${img}"
+    log "  ${cur_ver} → ${hop_ver} (backup: ${bak})"
+
+    if ! AIBOX_MODULE="${name}" bash "${svc}" start; then
+      local prev="${cur_ver}"
+      [ "${i}" -gt 1 ] && prev="${hop_list[$((i - 2))]}"
+      warn "hop ${i}/${n_hops} (${hop_ver}) failed the health gate — rolling back to ${prev}"
+      cp "${bak}" "${envf}"
+      AIBOX_MODULE="${name}" bash "${svc}" start || true
+      warn "rolled back to ${prev} (inspect: aibox ${name} logs; retry: aibox upgrade ${name})"
+      return 20
+    fi
+
+    # Settle knob: extra wait between hops for background migrations on big
+    # instances (readiness already gates the db-migration checks).
+    if [ "${i}" -lt "${n_hops}" ] && [ "${AIBOX_UPGRADE_HOP_SETTLE:-0}" -gt 0 ] 2>/dev/null; then
+      log "  settling ${AIBOX_UPGRADE_HOP_SETTLE}s (background migrations)…"
+      sleep "${AIBOX_UPGRADE_HOP_SETTLE}"
+    fi
+    mark_installed "${name}" "${hop_ver}"
+    ok "  hop ${i}/${n_hops} healthy at ${hop_ver}"
+    cur_ver="${hop_ver}"
+  done
+  ok "${name} upgraded to ${hop_ver} through $((n_hops - 1)) required stop(s) — data volumes preserved"
+  log "reclaim the old images: docker image prune"
+  return 0
+}
+
 cmd_upgrade() {
   local name="" target="" check_only=0 pinned=0
   while [ $# -gt 0 ]; do
@@ -2183,14 +2317,48 @@ cmd_upgrade() {
     return 0
   fi
 
-  # Guardrail: auto-latest refuses to cross a major version (migration/data risk).
-  if [ "${pinned}" = 0 ] && [ "${target%%.*}" != "${cur_ver%%.*}" ]; then
+  # Multi-hop provider: the module's cached lib.sh may define upgrade_stops()
+  # (gitlab's required-upgrade-stops rule — docs.gitlab.com/update/upgrade_paths).
+  # Absent → the single-hop behavior below, completely unchanged.
+  local stops_out="" stops_fn hop_list=() hop_ver i n_hops
+  stops_fn="$(AIBOX_MODULE="${name}" AIBOX_HOME="${AIBOX_HOME}" bash -c ". '${mod_dir}/lib.sh' 2>/dev/null; type -t upgrade_stops" 2>/dev/null || true)"
+  if [ "${stops_fn}" = "function" ]; then
+    local cur_mm tgt_mm
+    cur_mm="$(printf '%s' "${cur_ver%%-*}" | cut -d. -f1,2)"
+    tgt_mm="$(printf '%s' "${target%%-*}" | cut -d. -f1,2)"
+    stops_out="$(AIBOX_MODULE="${name}" AIBOX_HOME="${AIBOX_HOME}" bash -c ". '${mod_dir}/lib.sh' 2>/dev/null; upgrade_stops '${cur_mm}' '${tgt_mm}'" 2>/dev/null || true)"
+    # intermediate stops (each resolves to its minor's LATEST PATCH) + the final target
+    while IFS= read -r hop_ver; do
+      [ -n "${hop_ver}" ] && hop_list+=("${hop_ver}")
+    done <<HOPSLIST
+$(printf '%s\n' "${stops_out}" | _upgrade_path_compute "${cur_ver}" "${target}")
+HOPSLIST
+    hop_list+=("${target}")
+  fi
+  n_hops="${#hop_list[@]}"
+
+  # Guardrail: auto-latest refuses to cross a major version (migration/data risk)
+  # — EXCEPT for multi-hop modules: the hop sequence IS the migration-safe path.
+  if [ "${pinned}" = 0 ] && [ "${target%%.*}" != "${cur_ver%%.*}" ] && [ "${n_hops}" -le 1 ]; then
     die "latest ${target} crosses a major version (current ${cur_ver}) — major upgrades can require migrations/data steps; pin explicitly: aibox upgrade ${name} --to ${target}"
   fi
 
   if [ "${check_only}" = 1 ]; then
     log "current : ${cur_ver}"
     log "target  : ${target}"
+    if [ "${n_hops}" -gt 1 ]; then
+      log "path    : $((n_hops - 1)) required upgrade stop(s) — official rule: every stop between current and target, each hop on the minor's latest patch, migrations must finish before the next hop"
+      i=0
+      for hop_ver in "${hop_list[@]}"; do
+        i=$((i + 1))
+        if [ "${i}" -eq "${n_hops}" ]; then
+          log "  hop ${i}/${n_hops}  ${hop_ver}    target"
+        else
+          log "  hop ${i}/${n_hops}  ${hop_ver}.z → latest patch of ${hop_ver}    required stop"
+        fi
+      done
+      log "note    : omnibus boot 3-5 min/hop; the readiness gate (incl. db migrations) runs between hops"
+    fi
     if [ "$(upgrade_ver_cmp "${target}" "${cur_ver}")" = "1" ]; then
       log "status  : upgrade available (apply: aibox upgrade ${name} [--to ${target}] [--yes])"
     else
@@ -2200,12 +2368,23 @@ cmd_upgrade() {
   fi
 
   if [ "${ASSUME_YES:-0}" != 1 ]; then
-    ask_confirm "Upgrade ${name} ${cur_ver} → ${target}? (recreates containers; data volumes are preserved)" \
-      || { warn "declined (non-interactive? add --yes)"; return 2; }
+    if [ "${n_hops}" -gt 1 ]; then
+      ask_confirm "Upgrade ${name} ${cur_ver} → ${target} through $((n_hops - 1)) required stop(s)? (each hop recreates the container + health-waits; omnibus boots 3-5 min/hop)" \
+        || { warn "declined (non-interactive? add --yes)"; return 2; }
+    else
+      ask_confirm "Upgrade ${name} ${cur_ver} → ${target}? (recreates containers; data volumes are preserved)" \
+        || { warn "declined (non-interactive? add --yes)"; return 2; }
+    fi
   fi
 
   # The apply path recreates via the module's own svc start — require it before touching anything.
   [ -f "${svc}" ] || die "Missing ${svc} (try: aibox update ${name})"
+
+  # ---- multi-hop execution: gitlab-style required upgrade stops ----
+  if [ "${n_hops}" -gt 1 ]; then
+    _upgrade_multi_hop "${name}" "${cur_ver}" "${envf}" "${svc}" "${images}" "${pattern}" "${repo}" "${src}" "${hop_list[@]}"
+    return $?
+  fi
 
   # Build the new image values: pairing comes from the upstream compose at the target tag
   # (mapping_url), or tag == target when there is no mapping (dockerhub single-image).

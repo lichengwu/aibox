@@ -23,7 +23,9 @@ start)
   waited=0
   log "waiting for GitLab to boot (first boot 3-5 min; timeout ${timeout_s}s)..."
   while [ "$waited" -lt "$timeout_s" ]; do
-    if http_up "$port"; then
+    # readiness gate first (includes the db-migrations checks — the upgrade-hop
+    # gate); falls back to sign_in on deploys without the monitoring whitelist
+    if http_up_readiness "$port"; then
       ok "GitLab is up: http://127.0.0.1:${port}"
       log "SSH clone  : $(ssh_clone_url)/<group>/<project>.git"
       log "Login      : root — initial password: aibox gitlab credentials"

@@ -9,6 +9,28 @@ GitHub release notes are auto-generated from the previous tag; this file is the 
 
 ## [Unreleased]
 
+### Added — GitLab staged upgrade path (required upgrade stops, official rule automated)
+
+- `aibox upgrade gitlab` is now **multi-hop aware**: cross-version upgrades walk the official
+  required-upgrade-stops path (docs.gitlab.com/update/upgrade_paths) one hop at a time —
+  every stop between current and target, each hop on the stop's **latest patch**
+  (per-minor targeted tags fetch, `?name=` anchored), health-gated between hops, per-hop
+  `.env` backup, rollback to the PREVIOUS hop on failure (exit 20).
+- Data: module `lib.sh upgrade_stops()` — frozen ≤17.4 history (verified against upstream
+  `config/upgrade_path.yml`) + the official ≥18 cadence (`x.2/x.5/x.8/x.11`) derived forward;
+  path computation is offline, only patch resolution hits Docker Hub. Conditional stops
+  (16.0/16.1/16.2/17.1) included by default (safe choice).
+- Hop gate: omnibus `/-/readiness` (incl. db-migrations checks) via a compose
+  `monitoring_whitelist` (127.0.0.1 only); falls back to the sign-in probe on older deploys.
+  `svc.sh start` uses it, so single-hop upgrades get the stronger gate too.
+  Knob: `AIBOX_UPGRADE_HOP_SETTLE=<seconds>` for extra background-migrations wait.
+- `--check` prints the full hop table; cross-major auto-latest is now allowed for modules
+  with a path provider (the hop sequence is the migration-safe path the guardrail demanded);
+  modules without one keep the single-hop behavior + guardrail unchanged.
+- Honest limitation documented (README/DEVELOPMENT): rollback ACROSS an omnibus-internal
+  PostgreSQL major upgrade may refuse to boot with newer data files — `gitlab-backup create`
+  before long paths.
+
 ### Quality — closing the three assurance gaps (architecture review follow-up)
 
 - **CI now enforces the macOS bash-3.2 promise** (new `macos-bash32` job in lint.yml): parse check via /bin/bash + the FULL fast suite executed under bash 3.2 + the validator with its native 3.2 parse check. Measured rationale: `bash -n` on 3.2 catches only parse-level breakage — most bash-4 constructs (`declare -A`, `mapfile`, `${var,,}`) parse fine and fail only at RUNTIME, and ubuntu's `bash -n` accepts bash-4 syntax outright. Only real execution under 3.2 detects it. The job also asserts the runner's bash IS 3.2 (fail loudly on image drift).

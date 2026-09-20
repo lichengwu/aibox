@@ -43,18 +43,39 @@ Two verbs, two concerns:
 - **`aibox update gitlab`** — refreshes the module's own scripts (compose/templates) from
   the aibox repo; the version stays on the repo-pinned floor.
 - **`aibox upgrade gitlab`** — bumps the deployed GitLab **version** without an aibox
-  release: resolves the latest stable `gitlab/gitlab-ce` tag from Docker Hub
-  (`<dotted>-ce.0` only), pre-pulls, rewrites `GITLAB_IMAGE` in the deploy `.env`
-  (backup kept), recreates + health-waits, auto-rolls-back on failure.
-  `--check` is a dry run. Requires hub.docker.com reachable from the host
-  (proxy/mirror), or pin directly: `aibox upgrade gitlab --to 19.3.0-ce.0`.
+  release. **Multi-hop aware** (see below): when the target is several stops away, the
+  engine walks the official required-upgrade-stops path one hop at a time, each hop
+  landing on that minor's **latest patch**, health-gated (readiness, incl. db migrations)
+  before the next hop, with per-hop backup + rollback to the previous hop on failure.
+  `--check` is a dry run that prints the whole hop table. Requires hub.docker.com
+  reachable from the host (proxy/mirror), or pin directly: `aibox upgrade gitlab --to 19.3.0-ce.0`.
 
-GitLab requires a **staged upgrade path** across major versions (e.g.
-18.x → 19.0 → 19.2 — see <https://docs.gitlab.com/upgrade-paths/>), so
-`aibox upgrade` auto-latest **refuses to cross a major** (16→17→…): step
-explicitly with `--to <next-stop>`, watch `aibox gitlab status` until healthy,
-take a backup (`docker exec aibox-gitlab gitlab-backup create`), then continue.
-Same-major minor bumps are safe to auto-latest.
+### The staged upgrade path (official rule, now automated)
+
+GitLab mandates required upgrade stops between versions
+(<https://docs.gitlab.com/update/upgrade_paths/>): every stop between your current and
+target version must be visited **in order**, each hop on the stop's latest patch, and
+background migrations must finish before the next hop. The CLI computes this path from
+the module's stop table (frozen ≤17.4 history + the official ≥18 cadence `x.2/x.5/x.8/x.11`):
+
+```
+$ aibox upgrade gitlab --to 19.8.3-ce.0 --check
+current : 19.2.6-ce.0
+target  : 19.8.3-ce.0
+path    : 1 required upgrade stop(s) …
+  hop 1/2  19.5.z → latest patch of 19.5    required stop
+  hop 2/2  19.8.3-ce.0    target
+```
+
+- `AIBOX_UPGRADE_HOP_SETTLE=<seconds>` — extra wait between hops for background
+  migrations on big instances (the readiness gate already covers the db-migration
+  checks; default 0).
+- Cross-major auto-latest (`aibox upgrade gitlab` with no `--to`) is **allowed** for
+  this module: the hop sequence is the migration-safe path the guardrail demands.
+- Rollback honesty: a failed hop restores the previous hop's image and recreates —
+  but omnibus's bundled PostgreSQL upgrades its data files in-place per major; rolling
+  back ACROSS a PG upgrade may refuse to boot with the newer data. Take a real backup
+  first on long paths: `docker exec aibox-gitlab gitlab-backup create`.
 
 ## Credentials
 

@@ -409,14 +409,23 @@ upstream release **without any aibox release**:
    `dockerhub-tags` → the tags API filtered by `tag_pattern`, max by dotted-version compare.
    Fetches honor the run's proxy and fall back to the configured `CLASH_MIRROR`/`AIBOX_GH_MIRROR`.
 2. **Guardrail**: auto-latest refuses to cross a **major** version (migration/data risk) —
-   cross-major needs an explicit `--to`.
-3. **Pairing, not guessing**: when the app is multi-image, `mapping_url` points at the
+   cross-major needs an explicit `--to`. EXCEPTION: modules providing a multi-hop path
+   (see below) — the hop sequence IS the migration-safe path.
+3. **Multi-hop path (optional, gitlab-style)**: when the module's cached `lib.sh` defines
+   `upgrade_stops()` (same implicit-function contract as `render_dashboard`), the engine
+   computes the required-upgrade-stops sequence between current and target
+   (`_upgrade_path_compute`), resolves each intermediate stop's **latest patch** from the
+   tags API, and executes one hop at a time — pull → per-hop `.env` backup → rewrite →
+   `svc.sh start` (health gate) → next hop. Failure rolls back to the PREVIOUS hop
+   (exit `20`). `--check` prints the whole hop table. Knob:
+   `AIBOX_UPGRADE_HOP_SETTLE=<seconds>` (extra background-migrations wait).
+4. **Pairing, not guessing**: when the app is multi-image, `mapping_url` points at the
    upstream compose **at the target tag** (the `<VER>` placeholder is substituted); each
    declared image key's tag is extracted from it. Dify's sandbox/plugin-daemon/agent-backend
    pairing thus always matches what the target release itself ships.
-4. **Fail fast**: every new image is `docker pull`ed BEFORE anything is touched (daemon egress
+5. **Fail fast**: every new image is `docker pull`ed BEFORE anything is touched (daemon egress
    probed the same way preflight does; failure → exit `4`, nothing changed).
-5. **Atomic-ish apply**: `.env` → `.env.bak.<ts>` backup; ONLY the declared image keys are
+6. **Atomic-ish apply**: `.env` → `.env.bak.<ts>` backup; ONLY the declared image keys are
    rewritten (missing keys appended, mode preserved); containers recreated via the module's own
    `svc.sh start` (which health-waits per its normal contract).
 6. **Auto-rollback**: failed health check → restore the backup, recreate, exit `20` with the

@@ -55,3 +55,35 @@ bats tests/*.bats                        # fast suite
 # live (needs docker + ~4GB RAM + ~4GB disk):
 aibox install gitlab && aibox gitlab start && aibox gitlab credentials
 ```
+
+## Multi-hop upgrade path (2026-09)
+
+Upstream rule: <https://docs.gitlab.com/update/upgrade_paths/> — cross-version upgrades
+must visit every required upgrade stop in order, each hop on the stop's LATEST patch
+(16.8.7, not 16.8.0), background migrations finished before the next hop.
+
+**Data source decision**: the stop table lives in `lib.sh: upgrade_stops()` — the
+≤17.4 stops are FROZEN history (verified line-by-line against
+`gitlab-org/gitlab config/upgrade_path.yml`); from 18.0 the official cadence is fixed
+(`x.2/x.5/x.8/x.11`) so future stops are DERIVED, never table-chased. No network is
+needed to compute a path (only per-hop patch resolution hits Docker Hub's tag API,
+`?name=<major.minor>` — substring filter, anchored by the module's tag pattern).
+
+**Engine**: the manager's `cmd_upgrade` detects `upgrade_stops()` in the module's
+cached lib (the same implicit-function contract as `render_dashboard`/`deploy_root`),
+computes the hop sequence (`_upgrade_path_compute`, pure + table-tested), and loops
+`_upgrade_multi_hop`: pull → per-hop `.env` backup → rewrite → `svc.sh start`
+(health gate) → settle knob → mark. Failure rolls back to the previous hop (exit 20).
+Modules without `upgrade_stops()` keep the exact single-hop behavior.
+
+**Hop gate**: `http_up_readiness` (omnibus `/-/readiness`, enabled by the
+`monitoring_whitelist` compose entry) includes the db-migrations checks; falls back
+to the sign-in probe on older deploys. `svc.sh start` uses it directly, so single-hop
+upgrades benefit too.
+
+**Known limitation (documented in README)**: rollback across an omnibus-internal
+PostgreSQL major upgrade can refuse to boot with the newer data files — real backup
+(`gitlab-backup create`) before long paths.
+
+Conditional stops (16.0/16.1/16.2/17.1 — required only for specific data shapes) are
+INCLUDED by default: minutes of extra hops vs. the risk of a broken migration.

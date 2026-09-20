@@ -33,6 +33,11 @@ services:
         puma['worker_processes'] = ${GITLAB_PUMA_WORKERS:-2}
         sidekiq['max_concurrency'] = ${GITLAB_SIDEKIQ_CONCURRENCY:-10}
         postgresql['shared_buffers'] = '256MB'
+        # Local-only readiness endpoint (for aibox upgrade's per-hop gate: the
+        # /-/readiness probe includes the db-migrations checks; without this
+        # whitelist omnibus rejects the probe with 401). 127.0.0.1 only — never
+        # exposed externally (the ports mapping is host-scoped anyway).
+        gitlab_rails['monitoring_whitelist'] = ['127.0.0.1']
       # NOTE: no grafana['enable']/alertmanager['enable'] here — GitLab 19.x
       # REMOVED those omnibus options; setting them makes reconfigure FATAL
       # ("Reading unsupported config value grafana", measured live on 19.2.6).
