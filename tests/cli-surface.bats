@@ -44,7 +44,9 @@ teardown() {
 @test "dashboard --available lists the registry catalog (file:// source)" {
   run bash "$REPO_ROOT/bin/aibox" dashboard --available
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [[ "$output" == *"Available modules"* ]]
+  # header since the TUI redesign (66d6175): "aibox module catalog" + registry line
+  [[ "$output" == *"aibox module catalog"* ]]
+  [[ "$output" == *"registry @ "* ]]
   [[ "$output" == *"base"* ]]
   [[ "$output" == *"gitlab"* ]]
 }

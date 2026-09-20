@@ -115,7 +115,9 @@ teardown() {
   [ -n "$secret" ]
   [ "${#secret}" -ge 32 ]
   # mode 600
-  [ "$(stat -f '%Lp' "$AIBOX_HOME/apps/new-api/.env" 2>/dev/null || stat -c '%a' "$AIBOX_HOME/apps/new-api/.env")" = "600" ]
+  # GNU-first order: GNU stat -f prints filesystem garbage with exit 0 (the BSD
+  # meaning of -f differs) — see tests/upgrade.bats for the proven pattern.
+  [ "$(stat -c '%a' "$AIBOX_HOME/apps/new-api/.env" 2>/dev/null || stat -f '%Lp' "$AIBOX_HOME/apps/new-api/.env")" = "600" ]
   # defaults present
   grep -q '^NEW_API_PORT=30300$' "$AIBOX_HOME/apps/new-api/.env"
   grep -q '^NEW_API_IMAGE=calciumion/new-api:v0.13.2$' "$AIBOX_HOME/apps/new-api/.env"

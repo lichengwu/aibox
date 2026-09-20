@@ -133,7 +133,9 @@ teardown() {
   pw="$(grep -E '^XIAOZHI_MYSQL_PASSWORD=' "$AIBOX_HOME/apps/xiaozhi/.env" | cut -d= -f2-)"
   [ "${#pw}" -ge 32 ]
   # .env mode 600
-  [ "$(stat -f '%Lp' "$AIBOX_HOME/apps/xiaozhi/.env" 2>/dev/null || stat -c '%a' "$AIBOX_HOME/apps/xiaozhi/.env")" = "600" ]
+  # GNU-first order: GNU stat -f prints filesystem garbage with exit 0 (the BSD
+  # meaning of -f differs) — see tests/upgrade.bats for the proven pattern.
+  [ "$(stat -c '%a' "$AIBOX_HOME/apps/xiaozhi/.env" 2>/dev/null || stat -f '%Lp' "$AIBOX_HOME/apps/xiaozhi/.env")" = "600" ]
   # .config.yaml contract: manager-api url → the web container, secret empty,
   # device-facing ws URL with a LAN IP, ports from the defaults
   cfg="$AIBOX_HOME/apps/xiaozhi/data/.config.yaml"
