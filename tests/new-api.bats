@@ -102,6 +102,16 @@ SHIM
 
 teardown() {
   [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true
+  pkill -f "http.server 183" 2>/dev/null || true
+}
+
+# Deterministic test-server shutdown (same fix as test_helper.bash — this file
+# builds its own sandbox, so it carries its own copy).
+_kill_srv() { # $1 = pid
+  kill "$1" 2>/dev/null || true
+  sleep 1
+  kill -9 "$1" 2>/dev/null || true
+  wait "$1" 2>/dev/null || true
 }
 
 @test "install: places compose + writes .env once (idempotent), secret generated, mode 600" {
@@ -145,7 +155,7 @@ teardown() {
   sleep 1
   api_up 18300
   rc=$?
-  kill "$srv" 2>/dev/null || true; wait "$srv" 2>/dev/null || true
+  _kill_srv "$srv"
   [ "$rc" -eq 0 ]
 
   # dead port → not up
@@ -161,7 +171,7 @@ teardown() {
   sleep 1
   ! api_up 18302
   rc=$?
-  kill "$srv" 2>/dev/null || true; wait "$srv" 2>/dev/null || true
+  _kill_srv "$srv"
 }
 
 @test "dashboard_info: emits version/endpoint/credential/db/health fields" {

@@ -163,6 +163,10 @@ jobs:
   macos-bash32:
     name: macOS bash 3.2 (the platform the project promises)
     runs-on: macos-latest
+    # hard ceiling: an orphaned test server once held the step's pipes and the
+    # job sat "in progress" for ~50 min after the suite had passed — fail loudly
+    # instead of burning the runner for hours
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

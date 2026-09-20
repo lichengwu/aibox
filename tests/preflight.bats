@@ -81,7 +81,7 @@ EOF
   local srv=$!
   sleep 1
   run bash -c "source '$REPO_ROOT/bin/aibox'; AIBOX_CHECK_TIMEOUT=2; _preflight_probe_route current 'http://127.0.0.1:18099/'"
-  kill "$srv" 2>/dev/null || true; wait "$srv" 2>/dev/null || true
+  _kill_srv "$srv"
   [ "$status" -eq 0 ] || echo "$output"
 }
 
@@ -113,7 +113,7 @@ EOF
   # no mirror configured → refused
   run bash -c "source '$REPO_ROOT/bin/aibox'; AIBOX_CHECK_TIMEOUT=2; CLASH_MIRROR=; AIBOX_GH_MIRROR=; _preflight_probe_route mirror 'https://github.com/'"
   [ "$status" -ne 0 ]
-  kill "$srv" 2>/dev/null || true; wait "$srv" 2>/dev/null || true
+  _kill_srv "$srv"
 }
 
 @test "_preflight_domains: reachable domains pass; dead domain fails after trying alternatives" {
@@ -127,7 +127,7 @@ EOF
     AIBOX_CHECK_TIMEOUT=2
     _preflight_domains ok
   "
-  kill "$srv" 2>/dev/null || true; wait "$srv" 2>/dev/null || true
+  _kill_srv "$srv"
   [ "$status" -eq 0 ] || echo "$output"
   [[ "$output" == *"✓"* ]]
   [[ "$output" != *"unreachable"* ]]

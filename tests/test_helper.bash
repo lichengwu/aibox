@@ -24,6 +24,20 @@ setup() {
   source "$AIBOX_BIN"
 }
 
+# Deterministic test-server shutdown: TERM, then KILL, then wait. A plain
+# `kill; wait` once missed on a macOS CI runner — the orphaned http.server held
+# the step's pipes and the job hung ~50 min AFTER the suite had already passed
+# (runner cleanup log: "Terminate orphan process: (Python)").
+_kill_srv() { # $1 = pid
+  kill "$1" 2>/dev/null || true
+  sleep 1
+  kill -9 "$1" 2>/dev/null || true
+  wait "$1" 2>/dev/null || true
+}
+
 teardown() {
   [ -n "${AIBOX_HOME:-}" ] && rm -rf "$AIBOX_HOME" 2>/dev/null || true
+  # orphan sweep (belt & braces — see _kill_srv): the test http.server ports
+  pkill -f "http.server 180" 2>/dev/null || true
+  pkill -f "http.server 183" 2>/dev/null || true
 }
