@@ -7,7 +7,14 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
-## [Unreleased]
+## [0.9.0] — 2026-09-20
+
+### Highlights
+
+- **Help system framework** — every module carries a `usage:` map; `aibox <module> --help` renders the action table (local-first), `aibox <module> <action> --help` renders the single action; unknown actions point at help (drift-free).
+- **Shared-library includes** (`includes: [common]`) — the output helpers + docker.io pool live ONCE in the repo (`tools/_shared/common.sh`); ~800 lines of cross-module copy-paste removed; modules stay self-contained per-directory.
+- **GitLab staged upgrade path** — the official required-upgrade-stops rule, automated: multi-hop upgrades walk every stop (frozen ≤17.4 table + the ≥18 x.2/x.5/x.8/x.11 cadence derived), each hop on the latest patch, readiness-gated (db migrations), per-hop backup + rollback to the previous hop. Live-verified 19.1.8 → 19.2.6 → 19.4.0 on real containers.
+- **CI now enforces the macOS bash-3.2 promise** — new `macos-bash32` job runs the full suite under /bin/bash 3.2 (measured: `bash -n` accepts most bash-4 constructs; only real execution detects them), plus a function-coverage probe (88% → drove +9 command-surface tests).
 
 ### Added — GitLab staged upgrade path (required upgrade stops, official rule automated)
 
