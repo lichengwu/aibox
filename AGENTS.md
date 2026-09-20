@@ -17,7 +17,7 @@ tools/<name>/        module dir: lib.sh + install/uninstall/update/svc.sh + modu
 tools/_shared/       shared module library (common.sh: output helpers + docker.io pool) — single source in the
                      repo; ships into each module cache as _common.sh via module.yaml `includes: [common]`
 docs/module-spec.md  the module hook contract (normative; module-system-spec.md is the superseded design draft)
-.github/workflows/   CI (release automation + lint quality gate: bash -n / shellcheck / gotcha #1 #8 scans / module-lint / deps-lint / port-conflict / bats tests)
+.github/workflows/   CI (release automation + lint quality gate: bash -n / shellcheck / gotcha #1 #8 scans / module-lint / port-conflict / bats tests + coverage probe / macos-bash32 job — the full suite executed under /bin/bash 3.2, the platform this project promises)
 ```
 
 ## Core commands
@@ -88,11 +88,26 @@ grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[，。、；：！？（）「」]' <file>
 
 **Symptom**: a module's `svc.sh` only forwards to the dispatched script, but on macOS even `--version` fails with `syntax error near unexpected token '>'` — with no hint that it's about the local bash version.
 
-**Root cause**: macOS ships bash 3.2, but the script used bash 4's `exec {fd}>file` (auto-allocated file descriptor). This is a **parse-time** error — the whole file can't execute, no branch is reachable, so it's not "one feature unavailable" but "this command doesn't exist at all".
+**Root cause**: macOS ships bash 3.2, but the script used bash 4's `exec {fd}>file` (auto-allocated file descriptor). For THAT construct it was a **parse-time** error — the whole file can't execute, no branch is reachable.
+
+**Correction (measured 2026-09, while building the coverage probe)**: `exec {fd}>file` is the EXCEPTION, not the rule — most bash-4 constructs (`declare -A`, `mapfile`, `${var,,}`) **parse fine under `bash -n` on 3.2** and only fail at RUNTIME. So:
+
+- `bash -n` under 3.2 catches only parse-level breakage (a minority)
+- **actually EXECUTING the code under 3.2 is the only complete detector** — CI's `macos-bash32` job runs the whole fast suite under /bin/bash 3.2 for exactly this reason (and ubuntu's `bash -n` accepts bash-4 syntax, so it proves nothing here)
 
 **Fix**: use a fixed fd (`exec 9>file` / `flock -n 9`). If you genuinely need bash 4+, ensure the script is only parsed on the target machine — don't let it appear in a path that gets sourced/executed on macOS.
 
 **Why "parseable" is worth the concession**: staying parseable lets you give a clear message on unsupported platforms ("this command requires a Linux deploy host") instead of throwing a syntax error. See `require_deploy_host` in `tools/openmaic/cli/openmaic`.
+
+### #9 `exec` with a redirection makes it PERMANENT shell state — `exec 9>>f 2>/dev/null` eats stderr forever
+
+**Symptom**: under the coverage probe, every `die`/`warn` message vanished — tests asserting stderr failed with EMPTY output, no error anywhere.
+
+**Root cause**: `exec` without a command name applies its redirections to the SHELL itself, permanently. `exec 9>>$file 2>/dev/null` was meant to silence just the open-failure error — but fd 2 got pointed at /dev/null for the REST OF THE PROCESS. Every later `>&2` write (die/warn) went to the void, silently.
+
+**Fix**: never hang a stray `2>/dev/null` onto an fd-opening `exec`. Guard the failure with `if exec 9>>"$file"; then ... fi` (a failing exec inside an `if` condition is safe under `set -e`) — one real error line to stderr on a bad path is the correct degradation, not silence.
+
+**Detection**: any stderr assertion failing with empty output while the command exits nonzero; `grep -n 'exec [0-9]*>>.*2>' ` over the codebase.
 
 ### #3 Proxy testing: status-code-only is always a false positive
 

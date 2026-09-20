@@ -4,7 +4,10 @@ name: lint
 # - bash -n / shellcheck / gotchas: script quality (see AGENTS.md pitfalls #1 #2 #6 #8)
 # - module-lint: module.yaml required fields + §2.2 subset (yq authoritative, keeps the awk parser safe)
 # - port-conflict: cross-module port conflicts (static declaration + CI gate, spec §3)
-# - tests: bats behavioral tests (proxy/installed/registry)
+# - tests: bats behavioral tests (proxy/installed/registry) + coverage probe
+# - macos-bash32: the platform promise enforced — parse AND full suite execution under
+#   /bin/bash 3.2 (ubuntu bash -n accepts bash-4 syntax; most constructs only fail at
+#   RUNTIME, so actually running the suite is the only real backstop)
 
 on:
   push:
@@ -154,3 +157,45 @@ jobs:
         run: npm install -g bats
       - name: run tests
         run: bats tests/*.bats
+      - name: coverage probe (informational — which functions the suite never executes)
+        run: scripts/coverage.sh --bats
+
+  macos-bash32:
+    name: macOS bash 3.2 (the platform the project promises)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: install bats
+        run: npm install -g bats
+      - name: assert the runner's bash IS 3.2 (fail loudly if the image drifts)
+        run: |
+          bash -c '[ "${BASH_VERSINFO[0]}" -eq 3 ]' || { echo "::error::runner bash is not 3.2 — this job's whole point is lost"; exit 1; }
+          bash --version | head -1
+      - name: bash 3.2 syntax check (/bin/bash)
+        run: |
+          set -e
+          fail=0
+          # NOTE: the runner's default shell IS bash 3.2 — keep this step 3.2-safe
+          # (no mapfile / assoc arrays / ${var,,} …). Ubuntu's bash -n (syntax-check
+          # job) accepts bash-4 syntax; this pass is the parse-level backstop.
+          while IFS= read -r f; do
+            if ! /bin/bash -n "$f"; then
+              echo "::error file=${f}::bash 3.2 parse error (AGENTS.md pitfall #2 — bash 4-only syntax?)"
+              fail=1
+            fi
+          done <<EOF_LIST
+          $(git ls-files | grep -E '\\.sh$|^bin/aibox$|^tools/[^/]+/cli/(openmaic|windmill)$|^tools/_shared/[^/]+\\.sh$')
+          EOF_LIST
+          [ "$fail" -eq 0 ] && echo "bash 3.2 parse: all files clean"
+          exit $fail
+      - name: run the full fast suite UNDER bash 3.2 (runtime enforcement)
+        # bash -n can NOT catch most bash-4 constructs (exec {fd}>, declare -A,
+        # mapfile, ${var,,} all PARSE fine on 3.2 and only fail at RUNTIME) — the
+        # suite actually executing the CLI under /bin/bash is what enforces the
+        # macOS promise. Docker-dependent tests skip gracefully on the runner.
+        run: bats tests/*.bats
+      - name: module conformance (validator's bash-3.2 parse check activates natively)
+        run: scripts/validate-module.sh --all

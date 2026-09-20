@@ -63,3 +63,21 @@ Every regression test below was born from a real bug found in review or live tes
   `HOME` when testing `install.sh`). Sub-second per test.
 - Anything touching the service manager, docker, or large downloads → `integration/`,
   guarded (skip) by default, unique test profile names, snapshot-diff teardown.
+
+## Coverage probe (function-level, zero-dependency)
+
+Bash has no coverage tooling; `scripts/coverage.sh` is the substitute. `bin/aibox`
+honors `AIBOX_TRACE=<file>` (bash 4.1+ only — silently inert on the macOS 3.2
+runtime): xtrace is redirected to fd 9 (`BASH_XTRACEFD`) so stdout/stderr
+assertions are untouched, and every executed line is marked `+|<function>|<lineno>|`.
+
+```bash
+scripts/coverage.sh --bats        # run the fast suite under tracing + report
+scripts/coverage.sh --trace FILE  # parse an existing trace
+scripts/coverage.sh --list        # function inventory
+```
+
+The report diffs "functions with ≥1 executed line" against the inventory and
+prints the never-executed list (user-facing `cmd_*` first). Informational, not a
+gate — it tells you WHERE coverage is missing; the lint CI prints it on every
+push (ubuntu job), and the dev Mac (bash 3.2) can parse traces produced elsewhere.

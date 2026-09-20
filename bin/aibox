@@ -14,6 +14,25 @@
 #   aibox version | help
 set -euo pipefail
 
+# Coverage probe hook (scripts/coverage.sh): bash 4.1+ only (BASH_XTRACEFD),
+# silently inert otherwise — on the macOS 3.2 runtime this is a no-op (coverage
+# runs on bash-5 hosts: CI's ubuntu job, or any dev box with bash 5). Top-level
+# on purpose: tests that SOURCE this file (load test_helper) get traced too —
+# dispatch-only tracing undercounts them. xtrace goes to fd 9 (never stdout/
+# stderr, so bats assertions are untouched); the open is failure-tolerant (a
+# bad trace path degrades to plain behavior, never breaks the CLI).
+if [ -n "${AIBOX_TRACE:-}" ] && [ "${BASH_VERSINFO[0]}" -ge 4 ] 2>/dev/null; then
+  # NOTE: no 2>/dev/null on the exec — exec's redirections become PERMANENT shell
+  # state, so "exec 9>>f 2>/dev/null" would silently eat every die/warn forever.
+  # A plain failure (bad path) prints one error to the real stderr and disables
+  # tracing — the right degradation.
+  if exec 9>>"${AIBOX_TRACE}"; then
+    BASH_XTRACEFD=9
+    PS4='+|${FUNCNAME[0]:-main}|${LINENO}|'
+    set -x
+  fi
+fi
+
 AIBOX_REPO="lichengwu/aibox"
 AIBOX_BRANCH="${AIBOX_BRANCH:-main}"
 AIBOX_RAW="${AIBOX_RAW:-https://raw.githubusercontent.com/${AIBOX_REPO}/${AIBOX_BRANCH}}"
@@ -1792,7 +1811,6 @@ install_dep() {
 }
 
 # ---------- commands ----------
-# List all modules' port assignments (from module.yaml ports) + live listen probes.
 # Is a TCP port being listened on? lsof → ss fallback (minimal Linux installs
 # like Alibaba Cloud Linux 4 ship no lsof; ss/iproute2 is ubiquitous).
 _port_is_listening() {
@@ -1804,27 +1822,6 @@ _port_is_listening() {
   else
     return 1
   fi
-}
-
-cmd_ports() {
-  load_registry
-  printf '%s%s%s\n' "$C_BOLD" "ports" "$C_RST"
-  printf '%s  %-14s  %-9s  %-10s  %-10s  %s%s\n' "$C_DIM" "MODULE" "PORT" "PROTO" "USAGE" "STATUS" "$C_RST"
-  local m p port proto_usage proto usage status
-  for m in ${AIBOX_MODULES:-}; do
-    for p in $(module_field "$m" ports); do
-      port="${p%%/*}"
-      proto_usage="${p#*/}"
-      proto="${proto_usage%%:*}"
-      usage="${proto_usage#*:}"
-      if _port_is_listening "$port"; then
-        status="${C_GRN}listening${C_RST}"
-      else
-        status="${C_DIM}—${C_RST}"
-      fi
-      printf '  %-14s  %-9s  %-10s  %-10s  %s\n' "$m" "$port" "$proto" "$usage" "$status"
-    done
-  done
 }
 
 # Probe declared ports for external occupation (lsof/ss) at install time; warn if taken (env-overridable).

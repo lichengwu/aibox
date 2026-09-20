@@ -3,7 +3,9 @@ name: integration
 # Manual-dispatch integration: docker-heavy E2E suites distilled from live-machine
 # testing (see tests/README.md). The flag-gated pi-web/windmill suites are NOT run
 # here (real service-manager side effects / ~6GB image pulls) — run those on a
-# throwaway host with AIBOX_IT_PIWEB=1 / AIBOX_IT_WINDMILL=1.
+# throwaway host with AIBOX_IT_PIWEB=1 / AIBOX_IT_WINDMILL=1. The two safe suites
+# (base-profiles: unique itta/ittb profiles; preflight-check: read-only `aibox check`
+# paths) run on every dispatch.
 
 on: workflow_dispatch
 
@@ -24,3 +26,17 @@ jobs:
         run: npm install -g bats
       - name: run base-profiles integration
         run: bats tests/integration/base-profiles.bats
+
+  preflight-check:
+    name: preflight E2E (read-only, docker + network)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: install bats
+        run: npm install -g bats
+      - name: run preflight-check integration
+        run: bats tests/integration/preflight-check.bats

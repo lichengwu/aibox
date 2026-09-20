@@ -9,6 +9,13 @@ GitHub release notes are auto-generated from the previous tag; this file is the 
 
 ## [Unreleased]
 
+### Quality — closing the three assurance gaps (architecture review follow-up)
+
+- **CI now enforces the macOS bash-3.2 promise** (new `macos-bash32` job in lint.yml): parse check via /bin/bash + the FULL fast suite executed under bash 3.2 + the validator with its native 3.2 parse check. Measured rationale: `bash -n` on 3.2 catches only parse-level breakage — most bash-4 constructs (`declare -A`, `mapfile`, `${var,,}`) parse fine and fail only at RUNTIME, and ubuntu's `bash -n` accepts bash-4 syntax outright. Only real execution under 3.2 detects it. The job also asserts the runner's bash IS 3.2 (fail loudly on image drift).
+- **Integration CI covers the read-only E2E suite**: `preflight-check.bats` (docker + network, never mutates) joins `base-profiles` on every dispatch; pi-web/windmill stay manual by design (service-manager side effects / ~6GB pulls).
+- **Function-level coverage probe** (`scripts/coverage.sh`): AIBOX_TRACE hook in bin/aibox (bash 4.1+, xtrace → fd 9, zero assertion pollution — verified: 0 trace-only test failures), inventory-vs-executed diff, never-executed `cmd_*` listed first. First measurement: 88% (111/126). Drove: +9 command-surface tests (proxy family show/env/set-decline/toggle/unset, ports guidance, dev-guide, update flow) and removal of dead `cmd_ports` (unreachable since the dashboard merge). CI prints the report on every push.
+- **AGENTS.md**: pitfall #2 corrected (parse-time was the exception, not the rule — measurement); new pitfall #9 (`exec 9>>f 2>/dev/null` makes fd-2→/dev/null PERMANENT shell state — silently eats every die/warn; live-caught while building the probe).
+
 ### Added — shared-library includes (architecture: single-source infra code)
 
 - **`includes:` stanza** in module.yaml + **`tools/_shared/common.sh`** (single repo source for the output helpers `log/warn/ok/info/die` + the docker.io download pool). `download_module` ships it into each module cache as `_common.sh` (fetched FIRST, before hooks — a failed fetch never leaves the cache half-updated); modules stay self-contained per-directory.
