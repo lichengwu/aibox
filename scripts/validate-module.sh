@@ -329,9 +329,18 @@ validate_module() {
     printf '%s' "$tok" | grep -qE '^[A-Za-z0-9_.+-]+(@[a-z]+)?(:[0-9]+([.][0-9]+)*)?$' || err "deps entry malformed (want cmd[@platform][:version]): $tok"
   done
 
-  # --- S13/S14: services + provides cross-refs ---
+  # --- S13/S14: services (+ services_optional) + provides cross-refs ---
   for tok in $(module_field "$m" provides); do
     printf '%s' "$tok" | grep -qE '^[a-z0-9_-]+$' || err "provides entry malformed: $tok"
+  done
+  # services_optional: same entry grammar as services; semantically a deploy-time
+  # USER TOGGLE (e.g. dify DIFY_SHARED_BASE=1) — install/update do NOT hard-gate
+  # on it. Declaring it keeps the optional consumption machine-visible.
+  for tok in $(module_field "$m" services_optional); do
+    printf '%s' "$tok" | grep -qE '^[a-z0-9_-]+:[a-z0-9_-]+(#[a-z0-9_]+)?$' || {
+      err "services_optional entry must use the provider form provider:component[#dbname]: $tok"
+      continue
+    }
   done
   for tok in $(module_field "$m" services); do
     printf '%s' "$tok" | grep -qE '^[a-z0-9_-]+:[a-z0-9_-]+(#[a-z0-9_]+)?$' || {
@@ -437,6 +446,20 @@ validate_module() {
       grep -qE "^  ${a}:" "$f" || missing="${missing}${missing:+ }${a}"
     done
     [ -n "$missing" ] && warn "actions without usage: entries (aibox <module> --help renders bare action names): ${missing}"
+  fi
+
+  # --- S17c: shared-library includes — entry resolves to tools/_shared/<inc>.sh;
+  # docker_images consumers MUST include common (the pool code lives there) ---
+  local inc incs
+  incs="$(module_field "$m" includes)"
+  for inc in $incs; do
+    [ -f "$REPO_ROOT/tools/_shared/${inc}.sh" ] || err "includes entry '${inc}' has no tools/_shared/${inc}.sh"
+  done
+  if [ -n "$(module_field "$m" checks_docker_images)" ]; then
+    case " ${incs} " in
+    *" common "*) ;;
+    *) warn "declares checks.docker_images but not includes: [common] — the docker.io pool functions live in the shared _common.sh" ;;
+    esac
   fi
 
   # --- S18: upstream links ---

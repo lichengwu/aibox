@@ -1,6 +1,14 @@
 # aibox Module System Enhancement Spec
 
-> Status: Design draft. This document collects enhancement requirements including port declaration, Dashboard, shared base components, module development guide, and the module.yaml declaration spec, as the basis for subsequent implementation.
+> **⚠ SUPERSEDED — read [`docs/module-spec.md`](module-spec.md) instead.** That file is the
+> normative, current contract (hook contract, preflight, residue, usage:, includes:, exit codes,
+> interactive confirmation). This document was the ORIGINAL DESIGN DRAFT that drove the
+> module.yaml migration; it is kept as design history: it still describes registry.sh-era
+> mechanics in places and its §2.3 field reference has drifted from the implemented schema
+> (e.g. it does not know about `usage:` / `includes:` / the `upgrade:` stanza shape).
+> When this file and module-spec.md disagree, module-spec.md wins.
+
+> Status (historical): Design draft. This document collected enhancement requirements including port declaration, Dashboard, shared base components, module development guide, and the module.yaml declaration spec, as the basis for subsequent implementation.
 >
 > **Incremental revision (2026-09-16)**: module.yaml field de-duplication (implicit standard files set / common lifecycle contract for actions / slimmed-down dashboard) + shared-component dependency declaration and connection-info propagation (provider model + base.env + compose `--env-file` live injection, no generator). See [`docs/design/module-yaml-refactor-design.md`](design/module-yaml-refactor-design.md). §1 / §2.3 / §4 / §5 / Appendix B/C have been annotated accordingly.
 >

@@ -14,7 +14,9 @@ install.sh           bootstrap (curl|bash install / self-update, idempotent; opt
 tools/<name>/        module dir: lib.sh + install/uninstall/update/svc.sh + module.yaml
                      shipped: pi-web (macOS launchd service), openmaic (Linux deploy-host ops CLI),
                               windmill (Windmill self-host docker compose ops CLI), clash (Clash subscription proxy pool, mihomo), base (shared PG+Redis)
-docs/module-spec.md  the module hook contract
+tools/_shared/       shared module library (common.sh: output helpers + docker.io pool) — single source in the
+                     repo; ships into each module cache as _common.sh via module.yaml `includes: [common]`
+docs/module-spec.md  the module hook contract (normative; module-system-spec.md is the superseded design draft)
 .github/workflows/   CI (release automation + lint quality gate: bash -n / shellcheck / gotcha #1 #8 scans / module-lint / deps-lint / port-conflict / bats tests)
 ```
 
@@ -189,12 +191,14 @@ scripts/new-module.sh <name> [--desc "..."] [--no-compose] [--out <dir>]   # sca
 scripts/validate-module.sh <name> | --all                                  # conformance gate: 0 ERRORs required (WARNs tolerated)
 ```
 
-**Flow**: scaffold → fill `module.yaml` (ports/checks/deps/services/upstream) → implement the hooks → `scripts/validate-module.sh <name>` until PASS → `bats tests/*.bats` → live smoke (install / start / status / logs / stop / uninstall on a docker host) → add the module row to README(.zh). **`tools/gitlab/` is the reference implementation onboarded with exactly this flow.**
+**Flow**: scaffold → fill `module.yaml` (ports/checks/deps/services/usage/includes) → implement the hooks → `scripts/validate-module.sh <name>` until PASS → `bats tests/*.bats` → live smoke (install / start / status / logs / stop / uninstall on a docker host) → add the module row to README(.zh). **`tools/gitlab/` is the reference implementation onboarded with exactly this flow.**
+
+**Help system**: every module carries a `usage:` map in module.yaml (one line per declared action, args hint first: `"<node-name> — switch the active node"`); `aibox <module> --help` renders the action table, `aibox <module> <action> --help` renders the single action — both local-first. The validator WARNs on actions without usage entries; the scaffolder emits a TODO skeleton. Unknown actions die with `run: aibox <module> --help` (never a hand-maintained action list).
 
 **Iron rules** (validator + CI enforce; details in the spec):
 
-1. `module.yaml` is the source of truth — the registry auto-discovers `tools/*/module.yaml` (no registry.sh to edit; local `file://` source needs zero global changes). Hyphenated names map to underscored variable keys internally (`pi-web` → `AIBOX_MODULE_pi_web_*`).
-2. Hooks (`install/uninstall/update/svc.sh`): bash shebang, `set -euo pipefail`, idempotent; shared code lives in `lib.sh` (sourced library — no shebang, no strict-mode line). Module scripts are downloaded and cached to `~/.aibox/modules/<name>/`.
+1. `module.yaml` is the source of truth — the registry auto-discovers `tools/*/module.yaml` (no registry.sh to edit; local `file://` source needs zero global changes). Hyphenated names map to underscored variable keys internally (`pi-web` → `AIBOX_MODULE_pi_web_*`); hyphenated usage keys normalize the same way. `module.yaml` ships in the cache alongside the 5 hooks (standard-6 download set), so per-module help/metadata renders offline.
+2. Hooks (`install/uninstall/update/svc.sh`): bash shebang, `set -euo pipefail`, idempotent; shared code lives in `lib.sh` (sourced library — no shebang, no strict-mode line) and infra helpers in the shared include (`tools/_shared/common.sh` — output helpers `log/warn/ok/info/die` + the docker.io pool; declared via `includes: [common]`, cached per-module as `_common.sh`; lib.sh resolves cache layout first, repo layout `../_shared/` for direct exec). NEVER copy pool/helper code into a new module — source the include (spec §Shared library includes). Module scripts are downloaded and cached to `~/.aibox/modules/<name>/`.
 3. **Every module declares `checks:` (preflight contract)**: install/update is hard-gated by `preflight_module` — deps (strict), `checks.commands`, `checks.disk_gb`, `checks.domains` (host-probed) / `checks.docker_pull` (daemon-probed — the docker daemon's egress differs from the host's; never host-probe a daemon-consumed registry), with the `checks.docker_images` cache short-circuit, and `services:` readiness (recursive into base). Host network failures try the configured alternative routes (direct/clash/mirror/static proxy) and adopt a working one for the run. CI enforces the section's presence + field formats; `aibox check self` / `aibox check <module>` run it proactively; `--skip-checks` bypasses. Full spec + per-module matrix: `docs/module-spec.md` §Preflight checks.
 4. **Install paths must be overridable**: start from `${AIBOX_BIN_DIR:-$HOME/.local/bin}` and expose a module-specific override (e.g. `OPENMAIC_BIN_DIR`) — deploy hosts often want `/usr/local/bin`.
 5. **`svc.sh` is an "action entry point", NOT "must be a daemon"**: long-lived services (pi-web) use `start/stop/restart`; pure-CLI dispatch (openmaic) can pass actions straight through to the dispatched command. Service-type modules (`actions` contains `start`) MUST implement the full lifecycle `start/stop/restart/status/logs`.

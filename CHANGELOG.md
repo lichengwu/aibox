@@ -9,6 +9,25 @@ GitHub release notes are auto-generated from the previous tag; this file is the 
 
 ## [Unreleased]
 
+### Added — shared-library includes (architecture: single-source infra code)
+
+- **`includes:` stanza** in module.yaml + **`tools/_shared/common.sh`** (single repo source for the output helpers `log/warn/ok/info/die` + the docker.io download pool). `download_module` ships it into each module cache as `_common.sh` (fetched FIRST, before hooks — a failed fetch never leaves the cache half-updated); modules stay self-contained per-directory.
+- All 9 modules' lib.sh now source the include (cache layout `_common.sh` → repo layout `../_shared/common.sh` for direct exec/bats) — **~800 lines of copy-paste removed** (5× pool blocks + 7× output helpers + xiaozhi's shadow `_dk_bounded`).
+- Validator: `includes` entries must resolve to `tools/_shared/<inc>.sh` (ERROR); `checks.docker_images` consumers without `includes: [common]` WARN. Scaffolder emits the include skeleton.
+- Dispatched CLIs (openmaic/windmill `cli/`) keep their own copies by design — they run standalone on deploy hosts (pitfall #4).
+
+### Added — action-level help
+
+- `aibox <module> <action> --help` (also `-h`) renders the single action: args hint + description split from the `usage:` line, module context, and a pointer to the module table. Unknown actions fall back to the full module table — never a dead end.
+
+### Added — optional-shared dependency declaration
+
+- `services_optional:` field (same entry grammar as `services:`, validated but NOT install-gated): dify's deploy-time `DIFY_SHARED_BASE=1` shared-base mode is now machine-declared; spec documents the two consumption modes (hard `services:` vs opt-in `services_optional:`).
+
+### Docs
+
+- `docs/module-system-spec.md` marked SUPERSEDED (banner) — module-spec.md is the only normative contract; cross-references fixed; docs/README.md reorganized (active spec vs design history).
+
 ### Added — help system framework
 
 - **`usage:` stanza in every `module.yaml`** — one line per declared action; `aibox <module> --help` (and bare / `help` / `-h`) renders a fixed-column action table from it, local-first (module cache → in-process registry → registry cache file, zero network when installed).

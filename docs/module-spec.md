@@ -73,7 +73,7 @@ actions:                           # optional. actions svc supports (list all)
 usage:                             # per-action help text — `aibox <module> --help` renders one
   start: "Start the service"       # line per declared action; validator WARNs on gaps
   stop: "Stop the service"         # format: <action>: "<one-line description, args hint>"
-upstream:                          # optional. dev-guide links (see §6 of module-system-spec.md)
+upstream:                          # optional. dev-guide links (see the upstream stanza below)
   homepage: https://...
   docs: https://...
 services:                          # optional. shared-component deps (CI validates provider/component)
@@ -87,9 +87,12 @@ checks:                            # REQUIRED. preflight contract (enforced by i
     - postgres:18
   commands:                        #   optional. binaries that must exist (cmd@platform supported; no auto-install)
     - systemctl@linux
+includes:                         # shared-library includes (§Shared library includes): repo-level
+  - common                         #   tools/_shared/<name>.sh → cached per-module as _<name>.sh
 ```
 
-See `docs/module-system-spec.md` §2.3 for the full field reference.
+Field reference: this document IS the normative schema (the historical design draft
+`docs/module-system-spec.md` §2.3 is superseded).
 
 > **History note (registry.sh):** before v0.4.0, modules were registered by appending `AIBOX_MODULE_<name>_*` shell variables to a root-level `registry.sh` (sourced directly by the CLI). That file no longer exists; the same fields now live in `module.yaml` and are parsed by a zero-dependency awk subset parser at runtime (`parse_yaml_module_stdin`), with yq validating the subset in CI. Module names with hyphens map to underscored variable keys internally (`pi-web` → `AIBOX_MODULE_pi_web_*`); that convention is unchanged.
 
@@ -332,7 +335,7 @@ check still hard-gates the tool's existence):
 
 ## Per-action help (`usage:` stanza)
 
-Every module declares a `usage:` map in `module.yaml` — one entry per declared action. `aibox <module> <action> --help` (and bare `aibox <module>`, `help`, `-h`, `--help`) renders a fixed-column action table from this stanza, local-first (from the module cache's `module.yaml`, no network).
+Every module declares a `usage:` map in `module.yaml` — one entry per declared action. `aibox <module> --help` (and bare `aibox <module>`, `help`, `-h`) renders a fixed-column action table from this stanza; `aibox <module> <action> --help` renders the single action's usage block. Both are local-first (module cache → registry, no network when installed).
 
 ```yaml
 actions:
@@ -345,10 +348,38 @@ usage:
 
 Format rules:
 
-- One line per action: `<action>: "<description>"`. Args hints go in the description: `"<node-name> — switch the active node"`.
+- One line per action: `<action>: "<description>"`. Args hints go FIRST, separated by ` — `: `"<node-name> — switch the active node"` — the action-level help splits on that separator to build `usage: aibox clash select <node-name>`.
 - The **validator WARNs** when a declared action has no `usage:` entry (the table still renders, just without a description).
 - The stanza is a flat two-space-indented map (same parser subset as `checks:`) — no nesting.
 - Hyphenated action keys (`use-external`) are supported; the registry parser normalizes hyphens to underscores in variable names (`usage_use_external`), and the help renderer reads the cached `module.yaml` directly.
+- An action with no usage entry (or a typo'd action name) + `--help` falls back to the module table — never a dead end.
+
+## Shared library includes (`includes:` stanza)
+
+Infrastructure code that every module needs (output helpers `log/warn/ok/info/die` + the docker.io download source pool) lives ONCE in the repo at `tools/_shared/common.sh`. A module declares it, and the downloader ships it into the module cache:
+
+```yaml
+includes:
+  - common
+```
+
+- **Repo**: single source (`tools/_shared/common.sh`) — a pool fix or helper change lands once, not in N copies.
+- **Cache**: each module dir gets its own copy (`~/.aibox/modules/<name>/_common.sh`) — modules stay **self-contained per-directory** (the dispatched-at-any-time constraint is unchanged; nothing depends on the aibox process).
+- **lib.sh** resolves both layouts:
+
+```bash
+LIB_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_COMMON="${LIB_SELF}/_common.sh"                # cache layout (aibox install)
+[ -f "${LIB_COMMON}" ] || LIB_COMMON="${LIB_SELF}/../_shared/common.sh"  # repo layout (direct exec / bats)
+# shellcheck disable=SC1091
+. "${LIB_COMMON}"
+```
+
+Rules:
+
+- The include is fetched FIRST in `download_module` (before hooks) so a failed fetch never leaves the cache half-updated.
+- Dispatched CLIs that run standalone on deploy hosts (openmaic/windmill `cli/<name>`) **cannot** use includes — they keep their own copies by design (pitfall #4: env vars and sources don't cross process/host boundaries).
+- New shared libraries follow the same shape: `tools/_shared/<name>.sh` + `includes: [<name>]`; validator checks the entry resolves to an existing file.
 
 ## User command → hook mapping
 
@@ -475,6 +506,7 @@ section's presence and its field formats.
 | docker pull | `checks.docker_pull` | **daemon-routed** probe: `docker pull <tiny image>` proves the daemon's actual registry path (its mirrors/proxy differ from the host's). Skipped when docker is absent (deps reports that) |
 | docker images | `checks.docker_images` | when **all** refs exist locally, the domain AND pull probes are skipped (offline restart/install works) |
 | services | `services:` field | recursive: provider `base` must be installed (profile-scoped); if its stack isn't running, **base's own preflight** runs — passes → install proceeds (`ensure_services` auto-starts it); fails → **FAIL** |
+| services_optional | `services_optional:` field | **NOT gated** — documentation of a deploy-time user toggle (e.g. dify `DIFY_SHARED_BASE=1`): the entry format is validated (provider form), but install/update never require the provider. Two consumption modes exist: hard (`services:` — the module cannot run without the shared component) and opt-in (`services_optional:` — standalone by default, joins the shared base only when the user flips the deploy env knob) |
 
 ### Host vs daemon probe semantics (pick the right channel)
 
@@ -569,7 +601,7 @@ Modules declare a `deps` field in `module.yaml` (command names, list); `aibox in
 
 > **`registry.sh` is gone.** `load_registry` discovers modules from `tools/*/module.yaml` (local source globs directly; remote source uses the GitHub API + caches with TTL). **Adding a module = create `tools/<name>/` + `module.yaml`; local source needs zero global changes.**
 
-### module.yaml fields (see docs/module-system-spec.md §2.3)
+### module.yaml fields (normative schema: docs/module-spec.md §Registering a module)
 
 name/version/description/platform/dir/deps/ports/files/hooks/actions/upstream/dashboard.
 

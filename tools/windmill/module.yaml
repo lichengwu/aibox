@@ -1,5 +1,5 @@
 name: windmill
-version: 1.3.0
+version: 1.3.1
 description: "Windmill self-host ops CLI (init/upgrade/backup/drill/doctor)"
 platform: ""
 dir: tools/windmill
@@ -30,6 +30,11 @@ checks:
   disk_gb: 12
   domains:
     - ghcr.io
+
+# Shared library include (repo tools/_shared/<name>.sh → cached as
+# _<name>.sh; lib.sh sources it). common = output helpers + docker.io pool.
+includes:
+  - common
 
 hooks:
   install: install.sh

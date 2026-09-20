@@ -1,5 +1,5 @@
 name: dify
-version: 1.18.0
+version: 1.18.1
 description: "Dify self-hosted (docker compose): LLM app builder (api/worker/web/nginx + weaviate)"
 platform: ""
 dir: tools/dify
@@ -34,6 +34,11 @@ files:
   - ssrf_proxy/squid.conf.template
   - ssrf_proxy/squid-common.conf.template
   - ssrf_proxy/docker-entrypoint.sh
+
+# Shared library include (repo tools/_shared/<name>.sh → cached as
+# _<name>.sh; lib.sh sources it). common = output helpers + docker.io pool.
+includes:
+  - common
 
 hooks:
   install: install.sh
@@ -86,6 +91,13 @@ upgrade:
     - DIFY_SANDBOX_IMAGE=langgenius/dify-sandbox:
     - DIFY_PLUGIN_DAEMON_IMAGE=langgenius/dify-plugin-daemon:
     - DIFY_AGENT_BACKEND_IMAGE=langgenius/dify-agent-backend:
+
+# Optional shared-base mode (DIFY_SHARED_BASE=1 in the deploy .env, default 0 =
+# fully standalone with bundled postgres/redis): compose joins the base network
+# + base.env. Unlike services: this is a user toggle, NOT an install-time gate.
+services_optional:
+  - base:postgres#dify
+  - base:redis
 
 # MANDATORY preflight (docs/module-spec.md §Preflight checks). All images come
 # from docker.io / cr.weaviate.io (daemon-pulled), so connectivity is probed

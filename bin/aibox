@@ -564,14 +564,26 @@ installed_names() {
 
 # Download module scripts to the local cache (result path in AIBOX_LAST_DEST).
 download_module() {
-  local name="$1" dir files f extra dl
+  local name="$1" dir files f extra dl inc incs
   load_registry
   module_exists "$name" || die "Unknown module: ${name} (aibox dashboard --available shows available modules)"
   dir="$(module_field "$name" dir)"
   files="$(module_field "$name" files)"
+  incs="$(module_field "$name" includes)"
   [ -n "$dir" ] || die "Module $name is missing the dir field"
   AIBOX_LAST_DEST="$AIBOX_MOD_DIR/$name"
   mkdir -p "$AIBOX_LAST_DEST"
+  # Shared includes FIRST (repo-level tools/_shared/<inc>.sh → cache _<inc>.sh):
+  # single source in the repo, per-module copy in the cache (self-containment
+  # preserved). Fetched before the standard set so a failed include download
+  # never leaves the module cache half-updated.
+  for inc in $incs; do
+    info "fetch tools/_shared/${inc}.sh (include)"
+    if ! gh_pool_fetch "${AIBOX_RAW%/}/tools/_shared/${inc}.sh" >"$AIBOX_LAST_DEST/_${inc}.sh"; then
+      rm -f "$AIBOX_LAST_DEST/_${inc}.sh"
+      die "Download tools/_shared/${inc}.sh failed (module ${name} declares includes: [${inc}])"
+    fi
+  done
   # Standard set (module.yaml + lib.sh/install.sh/uninstall.sh/update.sh/svc.sh)
   # is implicitly downloaded — module.yaml rides along so the LOCAL cache carries
   # the module's own metadata (per-module help / dashboard / ports work offline).
@@ -2673,6 +2685,41 @@ cmd_module_help() {
   fi
 }
 
+# Action-level help: `aibox <module> <action> --help`. Renders the action's
+# usage: line prominently — the args hint (leading <...>/[...] before " — ")
+# becomes the usage tail, the rest is the description. Falls back to the
+# module table when the action has no usage entry (or is unknown).
+cmd_action_help() { # $1=module $2=action
+  local name="$1" action="$2" line args desc ver
+  line="$(_module_usage_local "${name}" "${action}")"
+  if [ -z "${line}" ]; then
+    # no usage entry → the module table already says everything (and catches
+    # typos: an undeclared action shows the full action list)
+    warn "no usage entry for '${action}' — the module table:"
+    cmd_module_help "${name}"
+    return 0
+  fi
+  ver="$(_module_version_local "${name}")"
+  # split "<args> — description" (args hint optional)
+  case "${line}" in
+  *" — "*)
+    args="${line%% — *}"
+    desc="${line#* — }"
+    ;;
+  *)
+    args=""
+    desc="${line}"
+    ;;
+  esac
+  printf '%s%s%s %s· module %s%s\n' "$C_BOLD" "${name} ${action}" "$C_RST" "$C_DIM" "${ver:-\?}" "$C_RST"
+  echo
+  info "usage:  aibox ${name} ${action}${args:+ ${args}}"
+  echo
+  printf '  %s\n' "${desc}"
+  echo
+  info "module:  aibox ${name} --help"
+}
+
 cmd_dev_guide() {
   local name="$1"
   load_registry
@@ -2693,13 +2740,24 @@ cmd_module_action() {
   local name="${1:-}"
   [ -n "$name" ] || die "Usage: aibox <module> <action>  or  aibox help"
   shift
-  local action="${1:-}"
+  local action="${1:-}" next
   # Per-module help: bare, help, -h, --help all route to it (aligned with the
   # top-level `aibox help`). Previously `aibox <module> --help` fell through to
   # the module's svc.sh which died with its unknown-action usage.
   case "${action}" in
   "" | help | -h | --help)
     cmd_module_help "${name}"
+    return
+    ;;
+  esac
+  # Action-level help: `aibox <module> <action> --help` (also -h) renders the
+  # action's usage line prominently — args hint + description from the usage:
+  # stanza, plus module context. Anything AFTER the action decides: a bare -h/
+  # --help renders help; other args dispatch as before.
+  next="${2:-}"
+  case "${next}" in
+  -h | --help)
+    cmd_action_help "${name}" "${action}"
     return
     ;;
   esac

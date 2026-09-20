@@ -18,16 +18,15 @@ KERNEL_DEST="${CLASH_BIN_DIR}/${KERNEL_NAME}"
 # Default ports (overridable via state)
 CLASH_PORT="${CLASH_PORT:-7890}"
 CLASH_API_PORT="${CLASH_API_PORT:-9090}"
-
-# Output helpers: colors are inherited from aibox via the exported C_* env vars (single
-# source of truth); ${C_*:-} falls back to empty when this lib is sourced standalone.
-# Prefix uses AIBOX_MODULE (injected by aibox) with the module name as a fallback.
-log()  { printf '%s\n' "$*"; }
-warn() { printf '%s⚠%s  %s\n' "${C_YEL:-}" "${C_RST:-}" "$*" >&2; }
-die() {
-  printf '%s✗%s  %s\n' "${C_RED:-}" "${C_RST:-}" "$*" >&2
-  exit 1
-}
+# Shared library (output helpers + docker.io pool): repo tools/_shared/common.sh,
+# shipped per-module as _common.sh (module.yaml includes: [common]).
+LIB_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Cache layout (aibox install): _common.sh sits next to lib.sh. Repo layout
+# (direct execution / bats): ../_shared/common.sh. Cache wins when present.
+LIB_COMMON="${LIB_SELF}/_common.sh"
+[ -f "${LIB_COMMON}" ] || LIB_COMMON="${LIB_SELF}/../_shared/common.sh"
+# shellcheck disable=SC1091
+. "${LIB_COMMON}"
 mask_url() { printf '%s' "${1:-}" | sed -E 's#(://[^:/@]+):[^@]*@#\1:***@#'; }
 
 # ---------- deploy root / paths (module-spec deploy-type convention) ----------

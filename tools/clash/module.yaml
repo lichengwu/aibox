@@ -1,5 +1,5 @@
 name: clash
-version: 1.3.0
+version: 1.3.1
 description: "Clash subscription proxy pool — mihomo kernel orchestration (auto speed-test/switch/failover)"
 platform: ""
 dir: tools/clash
@@ -17,6 +17,11 @@ ports:
 # its own UA — plain-curl probes return 403 by design, so it stays unchecked.
 checks:
   disk_gb: 1
+
+# Shared library include (repo tools/_shared/<name>.sh → cached as
+# _<name>.sh; lib.sh sources it). common = output helpers + docker.io pool.
+includes:
+  - common
 
 hooks:
   install: install.sh

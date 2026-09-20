@@ -4,7 +4,7 @@
 
 `aibox` is a pure-bash module manager (zero runtime dependencies, compatible with the bash 3.2 that ships with macOS). Each "module" is a directory under `tools/<name>/` in the repo, shipping its own `install / uninstall / update / svc` hooks and dispatched uniformly by `aibox`.
 
-> **Scope note:** the `windmill` and `openmaic` modules bundle full self-host ops CLIs (a few thousand lines each) inside this repo — they are the source of truth for those ops tools, not vendored copies. The core manager itself is `bin/aibox` (~1.3k lines). See [Bundled ops CLIs](#bundled-ops-clis).
+> **Scope note:** the `windmill` and `openmaic` modules bundle full self-host ops CLIs (a few thousand lines each) inside this repo — they are the source of truth for those ops tools, not vendored copies. The core manager itself is `bin/aibox` (single file, ~3.4k lines — one file is the curl|bash deployment constraint). See [Bundled ops CLIs](#bundled-ops-clis).
 
 ## Install
 
@@ -62,6 +62,9 @@ aibox purge [<module>...|self] [--apply] [--stop] [--yes]
                                   residue scan/cleanup (dry-run by default): volumes, apps/,
                                   /etc dirs, units, binaries left after uninstalls
 aibox <module> <action> [args]    invoke a module action (e.g. aibox pi-web start)
+aibox <module> --help             per-module help: action table from the module's usage:
+                                  stanza (offline). aibox <module> <action> --help = the
+                                  single action's usage (args hint + description)
 
 Every install/update is gated by a **preflight check** (domains reachable / disk / deps / base
 services ready — declared per module in `module.yaml` `checks:`; see `docs/module-spec.md`).

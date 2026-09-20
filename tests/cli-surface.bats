@@ -220,8 +220,46 @@ EOF2
   cp "$REPO_ROOT/tools/clash/module.yaml" "$AIBOX_HOME/modules/clash/module.yaml"
   cp "$REPO_ROOT/tools/clash/svc.sh" "$AIBOX_HOME/modules/clash/svc.sh"
   cp "$REPO_ROOT/tools/clash/lib.sh" "$AIBOX_HOME/modules/clash/lib.sh"
+  cp "$REPO_ROOT/tools/_shared/common.sh" "$AIBOX_HOME/modules/clash/_common.sh"
   run bash "$REPO_ROOT/bin/aibox" clash badaction
   [ "$status" -eq 1 ]
   [[ "$output" == *"unknown action: badaction"* ]]
   [[ "$output" == *"aibox clash --help"* ]]
+}
+
+@test "action-level help: <module> <action> --help renders args hint + description" {
+  # the usage: line's "<args> — description" shape becomes the usage tail
+  export AIBOX_RAW="https://dead.invalid/aibox"
+  cat >"$AIBOX_HOME/installed.sh" <<'EOF2'
+AIBOX_INSTALLED_clash="1.3.0"
+EOF2
+  mkdir -p "$AIBOX_HOME/modules/clash"
+  printf 'name: clash\nversion: 1.3.0\ndescription: "Clash pool"\nactions:\n  - start\n  - set\nusage:\n  start: "Start the kernel"\n  set: "<subscription-url> — store the subscription + generate config"\n' \
+    >"$AIBOX_HOME/modules/clash/module.yaml"
+  run bash "$REPO_ROOT/bin/aibox" clash set --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"clash set · module 1.3.0"* ]]
+  [[ "$output" == *"usage:  aibox clash set <subscription-url>"* ]]
+  [[ "$output" == *"store the subscription + generate config"* ]]
+  [[ "$output" == *"aibox clash --help"* ]]
+  # no-args action: usage line has no args tail
+  run bash "$REPO_ROOT/bin/aibox" clash start --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"usage:  aibox clash start"* ]]
+  [[ "$output" != *"usage:  aibox clash start "* ]]
+}
+
+@test "action-level help: unknown action falls back to the module table" {
+  export AIBOX_RAW="https://dead.invalid/aibox"
+  cat >"$AIBOX_HOME/installed.sh" <<'EOF2'
+AIBOX_INSTALLED_clash="1.3.0"
+EOF2
+  mkdir -p "$AIBOX_HOME/modules/clash"
+  printf 'name: clash\nversion: 1.3.0\ndescription: "Clash pool"\nactions:\n  - start\nusage:\n  start: "Start the kernel"\n' \
+    >"$AIBOX_HOME/modules/clash/module.yaml"
+  run bash "$REPO_ROOT/bin/aibox" clash bogus --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no usage entry for 'bogus'"* ]]
+  # the module table follows → typo recovery
+  [[ "$output" == *"usage:  aibox clash <action>"* ]]
 }

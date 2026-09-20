@@ -120,6 +120,12 @@ actions:
   - status
   - logs
 
+# Shared-library include: repo tools/_shared/common.sh (output helpers
+# log/warn/ok/info/die + the docker.io download pool) ships into the module
+# cache as _common.sh; lib.sh sources it. NEVER copy pool/helper code.
+includes:
+  - common
+
 # Per-action help text (one line each) — `aibox __NAME__ --help` renders this
 # table. The validator WARNs when a declared action has no usage entry.
 usage:
@@ -172,6 +178,12 @@ hooks:
 actions:
   - status
 
+# Shared-library include: repo tools/_shared/common.sh (output helpers
+# log/warn/ok/info/die + the docker.io download pool) ships into the module
+# cache as _common.sh; lib.sh sources it. NEVER copy pool/helper code.
+includes:
+  - common
+
 # Per-action help text (one line each) — `aibox __NAME__ --help` renders this
 # table. The validator WARNs when a declared action has no usage entry.
 usage:
@@ -196,14 +208,14 @@ render "$DEST/lib.sh" <<'EOF'
 
 MODULE_NAME="__NAME__"
 
-# Output helpers: symbols align with the manager's output system (bin/aibox):
-# log = plain action line; warn/ok/die = symbol prefix (⚠/✓/✗, two-space gap);
-# colors are inherited from aibox via exported C_* env vars (single source of
-# truth); ${C_*:-} falls back to plain output when this lib is sourced standalone.
-log()  { printf '%s\n' "$*"; }
-warn() { printf '%s⚠%s  %s\n' "${C_YEL:-}" "${C_RST:-}" "$*" >&2; }
-ok()   { printf '%s✓%s  %s\n' "${C_GRN:-}" "${C_RST:-}" "$*"; }
-die()  { printf '%s✗%s  %s\n' "${C_RED:-}" "${C_RST:-}" "$*" >&2; exit 1; }
+# Shared library (output helpers + docker.io pool) — repo tools/_shared/common.sh,
+# shipped per-module as _common.sh (module.yaml includes: [common]). Cache layout
+# (aibox install) wins; repo layout (direct execution / bats) falls back.
+LIB_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_COMMON="${LIB_SELF}/_common.sh"
+[ -f "${LIB_COMMON}" ] || LIB_COMMON="${LIB_SELF}/../_shared/common.sh"
+# shellcheck disable=SC1091
+. "${LIB_COMMON}"
 
 # Deploy root per the aibox convention ($AIBOX_HOME/apps/<name>; module-spec
 # §Deploy directory). The guard is mandatory: systemd service contexts may

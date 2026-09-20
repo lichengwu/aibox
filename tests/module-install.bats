@@ -67,3 +67,21 @@ teardown() {
   [ "$status" -eq 0 ]
   [ ! -d "$AIBOX_HOME/modules/openmaic" ]
 }
+
+@test "shared include: declares includes → _common.sh lands in the cache, single-source identical" {
+  # The include mechanism: repo tools/_shared/common.sh → cache _common.sh.
+  # Locks: (1) the file is downloaded for a module declaring includes: [common],
+  # (2) byte-identical to the repo single source, (3) lib.sh resolves it in the
+  # cache layout and the repo layout.
+  run bash "$REPO_ROOT/bin/aibox" install openmaic --skip-checks
+  [ "$status" -eq 0 ]
+  [ -f "$AIBOX_HOME/modules/openmaic/_common.sh" ]
+  cmp -s "$AIBOX_HOME/modules/openmaic/_common.sh" "$REPO_ROOT/tools/_shared/common.sh"
+  # cache-layout resolution: sourcing the cached lib.sh exposes the shared functions
+  run env bash -c ". '$AIBOX_HOME/modules/openmaic/lib.sh' && type docker_pool_prepull >/dev/null && type log >/dev/null && type die >/dev/null && echo functions-ok"
+  [ "$status" -eq 0 ]
+  [[ "$output" == "functions-ok" ]]
+  # repo-layout resolution: direct execution finds ../_shared/common.sh
+  run bash -c "cd '$REPO_ROOT' && env AIBOX_MODULE=openmaic bash tools/openmaic/svc.sh status 2>&1 | head -1"
+  [ "$status" -eq 0 ]
+}

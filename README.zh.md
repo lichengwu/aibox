@@ -6,7 +6,7 @@
 
 `aibox` 是一个纯 bash 的模块管理器（零运行时依赖，兼容 macOS 自带 bash 3.2）。每个「模块」是仓库 `tools/<name>/` 下的一个目录，自带 `install / uninstall / update / svc` 钩子，由 `aibox` 统一调度。
 
-> **范围说明**：`windmill` 与 `openmaic` 模块在本仓库内捆绑了完整的自托管运维 CLI（各数千行）——它们是这些运维工具的源头，而非第三方副本。核心管理器本身是 `bin/aibox`（约 1.3k 行）。见[捆绑的运维 CLI](#捆绑的运维-cli)。
+> **范围说明**：`windmill` 与 `openmaic` 模块在本仓库内捆绑了完整的自托管运维 CLI（各数千行）——它们是这些运维工具的源头，而非第三方副本。核心管理器本身是 `bin/aibox`（单文件约 3.4k 行——单文件是 curl|bash 一行安装的部署约束）。见[捆绑的运维 CLI](#捆绑的运维-cli)。
 
 ## 安装
 
@@ -51,6 +51,7 @@ aibox purge [<module>...|self] [--apply] [--stop] [--yes]
                                  残留扫描/清理（默认 dry-run 报告）：卸载后遗留的卷、apps/、
                                  /etc 目录、服务单元、二进制
 aibox <module> <action> [args]   调用模块动作（如 aibox pi-web start）
+aibox <module> --help             模块级帮助：动作表（离线渲染）；动作级：aibox <module> <action> --help
 
 安装/更新前会强制跑 preflight（各模块 module.yaml 的 checks: 声明：磁盘/域名可达/命令/base 服务就绪）；
 域名不通时会自动在已配置的路由（直连/clash/gh 镜像/静态代理）里试出一个可达的并本次采用。

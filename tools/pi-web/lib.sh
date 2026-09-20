@@ -16,17 +16,15 @@ PORT="${PI_WEB_PORT:-30141}"
 PASSWORD="" # filled by resolve_password (below); PI_WEB_PASSWORD overrides
 BIND="${PI_WEB_BIND:-0.0.0.0}"
 UID_="$(id -u)"
-
-# Output helpers: colors are inherited from aibox via the exported C_* env vars (single
-# source of truth); ${C_*:-} falls back to empty when this lib is sourced standalone.
-# Prefix uses AIBOX_MODULE (injected by aibox) with the module name as a fallback.
-log()  { printf '%s\n' "$*"; }
-warn() { printf '%s⚠%s  %s\n' "${C_YEL:-}" "${C_RST:-}" "$*" >&2; }
-ok()   { printf '%s✓%s  %s\n' "${C_GRN:-}" "${C_RST:-}" "$*"; }
-die() {
-  printf '%s✗%s  %s\n' "${C_RED:-}" "${C_RST:-}" "$*" >&2
-  exit 1
-}
+# Shared library (output helpers + docker.io pool): repo tools/_shared/common.sh,
+# shipped per-module as _common.sh (module.yaml includes: [common]).
+LIB_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Cache layout (aibox install): _common.sh sits next to lib.sh. Repo layout
+# (direct execution / bats): ../_shared/common.sh. Cache wins when present.
+LIB_COMMON="${LIB_SELF}/_common.sh"
+[ -f "${LIB_COMMON}" ] || LIB_COMMON="${LIB_SELF}/../_shared/common.sh"
+# shellcheck disable=SC1091
+. "${LIB_COMMON}"
 
 # ---------- profile ----------
 # AIBOX_PROFILE defaults to "base" (exported by aibox's --profile flag).

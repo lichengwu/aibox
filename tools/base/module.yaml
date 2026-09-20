@@ -1,5 +1,5 @@
 name: base
-version: 1.3.0
+version: 1.3.1
 description: "Shared base components (PostgreSQL 18 + Redis 7); each module gets its own DB"
 platform: ""
 dir: tools/base
@@ -34,6 +34,11 @@ checks:
   docker_images:
     - postgres:18
     - redis:7
+
+# Shared library include (repo tools/_shared/<name>.sh → cached as
+# _<name>.sh; lib.sh sources it). common = output helpers + docker.io pool.
+includes:
+  - common
 
 hooks:
   install: install.sh

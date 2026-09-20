@@ -1,5 +1,5 @@
 name: new-api
-version: 1.1.0
+version: 1.1.1
 description: "New API self-hosted (docker compose): LLM API gateway (OpenAI-compatible relay, key/quota management, usage analytics)"
 platform: ""
 dir: tools/new-api
@@ -27,6 +27,11 @@ files:
 services:
   - base:postgres#new_api
   - base:redis
+
+# Shared library include (repo tools/_shared/<name>.sh → cached as
+# _<name>.sh; lib.sh sources it). common = output helpers + docker.io pool.
+includes:
+  - common
 
 hooks:
   install: install.sh
