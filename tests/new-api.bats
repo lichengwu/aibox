@@ -114,6 +114,17 @@ _kill_srv() { # $1 = pid
   wait "$1" 2>/dev/null || true
 }
 
+# Bounded readiness wait (same fix as test_helper.bash; this file is standalone).
+_wait_http() { # $1 = port
+  local waited=0
+  until curl -s -o /dev/null --max-time 2 "http://127.0.0.1:${1}/" 2>/dev/null; do
+    [ "${waited}" -ge 20 ] && return 1
+    sleep 0.5
+    waited=$((waited + 1))
+  done
+  return 0
+}
+
 @test "install: places compose + writes .env once (idempotent), secret generated, mode 600" {
   export PATH="$FAKEBIN:$PATH"
   run bash "$REPO_ROOT/tools/new-api/install.sh"
@@ -152,7 +163,7 @@ _kill_srv() { # $1 = pid
   printf '{"success": true, "data": {"version": "v0.13.2"}}' >"$docroot/api/status"
   python3 -m http.server 18300 --bind 127.0.0.1 --directory "$docroot" >/dev/null 2>&1 &
   srv=$!
-  sleep 1
+  _wait_http 18300
   api_up 18300
   rc=$?
   _kill_srv "$srv"
@@ -168,7 +179,7 @@ _kill_srv() { # $1 = pid
   printf '{"success": false}' >"$docroot/api/status"
   python3 -m http.server 18302 --bind 127.0.0.1 --directory "$docroot" >/dev/null 2>&1 &
   srv=$!
-  sleep 1
+  _wait_http 18302
   ! api_up 18302
   rc=$?
   _kill_srv "$srv"

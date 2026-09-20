@@ -79,7 +79,7 @@ EOF
   command -v python3 >/dev/null 2>&1 || skip "python3 unavailable"
   python3 -m http.server 18099 --bind 127.0.0.1 >/dev/null 2>&1 &
   local srv=$!
-  sleep 1
+  _wait_http 18099
   run bash -c "source '$REPO_ROOT/bin/aibox'; AIBOX_CHECK_TIMEOUT=2; _preflight_probe_route current 'http://127.0.0.1:18099/'"
   _kill_srv "$srv"
   [ "$status" -eq 0 ] || echo "$output"
@@ -103,7 +103,7 @@ EOF
   command -v python3 >/dev/null 2>&1 || skip "python3 unavailable"
   python3 -m http.server 18097 --bind 127.0.0.1 >/dev/null 2>&1 &
   local srv=$!
-  sleep 1
+  _wait_http 18097
   # probe fetches http://127.0.0.1:18097/https://github.com/ → any HTTP response = reachable
   run bash -c "source '$REPO_ROOT/bin/aibox'; AIBOX_CHECK_TIMEOUT=2; CLASH_MIRROR=http://127.0.0.1:18097; _preflight_probe_route mirror 'https://github.com/'"
   [ "$status" -eq 0 ] || echo "$output"
@@ -120,7 +120,7 @@ EOF
   command -v python3 >/dev/null 2>&1 || skip "python3 unavailable"
   python3 -m http.server 18098 --bind 127.0.0.1 >/dev/null 2>&1 &
   local srv=$!
-  sleep 1
+  _wait_http 18098
   run bash -c "
     source '$REPO_ROOT/bin/aibox'
     AIBOX_MODULE_ok_checks_domains='http://127.0.0.1:18098'

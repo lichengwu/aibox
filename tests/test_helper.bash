@@ -35,6 +35,19 @@ _kill_srv() { # $1 = pid
   wait "$1" 2>/dev/null || true
 }
 
+# Bounded readiness wait for a test HTTP server. A fixed `sleep 1` lost the
+# race on a cold macOS CI runner: the first python3 start took >1s to bind and
+# the probe got an instant connection-refused (measured live).
+_wait_http() { # $1 = port
+  local waited=0
+  until curl -s -o /dev/null --max-time 2 "http://127.0.0.1:${1}/" 2>/dev/null; do
+    [ "${waited}" -ge 20 ] && return 1
+    sleep 0.5
+    waited=$((waited + 1))
+  done
+  return 0
+}
+
 teardown() {
   [ -n "${AIBOX_HOME:-}" ] && rm -rf "$AIBOX_HOME" 2>/dev/null || true
   # orphan sweep (belt & braces — see _kill_srv): the test http.server ports
