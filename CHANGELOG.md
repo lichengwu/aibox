@@ -7,6 +7,25 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.9.1] — 2026-09-20
+
+### Fixed — CI/test robustness (product code unchanged from 0.9.0)
+
+- **Test portability (GNU vs BSD)**: new-api/xiaozhi `.env` mode checks used the
+  BSD-first `stat -f '%Lp'` order — on GNU, `stat -f` is *filesystem* mode (exit 0
+  with garbage; the fallback never fired). Flipped to the GNU-first order proven
+  in tests/upgrade.bats; plus one stale catalog assertion (header changed in the
+  0.8-era TUI redesign, test never updated).
+- **macOS CI job hang**: the first `macos-bash32` run finished the suite in 2 min
+  (230/230) then sat "in progress" ~50 min — an orphaned test `http.server` held
+  the step's output pipes (runner cleanup: "Terminate orphan process: (Python)").
+  Now: deterministic `_kill_srv` (TERM→KILL→wait) + teardown port sweep + a
+  30-minute job timeout ceiling.
+- **Cold-runner startup race**: a fixed `sleep 1` lost against a cold runner's
+  first python3 start (>1s to bind → instant connection-refused). Replaced with
+  `_wait_http` bounded readiness polling at all 5 test-server sites.
+- Net effect: lint CI fully green across all 9 jobs (macOS job 5 min, was hanging).
+
 ## [0.9.0] — 2026-09-20
 
 ### Highlights
