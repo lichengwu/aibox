@@ -109,6 +109,13 @@ The install hook now runs the same pattern as aibox's other downloads:
   ranked by measured bytes/sec. The winner's partial is a real prefix of the
   asset — it seeds the resumable download (on fast routes the probe even
   completes the whole file).
+- **Verification-gated failover** (`download_mihomo` + `_clash_verify_gz`):
+  every completed body is verified BEFORE acceptance — gzip integrity AND the
+  payload runs `-v` reporting the pinned tag. A mirror can serve a valid gzip
+  of the WRONG thing (error page / other asset; live-caught: "fast route"
+  completed, binary died, install died with it). A verified-bad COMPLETE body
+  is discarded and the next source is tried; an INCOMPLETE gzip stays as a
+  resumable partial (mirrors proxy the identical asset).
 - **Resumable failover** (`download_mihomo`): the throttled-CDN lesson
   (partials carry across attempts) extends across sources — mirrors proxy the
   identical asset bytes, so a partial from one source resumes on another.

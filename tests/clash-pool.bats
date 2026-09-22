@@ -222,3 +222,68 @@ _log() { grep -c "$1" "$FAKE_CURL_LOG" || true; }
   export FAKE_GH_PROXY_BODYFILE="$BODIES/tag2.json"
   [ "$(latest_mihomo_tag)" = "3.2.1" ]
 }
+
+
+# ---- verification-gated failover (live-caught: a mirror served a valid gzip
+# of the WRONG thing; gunzip -t passed, the binary died, and the install died
+# with it instead of failing over) ----
+
+_make_gz() { # $1=out $2=payload
+  printf '%s\n' "$2" >"${1}.raw"
+  gzip -c "${1}.raw" >"$1"
+  rm -f "${1}.raw"
+}
+
+@test "_clash_verify_gz: accepts a runnable payload reporting the pinned version" {
+  _make_gz "$SANDBOX/good.gz" '#!/bin/sh
+echo "Mihomo Meta v1.19.31 linux amd64 fake"
+exit 0'
+  run _clash_verify_gz "$SANDBOX/good.gz" "1.19.31"
+  [ "$status" -eq 0 ]
+}
+
+@test "_clash_verify_gz: rejects a valid gzip of garbage (the mirror-garbage shape)" {
+  _make_gz "$SANDBOX/garbage.gz" "this is an html error page, gzipped by a confused mirror"
+  run _clash_verify_gz "$SANDBOX/garbage.gz" "1.19.31"
+  [ "$status" -eq 1 ]
+}
+
+@test "_clash_verify_gz: rejects a runnable payload of the WRONG version" {
+  _make_gz "$SANDBOX/wrongver.gz" '#!/bin/sh
+echo "Mihomo Meta v1.18.0 linux amd64"'
+  run _clash_verify_gz "$SANDBOX/wrongver.gz" "1.19.31"
+  [ "$status" -eq 1 ]
+}
+
+@test "_clash_verify_gz: rejects a truncated gzip (incomplete download)" {
+  _make_gz "$SANDBOX/full.gz" '#!/bin/sh
+echo "Mihomo Meta v1.19.31"'
+  head -c 20 "$SANDBOX/full.gz" >"$SANDBOX/trunc.gz"
+  run _clash_verify_gz "$SANDBOX/trunc.gz" "1.19.31"
+  [ "$status" -eq 1 ]
+}
+
+@test "download_mihomo: winner serves a complete-but-bad body → verified failover to the runner-up" {
+  # DIRECT wins the rate race but serves a valid gzip of garbage; GH_PROXY
+  # serves the real (fake) mihomo. The install must discard the bad body and
+  # land the good one — not die on the first source.
+  _make_gz "$SANDBOX/bad.gz" "mirror garbage, gzipped"
+  _make_gz "$SANDBOX/good.gz" '#!/bin/sh
+echo "Mihomo Meta v1.19.31 linux amd64"
+exit 0'
+  export FAKE_DIRECT_MODE=ok FAKE_DIRECT_BODYFILE="$SANDBOX/bad.gz" FAKE_DIRECT_PROBE_TIME=0.1
+  export FAKE_GH_PROXY_MODE=ok FAKE_GH_PROXY_BODYFILE="$SANDBOX/good.gz" FAKE_GH_PROXY_PROBE_TIME=0.5
+  export FAKE_CURL_LOG="$SANDBOX/curl.log"
+  : >"$FAKE_CURL_LOG"
+  run download_mihomo 1.19.31
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"failed verification"* ]]
+  [[ "$output" == *"trying the next source"* ]]
+  # the placed kernel is the GOOD payload (runs and reports the version)
+  [ -x "$CLASH_BIN_DIR/mihomo" ]
+  run "$CLASH_BIN_DIR/mihomo" -v
+  [[ "$output" == *"v1.19.31"* ]]
+  # both sources were actually used (failover happened)
+  grep -q "github.com" "$FAKE_CURL_LOG"
+  grep -q "gh-proxy.com" "$FAKE_CURL_LOG"
+}

@@ -220,6 +220,23 @@ clash_rank_candidates() { # $1=asset-url $2=ranked-outfile
   return 0
 }
 
+# Verify a downloaded .gz is the REAL mihomo of the expected version: gzip
+# integrity + the payload EXECUTES and reports the pinned tag. A mirror can
+# return a valid gzip of the WRONG thing (error page / other asset / corrupt
+# body) — gunzip -t alone cannot tell; running -v can. Failure means the
+# SOURCE is bad, so the caller fails over instead of dying.
+_clash_verify_gz() { # $1=gz-path $2=expected version (e.g. 1.19.31)
+  [ -f "$1" ] || return 1
+  gunzip -t "$1" 2>/dev/null || return 1
+  local probe="${1}.verify" out
+  gunzip -c "$1" >"$probe" 2>/dev/null || { rm -f "$probe"; return 1; }
+  chmod 0755 "$probe" 2>/dev/null || true
+  out="$("$probe" -v 2>/dev/null | head -n 1)"
+  rm -f "$probe"
+  [ -n "$out" ] || return 1
+  case "$out" in *"$2"*) return 0 ;; *) return 1 ;; esac
+}
+
 download_mihomo() {
   local ver asset url tmp attempt cands cand ok rankf psz tsz
   ver="${1:-$(latest_mihomo_tag)}"
@@ -248,8 +265,8 @@ download_mihomo() {
     if [ -f "$tmp" ]; then tsz="$(wc -c <"$tmp" | tr -d ' ')"; fi
     if [ "${psz:-0}" -gt "${tsz:-0}" ]; then
       cp -f "${CLASH_PROBE_PARTIAL}" "$tmp"
-      if gunzip -t "$tmp" 2>/dev/null; then
-        log "  fast route: the rate probe already fetched the whole file"
+      if _clash_verify_gz "$tmp" "$ver"; then
+        log "  fast route: the rate probe already fetched the whole file (verified)"
       fi
     fi
   fi
@@ -262,13 +279,13 @@ download_mihomo() {
   ok=0
   # shellcheck disable=SC2086
   for cand in $cands; do
-    if [ -f "$tmp" ] && gunzip -t "$tmp" 2>/dev/null; then
+    if _clash_verify_gz "$tmp" "$ver"; then
       ok=1
       break
     fi
     log "  source: ${cand}"
     attempt=0
-    until { [ -f "$tmp" ] && gunzip -t "$tmp" 2>/dev/null; } ||
+    until _clash_verify_gz "$tmp" "$ver" ||
       curl -fsSL -C - --max-time "${CLASH_DOWNLOAD_TIMEOUT:-120}" "$cand" -o "$tmp"; do
       attempt=$((attempt + 1))
       if [ "$attempt" -ge "${CLASH_DOWNLOAD_ATTEMPTS:-2}" ]; then
@@ -277,9 +294,18 @@ download_mihomo() {
       fi
       warn "  attempt $((attempt + 1)) interrupted — resuming partial download..."
     done
-    if [ -f "$tmp" ] && gunzip -t "$tmp" 2>/dev/null; then
+    if _clash_verify_gz "$tmp" "$ver"; then
       ok=1
       break
+    fi
+    # Distinguish the two failure shapes: an INCOMPLETE gzip (gunzip -t fails)
+    # is a resumable partial — mirrors proxy the identical asset, so it carries
+    # over to the next source. A COMPLETE gzip whose payload is not the mihomo
+    # we asked for (mirror garbage / wrong asset) can never resume into
+    # goodness — discard it so the next source starts clean.
+    if [ -f "$tmp" ] && gunzip -t "$tmp" 2>/dev/null; then
+      warn "  ${cand}: complete body failed verification (not a runnable mihomo v${ver}) — discarding, trying the next source"
+      rm -f "$tmp"
     fi
   done
   [ "$ok" = 1 ] || die "Download failed on every source tried ($(printf '%s' "$cands" | tr '\n' ' ')); $(du -h "$tmp" 2>/dev/null | cut -f1) partial retained
@@ -288,7 +314,7 @@ download_mihomo() {
   gunzip -f "$tmp" || die "Decompress failed (mihomo .gz)"
   mv -f "${tmp%.gz}" "$KERNEL_DEST"
   chmod 0755 "${KERNEL_DEST}"
-  "${KERNEL_DEST}" -v >/dev/null 2>&1 || die "Downloaded binary won't run (arch mismatch?)"
+  "${KERNEL_DEST}" -v >/dev/null 2>&1 || die "Downloaded binary won't run (arch mismatch? asset=$(detect_asset), host=$(uname -s)/$(uname -m))"
   log "Placed mihomo v${ver} -> ${KERNEL_DEST}"
 }
 

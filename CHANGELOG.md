@@ -7,6 +7,25 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [Unreleased]
+
+### Fixed — clash mihomo download: verification-gated failover (a bad mirror no longer kills the install)
+
+Live-caught on a Linux host: `aibox install clash` took the "fast route" (the
+rate probe completed the whole file), `gunzip -t` passed, but the payload was
+not a runnable mihomo — the install died at the post-download `-v` check with
+"Downloaded binary won't run (arch mismatch?)" and never tried another source.
+
+- `_clash_verify_gz`: gzip integrity + the payload EXECUTES `-v` + the output
+  carries the pinned version tag. Acceptance now happens INSIDE the source
+  loop: a verified-bad COMPLETE body is discarded and the next-ranked source
+  is tried; an INCOMPLETE gzip stays as a resumable partial (unchanged).
+- The final `-v` die keeps its role as a last-resort guard, now naming the
+  asset + host arch for diagnosis.
+- 5 new tests: 4 verification shapes (good / garbage-gzip / wrong-version /
+  truncated) + a two-source failover integration (bad winner → good runner-up
+  lands, both sources logged).
+
 ## [0.10.2] — 2026-09-22
 
 ### Fixed — purge --apply on running containers: inline stop question (one run, no partial state)

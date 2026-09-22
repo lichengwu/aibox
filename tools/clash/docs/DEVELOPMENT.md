@@ -47,9 +47,18 @@ module-local (modules are self-contained). Three pieces in lib.sh:
   concurrent; ranked by measured bytes/sec. The winner's partial is KEPT
   (moved out of the probe tmpdir) and seeds the resumable download — it is a
   real byte-prefix of the asset, and on fast routes the probe completes the
-  whole file (the download loop then skips straight to gunzip). Called
-  DIRECTLY with an outfile arg, never inside `$( )` — command-substitution
-  subshells would lose the CLASH_PROBE_PARTIAL global (the gh-pool lesson).
+  whole file (the download loop then verifies it and skips straight to
+  placement). Called DIRECTLY with an outfile arg, never inside `$( )` —
+  command-substitution subshells would lose the CLASH_PROBE_PARTIAL global
+  (the gh-pool lesson).
+- **Why verification gates the loop** (2026-09, live-caught on a Linux host):
+  the rate-probe winner's body completed and passed `gunzip -t`, but the
+  payload was not a runnable mihomo — the old code died at the post-loop
+  `-v` check with "arch mismatch?" and NO failover. `_clash_verify_gz`
+  (gzip -t + run `-v` + version-pin match) now decides acceptance INSIDE the
+  source loop: bad complete body → discard + next source; incomplete gzip →
+  keep as resume seed. Tests: 4 unit shapes + a two-source failover
+  integration (bad winner → good runner-up lands).
 - `download_mihomo` — resumable failover: the versioned tmp partial carries
   across attempts AND across sources (mirrors proxy identical bytes); the
   probe partial only replaces it when LARGER (a previous attempt's progress
