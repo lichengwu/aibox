@@ -3241,7 +3241,7 @@ _purge_apply_item() { # $1=kind $2=target $3=stop(0|1)
             PURGE_SKIPPED=$((PURGE_SKIPPED + 1)); warn "  failed to remove container: $t"
           fi
         else
-          PURGE_SKIPPED=$((PURGE_SKIPPED + 1)); warn "  skipped RUNNING container: $t (use --stop)"
+          PURGE_SKIPPED=$((PURGE_SKIPPED + 1)); warn "  skipped (running): $t"
         fi
       else
         if docker rm -f "$t" >/dev/null 2>&1; then
@@ -3336,11 +3336,26 @@ cmd_purge() {
     fi
   fi
 
-  # ---- pre-warn about running things ----
-  if [ "$stop" != 1 ] && _purge_docker_up; then
-    for c in $(printf '%s' "$PURGE_FINDINGS" | awk -F'\t' '$2=="container" && ($4=="running" || $4=="restarting") {print $3}'); do
-      warn "container '$c' is RUNNING — rerun with --stop to stop it first (its volumes are skipped meanwhile)"
-    done
+  # ---- running containers: inline stop decision (the two-gate pattern, same
+  # as the uninstall data question — the old flow warned per-container during
+  # pre-warn AND again per-skip in the apply loop, then forced a full re-run
+  # with --stop while the half-applied state had already deleted dirs).
+  #   --stop = explicit intent (pre-answered yes)
+  #   interactive = asked inline; decline → containers skipped, volumes stay
+  #   non-interactive / --yes-without-stop = safe default (skip + ONE hint) ----
+  local running_cs="" n_running=0
+  if _purge_docker_up; then
+    running_cs="$(printf '%s' "$PURGE_FINDINGS" | awk -F'\t' '$2=="container" && ($4=="running" || $4=="restarting") {print $3}')"
+    [ -n "${running_cs}" ] && n_running="$(printf '%s\n' "${running_cs}" | grep -c .)"
+  fi
+  if [ "${n_running}" -gt 0 ] && [ "${stop}" != 1 ]; then
+    if [ -t 0 ] && [ "${ASSUME_YES:-0}" != "1" ]; then
+      if ask_confirm "${n_running} container(s) are RUNNING — stop them as part of this purge? (docker stop + rm; declining leaves their volumes mounted and busy)"; then
+        stop=1
+      fi
+    else
+      warn "${n_running} running container(s) will be SKIPPED (stop them: rerun with --stop)"
+    fi
   fi
 
   # ---- apply: containers first (a live container pins its volumes), then the rest ----
@@ -3365,6 +3380,11 @@ PF2
   rmdir "$AIBOX_HOME" 2>/dev/null || true
   printf '\n'
   ok "purge complete: ${PURGE_DELETED} removed, ${PURGE_SKIPPED} skipped"
+  # when containers were skipped, the busy volumes are the CONSEQUENCE — one
+  # actionable closing line instead of the old raw per-volume "busy or gone"s
+  if [ "${n_running}" -gt 0 ] && [ "${stop}" != 1 ]; then
+    info "running container(s) + their volumes kept — stop + sweep in one run: aibox purge${scope:+${scope}} --apply --stop"
+  fi
   return 0
 }
 

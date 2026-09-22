@@ -7,6 +7,24 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [Unreleased]
+
+### Fixed — purge --apply on running containers: inline stop question (one run, no partial state)
+
+Live-caught on the deploy host: `aibox purge windmill --apply` with 7 running
+containers warned TWICE per container, deleted the dirs anyway (containers
+kept running as orphans), left the volumes busy, and told the user to re-run
+with `--stop`. Now the same two-gate pattern as uninstall:
+
+- **Inline question** after the delete confirm: "N container(s) are RUNNING —
+  stop them as part of this purge?" — yes → stop+rm first, then volumes, then
+  dirs (order verified by tests); one run completes everything.
+- `--stop` = pre-answered yes; non-interactive / `--yes` without `--stop` =
+  safe default (skip containers + ONE consolidated hint, no per-container
+  spam) with an actionable closing line.
+- The double warning (pre-warn + per-skip) is gone; the closing summary names
+  the follow-up command instead.
+
 ## [0.10.1] — 2026-09-22
 
 ### Fixed — unified destructive-verb interaction (the two-gate uninstall)

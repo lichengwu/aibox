@@ -62,7 +62,9 @@ aibox dashboard [--available] [<module>]
                                   port table) / registry catalog / single-module detail + health
 aibox purge [<module>...|self] [--apply] [--stop] [--yes]
                                   residue scan/cleanup (dry-run by default): volumes, apps/,
-                                  /etc dirs, units, binaries left after uninstalls
+                                  /etc dirs, units, binaries left after uninstalls. --apply
+                                  confirms, then asks inline whether to stop RUNNING
+                                  containers (--stop answers yes upfront)
 aibox <module> <action> [args]    invoke a module action (e.g. aibox pi-web start)
 aibox <module> --help             per-module help: action table from the module's usage:
                                   stanza (offline). aibox <module> <action> --help = the

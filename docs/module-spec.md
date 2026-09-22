@@ -507,7 +507,7 @@ Every destructive verb follows the same shape; module uninstall is the reference
 
 The data question being inline removes the dead round-trip the old flow forced: `aibox uninstall <m>` then `aibox uninstall <m> --purge` — the latter warns "not installed" (the hook contract needs the installed state); the correct post-uninstall cleanup is `aibox purge <m>`. Module hooks print that guidance.
 
-Gate coverage: uninstall (2 gates) · uninstall self (confirm per teardown scope) · purge `--apply` (confirm + dry-run default) · upgrade (confirm) · proxy set (confirm) · dispatched CLIs' `confirm` (windmill destroy etc.).
+Gate coverage: uninstall (2 gates) · uninstall self (confirm per teardown scope) · purge `--apply` (confirm + dry-run default + an inline "stop RUNNING containers?" question — `--stop` pre-answers yes; non-interactive skips them with a single hint, never a partial-stopping state) · upgrade (confirm) · proxy set (confirm) · dispatched CLIs' `confirm` (windmill destroy etc.).
 
 ## Preflight checks (mandatory for every module)
 

@@ -50,7 +50,8 @@ aibox dashboard [--available] [<module>]
                                  总览（模块+版本+端点+凭据+端口表）/ --available 全部可用 / <module> 详情+健康
 aibox purge [<module>...|self] [--apply] [--stop] [--yes]
                                  残留扫描/清理（默认 dry-run 报告）：卸载后遗留的卷、apps/、
-                                 /etc 目录、服务单元、二进制
+                                 /etc 目录、服务单元、二进制。--apply 先确认；遇到运行中容器
+                                 会内联询问是否一并停掉（--stop = 预答"停"）
 aibox <module> <action> [args]   调用模块动作（如 aibox pi-web start）
 aibox <module> --help             模块级帮助：动作表（离线渲染）；动作级：aibox <module> <action> --help
 
