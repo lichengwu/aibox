@@ -48,6 +48,26 @@ jobs:
           sha256sum bin/aibox install.sh > SHA256SUMS
           cat SHA256SUMS
 
+      # Open-source bar for release notes: the CURATED changelog section for this
+      # version leads the body (what + why, per AGENTS.md changelog standard);
+      # --generate-notes appends the commit list after it.
+      - name: extract curated changelog section
+        if: steps.t.outputs.exists != 'true'
+        env:
+          RELEASE_TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          ver="${RELEASE_TAG#v}"
+          awk -v v="$ver" '
+            $0 ~ "^## \\[" v "\\]" {insec=1; next}
+            insec && /^## \[/ {exit}
+            insec {print}
+          ' CHANGELOG.md > /tmp/cl-section.md
+          {
+            echo "## What's changed"
+            if [ -s /tmp/cl-section.md ]; then cat /tmp/cl-section.md; else echo "(see CHANGELOG.md)"; fi
+          } > NOTES.md
+          echo '--- NOTES.md ---'; cat NOTES.md
+
       - name: create release
         if: steps.t.outputs.exists != 'true'
         env:
@@ -57,5 +77,6 @@ jobs:
           gh release create "${RELEASE_TAG}" \
             --target main \
             --title "aibox ${RELEASE_TAG}" \
+            --notes-file NOTES.md \
             --generate-notes \
             SHA256SUMS

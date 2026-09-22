@@ -54,7 +54,15 @@ Conventional Commits: `fix:` / `feat:` / `docs:` / `style:` / `chore:`.
 
 - Main CLI version: `AIBOX_VERSION` at the top of `bin/aibox`. **The main CLI and each module version independently** (a module's dispatched CLI carries its own `*_CLI_VERSION`).
 - Module version: the `version:` field in `tools/<name>/module.yaml`.
-- **A release = bump `AIBOX_VERSION` → push main.** GitHub Actions (`.github/workflows/release.yml`) reads `AIBOX_VERSION`; if the remote has no matching `v<version>` tag, it auto-creates the tag + release (notes auto-generated from the previous tag) and attaches a `SHA256SUMS` sidecar. Unchanged version → skip (idempotent, safe to re-push).
+- **A release = bump `AIBOX_VERSION` → push main.** GitHub Actions (`.github/workflows/release.yml`) reads `AIBOX_VERSION`; if the remote has no matching `v<version>` tag, it auto-creates the tag + release — the release notes carry the **curated `CHANGELOG.md` section for that version** (extracted by the workflow) plus the auto-generated commit list — and attaches a `SHA256SUMS` sidecar. Unchanged version → skip (idempotent, safe to re-push).
+- **Changelog standard (every release, open-source bar — Keep a Changelog + semver):**
+  1. Header: `## [x.y.z] — YYYY-MM-DD` (the `[x.y.z]` resolves via the compare-link definitions at the file bottom; add the new link when releasing).
+  2. Body grouped by `### Added / Changed / Deprecated / Removed / Fixed / Security` — only the groups with content.
+  3. Each entry: **what changed + why it matters to the user** (one or two sentences; link the commit/PR when the entry is a fix with a story, e.g. "live-caught on the deploy host: …"). No bare commit-subject dumps.
+  4. A **semver rationale** line in the release commit message (why major/minor/patch).
+  5. **Breaking changes / migration notes** get their own `### Changed` bullet starting with **BREAKING:** — plus the two-gate interaction model applies to any new destructive verb.
+  6. Module version bumps ride in the release commit message (they are independent of `AIBOX_VERSION`).
+  7. The `[Unreleased]` section accumulates during development; at release time it is renamed to the version header (date = release day) and a fresh empty `[Unreleased]` is NOT required (start it with the next change).
 - Self-update still runs `curl install.sh | bash` (idempotent re-install), **independent of releases** — releases are publication/change records. Optional `AIBOX_SHA256`/`AIBOX_VERIFY=1` add checksum verification.
 
 ## Pitfall log
