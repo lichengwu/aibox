@@ -265,3 +265,55 @@ EOF2
   # the module table follows → typo recovery
   [[ "$output" == *"usage:  aibox clash <action>"* ]]
 }
+
+
+@test "dashboard overview: state= contract renders the composite icon + word" {
+  export AIBOX_DASH_UPDATE_TIMEOUT=1
+  cat >"$AIBOX_HOME/installed.sh" <<'EOF2'
+AIBOX_INSTALLED_new_api="1.1.1"
+EOF2
+  # one module, all four contract states via a state-file-driven mock
+  mkdir -p "$AIBOX_HOME/modules/new-api"
+  printf 'dashboard_info() { echo "state=$(cat \"$MOCK_STATE\" 2>/dev/null)"; echo "endpoint=http://127.0.0.1:30300"; }\n' \
+    >"$AIBOX_HOME/modules/new-api/lib.sh"
+  for st in ok starting stopped na; do
+    printf '%s' "$st" >"$AIBOX_HOME/mock_state"
+    export MOCK_STATE="$AIBOX_HOME/mock_state"
+    run bash "$REPO_ROOT/bin/aibox" dashboard
+    [ "$status" -eq 0 ] || { echo "state=$st"; echo "$output"; false; }
+    case "$st" in
+    ok)
+      [[ "$output" == *"✓ new-api  1.1.1 · ok"* ]]
+      [[ "$output" != *"state:"* ]]  # consumed by the header, never a detail line
+      ;;
+    starting)
+      [[ "$output" == *"⚠ new-api  1.1.1 · starting"* ]]
+      ;;
+    stopped)
+      [[ "$output" == *"○ new-api  1.1.1 · stopped"* ]]
+      # the endpoint line carries the actionable hint
+      [[ "$output" == *"endpoint: http://127.0.0.1:30300 (stopped — aibox new-api start)"* ]]
+      ;;
+    na)
+      # CLI-type module: plain header, no icon, no state word
+      [[ "$output" == *"  new-api  1.1.1"* ]]
+      [[ "$output" != *"· ok"* && "$output" != *"· stopped"* ]]
+      ;;
+    esac
+  done
+}
+
+@test "dashboard overview: stale cache without state= falls back to the port heuristic" {
+  export AIBOX_DASH_UPDATE_TIMEOUT=1
+  cat >"$AIBOX_HOME/installed.sh" <<'EOF2'
+AIBOX_INSTALLED_new_api="1.1.1"
+EOF2
+  # no state=, no module.yaml → no ports → plain ✓ (deterministic on any host)
+  mkdir -p "$AIBOX_HOME/modules/new-api"
+  printf 'dashboard_info() { echo "endpoint=http://127.0.0.1:30300"; }\n' \
+    >"$AIBOX_HOME/modules/new-api/lib.sh"
+  run bash "$REPO_ROOT/bin/aibox" dashboard
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"✓ new-api  1.1.1"* ]]
+  [[ "$output" != *"· ok"* && "$output" != *"· stopped"* ]]
+}

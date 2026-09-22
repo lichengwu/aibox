@@ -2606,24 +2606,46 @@ _dash_block() { # $1=module $2=module-version $3=cur-upstream-outfile $4=profile
     v="${v%% *}"   # multi-image modules emit "server / web" — first token
     printf '%s\n' "${v#v}" >"${cur_out}" 2>/dev/null || true
   fi
-  # module state: ✓ = a declared port listens (running); ⚠ = ports declared,
-  # NONE listening (installed but stopped — the user-facing incident this
-  # prevents: "✓ + endpoint" read as running while the service is down).
-  # CLI/no-ports modules and named profiles keep the plain ✓.
-  local running="0" down="0" sym="${C_GRN}✓${C_RST}"
+  # module state: the machine-readable state= contract (module's lib.sh probes
+  # locally — pg_isready / http_up / docker health; local-first holds). Icon+word
+  # on the header line (zero extra vertical space):
+  #   ok=✓ (green) · starting=⚠ (yellow) · stopped=○ (dim) · na=(none — CLI modules)
+  # Fallback for stale caches without state=: declared-port listening heuristic
+  # (default profile only — named profiles use derived ports, probe would false-mark).
+  local mstate="" down="0" sym="" sword="" running="0"
+  mstate="$(printf '%s\n' "${info}" | sed -n 's/^state=//p' | head -1)"
   ports="$(_module_meta_local "${m}" ports)"
-  if [ -n "${ports}" ] && [ "${prof}" = "base" ]; then
-    for entry in ${ports}; do
-      _port_is_listening "${entry%%/*}" && running="1"
-    done
-    if [ "${running}" = "0" ]; then
-      down="1"
-      sym="${C_YEL}⚠${C_RST}"
-    fi
+  case "${mstate}" in
+    ok)       sym="${C_GRN}✓${C_RST}"; sword="ok" ;;
+    starting) sym="${C_YEL}⚠${C_RST}"; sword="starting" ;;
+    stopped)  sym="${C_DIM}○${C_RST}"; sword="stopped"; down="1" ;;
+    na)       sym=""; sword="" ;;
+    *)
+      if [ -n "${ports}" ] && [ "${prof}" = "base" ]; then
+        for entry in ${ports}; do
+          _port_is_listening "${entry%%/*}" && running="1"
+        done
+        if [ "${running}" = "1" ]; then
+          sym="${C_GRN}✓${C_RST}"; sword="running"
+        else
+          sym="${C_DIM}○${C_RST}"; sword="stopped"; down="1"
+        fi
+      else
+        sym="${C_GRN}✓${C_RST}"; sword=""
+      fi
+      ;;
+  esac
+  if [ -n "${sym}" ] && [ -n "${sword}" ]; then
+    printf '  %s %s %s %s%s%s · %s%s%s\n' "${sym}" "${m}" "${C_DIM}" "${mver}" "${C_RST}" "${C_DIM}" "${sword}" "${C_DIM}" "${C_RST}"
+  elif [ -n "${sym}" ]; then
+    printf '  %s %s %s %s%s\n' "${sym}" "${m}" "${C_DIM}" "${mver}" "${C_RST}"
+  else
+    printf '  %s %s %s%s\n' "${m}" "${C_DIM}" "${mver}" "${C_RST}"
   fi
-  printf '  %s %s %s %s%s\n' "${sym}" "${m}" "${C_DIM}" "${mver}" "${C_RST}"
   printf '%s\n' "${info}" | while IFS='=' read -r k v; do
     [ -n "${k}" ] || continue
+    # state= is consumed by the header icon — not a detail line
+    [ "${k}" = "state" ] && continue
     case "${k}" in
       endpoint)   label="endpoint" ;;
       credential) label="auth" ;;

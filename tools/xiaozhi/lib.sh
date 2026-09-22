@@ -292,13 +292,17 @@ dashboard_info() {
   echo "db=bundled MySQL ${XIAOZHI_MYSQL_IMAGE:-${DEFAULT_MYSQL_IMAGE}} + shared base redis"
   if stack_running 2>/dev/null; then
     if console_up "${cport}" && server_running && ws_listening "${wport}"; then
+      echo "state=ok"
       echo "health=ok (console :${cport} + ws :${wport})"
     elif console_up "${cport}"; then
+      echo "state=starting"
       echo "health=starting (console up; ws server still booting)"
     else
+      echo "state=starting"
       echo "health=starting (containers up; first boot runs migrations, 1-3 min)"
     fi
   else
+    echo "state=stopped"
     echo "health=stopped"
   fi
 }

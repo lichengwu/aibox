@@ -1,5 +1,5 @@
 name: openmaic
-version: 1.2.1
+version: 1.2.2
 description: "OpenMAIC ops CLI (install/upgrade/backup/doctor)"
 platform: ""
 dir: tools/openmaic

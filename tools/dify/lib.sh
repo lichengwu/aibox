@@ -138,11 +138,14 @@ dashboard_info() {
   fi
   if containers_running 2>/dev/null; then
     if http_up "${port}"; then
+      echo "state=ok"
       echo "health=ok (HTTP up on :${port})"
     else
+      echo "state=starting"
       echo "health=starting (containers up, web not answering yet; first boot 1-2 min)"
     fi
   else
+    echo "state=stopped"
     echo "health=stopped"
   fi
 }

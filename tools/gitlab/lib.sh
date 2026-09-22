@@ -108,11 +108,14 @@ dashboard_info() {
   if container_running; then
     health="$(docker inspect -f '{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo none)"
     if http_up "$port"; then
+      echo "state=ok"
       echo "health=ok HTTP 200 (${health})"
     else
+      echo "state=starting"
       echo "health=starting (${health}; first boot takes 3-5 min)"
     fi
   else
+    echo "state=stopped"
     echo "health=stopped"
   fi
 }

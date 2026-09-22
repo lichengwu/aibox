@@ -7,6 +7,32 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [Unreleased]
+
+### Added — dashboard service-state icons (state= contract)
+
+One icon per module on the dashboard header tells the whole story — installed
+(presence) + started + health — with zero extra vertical space:
+
+```text
+  ✓ new-api 1.1.1 · ok        ← running & healthy (green)
+  ⚠ dify     1.18.1 · starting ← booting (yellow; transient)
+  ○ new-api 1.1.1 · stopped    ← installed, not running (dim) + the endpoint
+                                  line gains "(stopped — aibox new-api start)"
+```
+
+- New machine-readable `state=` field in the `dashboard_info()` contract
+  (`ok`/`starting`/`stopped`/`na`) — the module probes itself locally (pg_isready
+  / http_up / docker health), so local-first holds. CLI-type modules
+  (openmaic/windmill) emit `na` (no marker — their state is a remote deploy's).
+- All 9 modules converted: base/clash/pi-web's old "copy-paste probe command"
+  health hints became REAL bounded probes (localhost only); dify/gitlab/new-api/
+  xiaozhi mirror their existing ok/starting/stopped branches.
+- Fallback for stale caches without `state=`: the declared-port listening
+  heuristic (named profiles keep the plain ✓ — derived ports would false-mark).
+- The `stopped` endpoint annotation from the incident fix is now driven by the
+  contract; spec §dashboard_info documents the field table + icon mapping.
+
 ## [0.9.1] — 2026-09-20
 
 ### Fixed — CI/test robustness (product code unchanged from 0.9.0)

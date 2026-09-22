@@ -145,5 +145,8 @@ dashboard_info() {
   fi
   echo "endpoint=http://127.0.0.1:${port}"
   echo "credential=CREDENTIALS.txt + .env (POSTGRES_PASSWORD)"
+  # na: CLI-type module — state is the deploy host's, not a local service's;
+  # `aibox windmill status` (dispatched to the CLI) is the real view.
+  echo "state=na"
   echo "health=curl -s http://127.0.0.1:${port}"
 }

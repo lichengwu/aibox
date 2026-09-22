@@ -110,13 +110,18 @@ dashboard_info() {
   echo "endpoint=${url}"
   echo "credential=first login: root / 123456 (change it immediately)"
   echo "db=shared base (PG database new_api + Redis via base.env)"
+  # state= is the machine-readable contract (aibox dashboard renders the icon:
+  # ok=✓ / starting=⚠ / stopped=○); health= stays the human detail line.
   if container_running 2>/dev/null; then
     if api_up "${port}"; then
+      echo "state=ok"
       echo "health=ok (api answers on :${port})"
     else
+      echo "state=starting"
       echo "health=starting (container up, api not ready yet)"
     fi
   else
+    echo "state=stopped"
     echo "health=stopped"
   fi
 }

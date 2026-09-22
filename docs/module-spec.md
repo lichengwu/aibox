@@ -620,7 +620,31 @@ CI `port-conflict` checks port+proto uniqueness (spec §3). The `aibox dashboard
 
 ### dashboard_info() interface (spec §4.4)
 
-Each module's `lib.sh` implements `dashboard_info()`, outputting key=value: endpoint/credential/log/health. Called by `aibox dashboard` / `aibox <module> dashboard`.
+Each module's `lib.sh` implements `dashboard_info()`, outputting key=value lines.
+Called by `aibox dashboard` / `aibox <module> dashboard`.
+
+| key | meaning | notes |
+| --- | --- | --- |
+| `endpoint` | the service URL | annotated `(stopped — aibox <module> start)` when the state is stopped |
+| `credential` | auth hint | rendered as `auth:` |
+| `version` | deployed upstream version | rendered as `upstream:`; feeds the async updates comparison |
+| `state` | **machine-readable service state** — one of `ok` / `starting` / `stopped` / `na` | the overview renders the composite icon: `✓` ok (green) · `⚠` starting (yellow) · `○` stopped (dim) · `na` = no marker (CLI-type modules — openmaic/windmill: their state is a remote deploy's, `aibox <module> status` is the real view). The probe is the module's own (pg_isready / http_up / docker health) — local-only, so the local-first rule holds. Stale caches without `state=` fall back to the declared-port listening heuristic. |
+| `health` | human detail line | free text: probe verdict, starting hint, or the copy-paste probe command |
+| `log` | log location | rendered as `log:` |
+
+Example (new-api):
+
+```bash
+dashboard_info() {
+  …
+  if container_running; then
+    if api_up "${port}"; then echo "state=ok"; echo "health=ok (api answers on :${port})"
+    else echo "state=starting"; echo "health=starting (container up, api not ready yet)"; fi
+  else
+    echo "state=stopped"; echo "health=stopped"
+  fi
+}
+```
 
 ### DB naming convention (shared base, spec §5.4)
 

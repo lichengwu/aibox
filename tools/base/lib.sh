@@ -232,7 +232,20 @@ cmd_createdb() {
 dashboard_info() {
   echo "endpoint=pg://${PG_HOST}:${PG_PORT} (user=${PG_USER}) + redis://${REDIS_HOST}:${REDIS_PORT}"
   echo "credential=PG user/password ${PG_USER}/* (override via AIBOX_BASE_POSTGRES_PASSWORD; consuming modules see ${ENV_FILE})"
-  echo "health=docker exec ${POSTGRES_CONTAINER} pg_isready -U ${PG_USER}"
+  # state= is the machine-readable contract (aibox dashboard renders the icon:
+  # ok=✓ / starting=⚠ / stopped=○); local docker probes only (local-first holds).
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${POSTGRES_CONTAINER}"; then
+    if docker exec "${POSTGRES_CONTAINER}" pg_isready -U "${PG_USER}" >/dev/null 2>&1; then
+      echo "state=ok"
+      echo "health=ok (pg_isready: accepting connections)"
+    else
+      echo "state=starting"
+      echo "health=starting (container up, PG not accepting yet)"
+    fi
+  else
+    echo "state=stopped"
+    echo "health=stopped (probe: docker exec ${POSTGRES_CONTAINER} pg_isready -U ${PG_USER})"
+  fi
 }
 
 # ---------- dashboard (the module's rich view) ----------

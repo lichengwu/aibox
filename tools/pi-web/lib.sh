@@ -551,7 +551,23 @@ dashboard_info() {
   echo "endpoint=http://127.0.0.1:${PORT}"
   echo "credential=Username pi / password ${PASSWORD}"
   echo "log=${LOG_DIR}/pi-web.log"
-  echo "health=curl -s -o /dev/null -w '%{http_code}' -u pi:${PASSWORD} http://127.0.0.1:${PORT}/"
+  # state= machine-readable contract (ok=✓ / starting=⚠ / stopped=○).
+  local code
+  code="$(curl -s -o /dev/null --max-time 3 -w '%{http_code}' -u "pi:${PASSWORD}" "http://127.0.0.1:${PORT}/" 2>/dev/null || true)"
+  case "${code}" in
+  200)
+    echo "state=ok"
+    echo "health=ok (HTTP 200, basic auth pi)"
+    ;;
+  000 | "")
+    echo "state=stopped"
+    echo "health=stopped (no listener on :${PORT})"
+    ;;
+  *)
+    echo "state=starting"
+    echo "health=starting (HTTP ${code})"
+    ;;
+  esac
 }
 
 # ---------- dashboard (the module's rich view) ----------

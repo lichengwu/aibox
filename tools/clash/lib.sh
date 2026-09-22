@@ -668,5 +668,29 @@ dashboard_info() {
   echo "endpoint=socks5://127.0.0.1:${CLASH_PORT}"
   echo "credential=API secret ${CLASH_SECRET:-unset}"
   echo "log=$(log_dir)/mihomo.log"
-  echo "health=curl -s -H 'Authorization: Bearer ${CLASH_SECRET}' http://127.0.0.1:${CLASH_API_PORT}/proxies/AUTO"
+  # state= machine-readable contract (ok=✓ / starting=⚠ / stopped=○).
+  # Internal mode: kernel + API probe. External mode: the reused client's
+  # mixed port (no kernel of ours — kernel_running is false BY DESIGN there).
+  if [ "${CLASH_MODE:-internal}" = "external" ]; then
+    if (exec 3<>"/dev/tcp/127.0.0.1/${CLASH_EXT_PORT:-${CLASH_PORT}}") 2>/dev/null; then
+      echo "state=ok"
+      echo "health=ok (external client :${CLASH_EXT_PORT:-${CLASH_PORT}} answering)"
+      exec 3>&- 3<&- || true
+    else
+      echo "state=stopped"
+      echo "health=external client :${CLASH_EXT_PORT:-${CLASH_PORT}} not answering"
+    fi
+  elif kernel_running; then
+    if curl -s --max-time 3 -H "Authorization: Bearer ${CLASH_SECRET}" \
+      "http://127.0.0.1:${CLASH_API_PORT}/proxies/AUTO" >/dev/null 2>&1; then
+      echo "state=ok"
+      echo "health=ok (API :${CLASH_API_PORT} answers)"
+    else
+      echo "state=starting"
+      echo "health=starting (kernel up, API :${CLASH_API_PORT} not answering yet)"
+    fi
+  else
+    echo "state=stopped"
+    echo "health=stopped (probe: curl -H 'Authorization: Bearer ${CLASH_SECRET}' http://127.0.0.1:${CLASH_API_PORT}/proxies/AUTO)"
+  fi
 }
