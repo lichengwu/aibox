@@ -1920,6 +1920,27 @@ cmd_uninstall() {
     return $?
   fi
   is_installed "$name" || { warn "$name not installed; residue left behind? scan it: aibox purge $name"; return; }
+
+  # Interaction contract (spec §Interactive confirmation — the same two-gate
+  # model for every destructive verb; the old plain uninstall ran with ZERO
+  # confirmation, live-caught on the deploy host):
+  #   gate 1 — the uninstall itself (stops containers, removes the deploy):
+  #     interactive [y/N] default N; --yes skips; non-interactive w/o --yes → exit 2.
+  #   gate 2 — data cleanup (volumes + .env), asked INLINE so the single hook
+  #     invocation carries the decision (the old flow forced a dead round-trip:
+  #     `uninstall --purge` AFTER uninstalling warns "not installed").
+  #     --purge = explicit intent (skips the question); non-interactive w/o
+  #     --purge keeps data (safe default) + prints the residue hint.
+  if [ "${ASSUME_YES:-0}" != "1" ]; then
+    ask_confirm "Uninstall ${name}? (stops containers, removes the compose deployment; data volumes + .env are kept)" \
+      || { warn "Cancelled, nothing changed"; return 2; }
+  fi
+  if [ "${purge}" != "1" ] && [ -t 0 ]; then
+    if ask_confirm "Also DELETE the data? (volumes + deploy .env — irreversible; the default keeps them)"; then
+      purge=1
+    fi
+  fi
+
   local dest="$AIBOX_MOD_DIR/$name"
   load_registry
   local uninst; uninst="$(module_field "$name" uninstall)"
@@ -1935,13 +1956,20 @@ cmd_uninstall() {
     log "purged: hook data contract + $AIBOX_HOME/apps/$name"
   fi
   unmark_installed "$name"
+  # data verdict rides the final line regardless of the profile/cache branch
+  local verdict
+  if [ "${purge}" = "1" ]; then
+    verdict=" — data deleted (volumes + deploy .env)"
+  else
+    verdict=" — data RETAINED (cleanup: aibox purge ${name})"
+  fi
   # The script cache is shared across profiles: delete it only when no OTHER profile
   # still has this module installed (else a prod uninstall would break the default install).
   if _installed_any_profile "$name"; then
-    log "Uninstalled $name (profile: ${AIBOX_PROFILE:-base}; script cache retained — still installed under another profile)"
+    log "Uninstalled $name${verdict} (profile: ${AIBOX_PROFILE:-base}; script cache retained — still installed under another profile)"
   else
     rm -rf "$dest"
-    log "Uninstalled $name"
+    log "Uninstalled $name${verdict}"
   fi
 }
 

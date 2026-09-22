@@ -41,7 +41,9 @@ AIBOX_VERIFY=1 curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main
 ```
 aibox install <module> [--skip-checks]   install a module (preflight-gated)
 aibox uninstall <module>|self [--purge] [--yes]
-                                  uninstall a module; --purge also deletes its DATA.
+                                  uninstall a module (asks first; then asks whether
+                                  to delete DATA too — --purge answers yes upfront,
+                                  --yes skips the prompts for scripts).
                                   'self' = the manager: default removes ONLY aibox
                                   (services/data KEPT, apps/ preserved); --purge =
                                   cascade full teardown (every module's uninstall

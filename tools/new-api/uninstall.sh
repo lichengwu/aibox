@@ -32,5 +32,5 @@ if [ "${AIBOX_PURGE_DATA:-0}" = "1" ]; then
 else
   warn "data volumes retained (aibox_new_api_data / aibox_new_api_logs)"
   warn "deploy .env retained at ${ROOT}/.env (contains SESSION_SECRET; reinstall reuses it)"
-  log "to delete everything: aibox uninstall new-api --purge"
+  log "residue cleanup (volumes + .env): aibox purge new-api"
 fi

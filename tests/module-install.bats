@@ -44,7 +44,7 @@ teardown() {
 
 @test "uninstall openmaic: marker + cache removed (no other profile holds it)" {
   bash "$REPO_ROOT/bin/aibox" install openmaic --skip-checks >/dev/null 2>&1
-  run bash "$REPO_ROOT/bin/aibox" uninstall openmaic
+  run bash "$REPO_ROOT/bin/aibox" uninstall openmaic --yes
   [ "$status" -eq 0 ]
   ! grep -q '^AIBOX_INSTALLED_openmaic=' "$AIBOX_HOME/installed.sh"
   [ ! -d "$AIBOX_HOME/modules/openmaic" ]
@@ -57,13 +57,13 @@ teardown() {
   grep -q '^AIBOX_INSTALLED_openmaic=' "$AIBOX_HOME/installed.sh"
   grep -q '^AIBOX_INSTALLED_openmaic__prod=' "$AIBOX_HOME/installed.sh"
   # uninstall prod → base marker + shared script cache survive (live-machine bug #3)
-  run bash "$REPO_ROOT/bin/aibox" --profile prod uninstall openmaic
+  run bash "$REPO_ROOT/bin/aibox" --profile prod uninstall openmaic --yes
   [ "$status" -eq 0 ]
   [[ "$output" == *"script cache retained"* ]]
   grep -q '^AIBOX_INSTALLED_openmaic=' "$AIBOX_HOME/installed.sh"
   [ -f "$AIBOX_HOME/modules/openmaic/cli/openmaic" ]
   # uninstall base → now the cache goes
-  run bash "$REPO_ROOT/bin/aibox" uninstall openmaic
+  run bash "$REPO_ROOT/bin/aibox" uninstall openmaic --yes
   [ "$status" -eq 0 ]
   [ ! -d "$AIBOX_HOME/modules/openmaic" ]
 }

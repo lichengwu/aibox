@@ -96,7 +96,7 @@ EOF
 }
 
 @test "uninstall <module> --purge: hook gets AIBOX_PURGE_DATA=1 and apps/<m> is swept" {
-  run bash "$REPO_ROOT/bin/aibox" uninstall fakemod --purge
+  run bash "$REPO_ROOT/bin/aibox" uninstall fakemod --purge --yes
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   grep -q '^fakemod base 1$' "$MARKER_FILE"
   [ ! -d "$AIBOX_HOME/apps/fakemod" ]
@@ -106,9 +106,65 @@ EOF
 }
 
 @test "uninstall <module> (no --purge): hook gets PURGE=0, apps preserved" {
-  run bash "$REPO_ROOT/bin/aibox" uninstall othermod
+  run bash "$REPO_ROOT/bin/aibox" uninstall othermod --yes
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   grep -q '^othermod base 0$' "$MARKER_FILE"
   [ -d "$AIBOX_HOME/apps/fakemod" ]
   [ ! -d "$AIBOX_HOME/modules/othermod" ]   # cache removed (no other profile holds it)
+}
+
+
+@test "uninstall <module> without --yes in a non-interactive shell: declines, NOTHING runs (exit 2)" {
+  # the interaction contract: destructive verbs decline by default (spec
+  # §Interactive confirmation). Before this gate, plain `aibox uninstall <m>`
+  # executed immediately with zero confirmation (live-caught on the deploy host).
+  run bash "$REPO_ROOT/bin/aibox" uninstall othermod </dev/null
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Non-interactive environment, declining"* ]]
+  [[ "$output" == *"Cancelled, nothing changed"* ]]
+  # nothing ran: marker file untouched, module still marked installed
+  [ ! -f "$MARKER_FILE" ] || ! grep -q '^othermod ' "$MARKER_FILE"
+  grep -q '^AIBOX_INSTALLED_othermod=' "$AIBOX_HOME/installed.sh"
+}
+
+@test "uninstall <module> --yes (non-interactive): proceeds, data RETAINED + purge hint" {
+  run bash "$REPO_ROOT/bin/aibox" uninstall othermod --yes </dev/null
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  # hook ran with PURGE=0 (the safe default without an explicit --purge)
+  grep -q '^othermod base 0$' "$MARKER_FILE"
+  [[ "$output" == *"data RETAINED (cleanup: aibox purge othermod)"* ]]
+}
+
+@test "uninstall <module> --purge --yes: data contract = 1 + 'data deleted' verdict" {
+  run bash "$REPO_ROOT/bin/aibox" uninstall fakemod --purge --yes </dev/null
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^fakemod base 1$' "$MARKER_FILE"
+  [[ "$output" == *"Uninstalled fakemod — data deleted (volumes + deploy .env)"* ]]
+}
+
+@test "uninstall <module>: interactive accept on gate 1, decline on gate 2 → data kept" {
+  # gate 1 (uninstall?) answered y; gate 2 (delete data?) answered n (default)
+  command -v expect >/dev/null 2>&1 || skip "expect unavailable (CI ubuntu)"
+  export MARKER_FILE
+  expect -c '
+    spawn bash "'"$REPO_ROOT"'/bin/aibox" uninstall othermod
+    expect -re {Uninstall othermod\?} { send "y\r" }
+    expect -re {Also DELETE the data\?} { send "n\r" }
+    expect eof
+  ' >/dev/null 2>&1
+  grep -q '^othermod base 0$' "$MARKER_FILE"
+  ! grep -q '^AIBOX_INSTALLED_othermod=' "$AIBOX_HOME/installed.sh"
+}
+
+@test "uninstall <module>: interactive accept both gates → data purged in the same run" {
+  command -v expect >/dev/null 2>&1 || skip "expect unavailable (CI ubuntu)"
+  export MARKER_FILE
+  expect -c '
+    spawn bash "'"$REPO_ROOT"'/bin/aibox" uninstall fakemod --purge
+    expect -re {Uninstall fakemod\?} { send "y\r" }
+    expect eof
+  ' >/dev/null 2>&1
+  # --purge skips gate 2; the hook got the data contract
+  grep -q '^fakemod base 1$' "$MARKER_FILE"
+  [ ! -d "$AIBOX_HOME/apps/fakemod" ]
 }

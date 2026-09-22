@@ -7,6 +7,32 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [Unreleased]
+
+### Fixed — unified destructive-verb interaction (the two-gate uninstall)
+
+Live-caught on the deploy host: `aibox uninstall new-api` executed with ZERO
+confirmation (violating the project's own spec while uninstall self / purge
+--apply / upgrade all had gates). Every destructive verb now follows the same
+two-gate model:
+
+1. **Gate 1 — the uninstall itself**: `[y/N]` default decline; `--yes` skips;
+   non-interactive without `--yes` → exit 2, nothing runs.
+2. **Gate 2 — data cleanup, asked inline**: the answer feeds AIBOX_PURGE_DATA
+   into the SAME hook invocation. `--purge` = explicit intent (skips the
+   question); non-interactive without it keeps data (safe default) + hint.
+
+Also removes the dead round-trip the old flow forced: after a plain uninstall,
+`uninstall <m> --purge` warns "not installed" — the correct cleanup is
+`aibox purge <m>`, and the module hooks' post-uninstall guidance now says
+exactly that (was: "to delete everything: aibox uninstall <m> --purge" — a
+command that could no longer work at that point).
+
+Final verdict line always states the data outcome (data deleted / RETAINED +
+cleanup hint) regardless of profile/cache branches. 5 new interaction tests
+(non-interactive decline, --yes retain, --purge, expect-driven both-gate
+accept/decline); spec §Interactive confirmation documents the model.
+
 ## [0.10.0] — 2026-09-22
 
 ### Added — dashboard service-state icons (state= contract)

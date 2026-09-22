@@ -31,5 +31,5 @@ if [ "${AIBOX_PURGE_DATA:-0}" = "1" ]; then
 else
   warn "data volumes retained (dify_storage/dify_db/dify_redis/dify_sandbox_*/dify_plugin_daemon/dify_weaviate)"
   warn "deploy .env retained at ${ROOT}/.env (contains secrets; reinstall reuses it)"
-  log "to delete everything: aibox uninstall dify --purge"
+  log "residue cleanup (volumes + .env): aibox purge dify"
 fi

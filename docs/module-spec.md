@@ -498,6 +498,17 @@ Irreversible ops (uninstalling a deploy, wiping data volumes, teardown) must be 
 - The main CLI's `ask_confirm` (`bin/aibox`) is the soft-choice, default-decline, non-interactive-returns-`1` variant. `aibox uninstall self` uses it for the confirm gate (non-interactive requires `--yes`).
 - **Never silently execute a dangerous op**: non-interactive + no `--yes` returns `2` instead of `0`, so scripts and CI can notice.
 
+### The two-gate uninstall model (`aibox uninstall <module>`)
+
+Every destructive verb follows the same shape; module uninstall is the reference:
+
+1. **Gate 1 — the operation itself**: `ask_confirm "Uninstall <m>? (what it does; what is kept)"` — `[y/N]`, default decline; `--yes` skips; non-interactive without `--yes` → exit `2`, nothing runs.
+2. **Gate 2 — data cleanup, asked INLINE**: `ask_confirm "Also DELETE the data? …"` — the answer feeds `AIBOX_PURGE_DATA` into the SAME hook invocation (one run carries the whole decision). `--purge` = explicit intent (skips the question); non-interactive without `--purge` keeps data (the safe default) and prints the residue hint.
+
+The data question being inline removes the dead round-trip the old flow forced: `aibox uninstall <m>` then `aibox uninstall <m> --purge` — the latter warns "not installed" (the hook contract needs the installed state); the correct post-uninstall cleanup is `aibox purge <m>`. Module hooks print that guidance.
+
+Gate coverage: uninstall (2 gates) · uninstall self (confirm per teardown scope) · purge `--apply` (confirm + dry-run default) · upgrade (confirm) · proxy set (confirm) · dispatched CLIs' `confirm` (windmill destroy etc.).
+
 ## Preflight checks (mandatory for every module)
 
 Install/update is **gated** by a preflight check (`preflight_module` in `bin/aibox`). Every module —

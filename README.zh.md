@@ -35,7 +35,8 @@ AIBOX_VERIFY=1 curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main
 ```text
 aibox install <module> [--skip-checks]   安装模块（前置检查把关；--skip-checks 跳过）
 aibox uninstall <module>|self [--purge] [--yes]
-                                 卸载模块；--purge 连数据一起删（卷/状态//etc）。
+                                 卸载模块（先确认卸载、再确认是否连数据一起删；
+                                 --purge = 预答"删数据"，--yes = 脚本场景跳过确认）。
                                  self = 管理器本身：默认只删 aibox（服务/数据保留，apps/ 保留可继续管理）；
                                  --purge = 级联全拆：逐模块 uninstall --purge，再删管理器 + rc 块
 aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks]

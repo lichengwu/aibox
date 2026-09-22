@@ -36,5 +36,5 @@ if [ "${AIBOX_PURGE_DATA:-0}" = "1" ]; then
 else
   warn "data retained (volumes aibox_xiaozhi_models/_uploadfile/_mysql + ${ROOT}/data with .config.yaml)"
   warn "deploy .env retained at ${ROOT}/.env (contains the MySQL password; reinstall reuses it)"
-  log "to delete everything: aibox uninstall xiaozhi --purge"
+  log "residue cleanup (volumes + .env): aibox purge xiaozhi"
 fi
