@@ -61,7 +61,10 @@ AIBOX_INSTALLED_new_api__work="1.0.1"
 EOF
   # module cache (lib.sh with dashboard_info) for base
   mkdir -p "$AIBOX_HOME/modules/base"
-  printf 'dashboard_info() { echo "endpoint=pg://127.0.0.1:35432"; echo "health=ok"; }\n' \
+  # state=ok pins the header icon (without it the fallback port-probe is
+  # environment-dependent: file:// registry provides base's ports → on a
+  # docker-less CI host 35432 never listens → ○ stopped, and the ✓ asserts fail)
+  printf 'dashboard_info() { echo "state=ok"; echo "endpoint=pg://127.0.0.1:35432"; echo "health=ok"; }\n' \
     >"$AIBOX_HOME/modules/base/lib.sh"
   mkdir -p "$AIBOX_HOME/modules/new-api"
   printf 'dashboard_info() { echo "endpoint=http://127.0.0.1:30300"; echo "credential=first login"; echo "version=v0.13.2"; }\n' \
