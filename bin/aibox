@@ -1815,10 +1815,15 @@ install_dep() {
 # like Alibaba Cloud Linux 4 ship no lsof; ss/iproute2 is ubiquitous).
 _port_is_listening() {
   local port="$1"
-  if command -v lsof >/dev/null 2>&1; then
-    lsof -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
-  elif command -v ss >/dev/null 2>&1; then
-    [ -n "$(ss -Htln "sport = :$port" 2>/dev/null)" ]
+  # macOS lsof / Linux ss live in sbin dirs that minimal PATHs can miss
+  # (measured: a sandboxed shell without /usr/sbin → false "not listening");
+  # absolute-path fallbacks keep the probe honest.
+  local lsof="$(command -v lsof 2>/dev/null || true)"; [ -x "${lsof}" ] || lsof="/usr/sbin/lsof"
+  local ss="$(command -v ss 2>/dev/null || true)";     [ -x "${ss}" ] || ss="/usr/sbin/ss"
+  if [ -x "${lsof}" ]; then
+    "${lsof}" -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+  elif [ -x "${ss}" ]; then
+    [ -n "$("${ss}" -Htln "sport = :$port" 2>/dev/null)" ]
   else
     return 1
   fi
@@ -2587,8 +2592,11 @@ _dash_probe_latest() { # $1=module → prints the latest version
 # cache module.yaml ports). Also captures the module's upstream version
 # token (dashboard_info version=, first token, v-stripped) into $3 for the
 # async updates comparison ("" arg or absent version → empty file).
-_dash_block() { # $1=module $2=module-version $3=cur-upstream-outfile
-  local m="$1" mver="$2" cur_out="$3" mu info line k v label ports entry port rest
+# $4 = profile: module-level state marking is default-profile only — a named
+# profile's ports are DERIVED (base prod → 35177), so the declared-port probe
+# would false-mark them stopped.
+_dash_block() { # $1=module $2=module-version $3=cur-upstream-outfile $4=profile
+  local m="$1" mver="$2" cur_out="$3" prof="${4:-base}" mu info line k v label ports entry port rest
   mu="${1//-/_}"
   info=""
   [ -f "$AIBOX_MOD_DIR/$m/lib.sh" ] && \
@@ -2598,7 +2606,22 @@ _dash_block() { # $1=module $2=module-version $3=cur-upstream-outfile
     v="${v%% *}"   # multi-image modules emit "server / web" — first token
     printf '%s\n' "${v#v}" >"${cur_out}" 2>/dev/null || true
   fi
-  printf '  %s✓%s %s %s%s%s\n' "${C_GRN}" "${C_RST}" "${m}" "${C_DIM}" "${mver}" "${C_RST}"
+  # module state: ✓ = a declared port listens (running); ⚠ = ports declared,
+  # NONE listening (installed but stopped — the user-facing incident this
+  # prevents: "✓ + endpoint" read as running while the service is down).
+  # CLI/no-ports modules and named profiles keep the plain ✓.
+  local running="0" down="0" sym="${C_GRN}✓${C_RST}"
+  ports="$(_module_meta_local "${m}" ports)"
+  if [ -n "${ports}" ] && [ "${prof}" = "base" ]; then
+    for entry in ${ports}; do
+      _port_is_listening "${entry%%/*}" && running="1"
+    done
+    if [ "${running}" = "0" ]; then
+      down="1"
+      sym="${C_YEL}⚠${C_RST}"
+    fi
+  fi
+  printf '  %s %s %s %s%s\n' "${sym}" "${m}" "${C_DIM}" "${mver}" "${C_RST}"
   printf '%s\n' "${info}" | while IFS='=' read -r k v; do
     [ -n "${k}" ] || continue
     case "${k}" in
@@ -2607,10 +2630,12 @@ _dash_block() { # $1=module $2=module-version $3=cur-upstream-outfile
       version)    label="upstream" ;;
       *)          label="${k}" ;;
     esac
+    if [ "${k}" = "endpoint" ] && [ "${down}" = "1" ]; then
+      v="${v} ${C_DIM}(stopped — aibox ${m} start)${C_RST}"
+    fi
     printf '      %-9s %s\n' "${label}:" "${v}"
   done
   # ports from LOCAL metadata (registry-cache subshell; zero network) + listen marks
-  ports="$(_module_meta_local "${m}" ports)"
   if [ -n "${ports}" ]; then
     local plist="" mark
     for entry in ${ports}; do
