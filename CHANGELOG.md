@@ -7,7 +7,7 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
-## [Unreleased]
+## [0.10.0] — 2026-09-22
 
 ### Added — dashboard service-state icons (state= contract)
 
@@ -32,6 +32,13 @@ One icon per module on the dashboard header tells the whole story — installed
   heuristic (named profiles keep the plain ✓ — derived ports would false-mark).
 - The `stopped` endpoint annotation from the incident fix is now driven by the
   contract; spec §dashboard_info documents the field table + icon mapping.
+- Fixed after CI review: single-space header (the icon printf rendered a double
+  space when colors are off — piped/TAP contexts); test mocks pin `state=` so
+  the header is deterministic on docker-less CI hosts.
+- **Pitfall #10 recorded** (the investigation byproduct): this dev Mac's bash
+  3.2.57 (arm64-darwin26) does NOT raise errexit for a failing `[[ ]]` — bats
+  mid-test assertions are silently swallowed locally; CI (ubuntu bash 5) is the
+  authoritative assertion gate. Workarounds documented in AGENTS.md.
 
 ## [0.9.1] — 2026-09-20
 
