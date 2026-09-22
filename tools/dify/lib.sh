@@ -46,16 +46,16 @@ load_env() {
   [ -f "${envf}" ] || return 0
   while IFS= read -r line || [ -n "${line}" ]; do
     case "${line}" in
-      '' | '#'*) continue ;;
-      *=*) ;;
-      *) continue ;;
+    '' | '#'*) continue ;;
+    *=*) ;;
+    *) continue ;;
     esac
     k="${line%%=*}"
     case "${k}" in
-      '' | *[!A-Za-z0-9_]*) continue ;;
+    '' | *[!A-Za-z0-9_]*) continue ;;
     esac
     export "${k}=${line#*=}"
-  done < "${envf}"
+  done <"${envf}"
 }
 
 # Whether shared-base mode is enabled (DIFY_SHARED_BASE=1 in the deploy .env).
@@ -89,7 +89,6 @@ compose() {
 compose_images() {
   compose config --images 2>/dev/null || true
 }
-
 
 # The stack is up when the API answers THROUGH nginx (GET /console/api/setup →
 # 2xx/3xx). Probing `/` (the web frontend) is NOT enough — the frontend answers

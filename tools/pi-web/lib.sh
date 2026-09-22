@@ -252,7 +252,10 @@ _npm_probe_one() { # $1=registry, $2=result file
     "${reg}/${NPM_PACKAGE_PATH}" 2>/dev/null || true
   latest="$(grep -oE '"latest":"[^"]+"' "$meta" 2>/dev/null | head -1 | cut -d'"' -f4)"
   [ -z "${latest}" ] && latest="$(grep -oE '"latest": *"[^"]+"' "$meta" 2>/dev/null | head -1 | sed -e 's/.*: *"//' -e 's/"$//')"
-  [ -z "${latest}" ] && { : >"$out"; return 0; }
+  [ -z "${latest}" ] && {
+    : >"$out"
+    return 0
+  }
   # Stage 2 — throughput: download the very tarball npm will fetch (-L follows
   # mirror CDN redirects). A --max-time cutoff still yields a partial-download
   # rate (size_download/time_total), so throttled-but-alive registries rank honestly.
@@ -262,8 +265,8 @@ _npm_probe_one() { # $1=registry, $2=result file
     tstat="$(curl -sL -o /dev/null -w '%{size_download} %{time_total}' --max-time "${AIBOX_NPM_PROBE_TIMEOUT:-6}" "${tball}" 2>/dev/null || true)"
     size="${tstat%% *}"
     dtime="${tstat##* }"
-    speed="$(printf '%s %s' "${size:-0}" "${dtime:-0}" \
-      | awk '{t=$2+0; if (t>0) printf "%d", $1/t; else print 0}')"
+    speed="$(printf '%s %s' "${size:-0}" "${dtime:-0}" |
+      awk '{t=$2+0; if (t>0) printf "%d", $1/t; else print 0}')"
   fi
   printf '%s\t%s\t%s\n' "${speed:-0}" "${reg}" "${latest}" >"$out"
   return 0
@@ -273,7 +276,9 @@ _npm_probe_one() { # $1=registry, $2=result file
 # and adds the user's non-default `npm config get registry` to the candidates. Sets
 # NPM_REGISTRY / NPM_LATEST / NPM_REGISTRY_ORDER. Dies when nothing is usable.
 npm_registry_pick() {
-  NPM_REGISTRY=""; NPM_LATEST=""; NPM_REGISTRY_ORDER=""
+  NPM_REGISTRY=""
+  NPM_LATEST=""
+  NPM_REGISTRY_ORDER=""
   local tmp reg f ranked user_reg pin_note=""
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/npm-reg.XXXXXX")" || die "mktemp failed"
 
@@ -296,9 +301,9 @@ npm_registry_pick() {
   # the shipped list. Same registry is not probed twice.
   user_reg="$(npm config get registry 2>/dev/null | tr -d '[:space:]' || true)"
   local cands="${AIBOX_NPM_REGISTRIES:-${NPM_REGISTRIES_CANDIDATES}}"
-  if [ -n "${user_reg}" ] && [ "${user_reg}" != "${NPM_REGISTRY_DEFAULT}" ] \
-    && [ "${user_reg}" != "${NPM_REGISTRY_DEFAULT}/" ] \
-    && ! printf '%s' " ${cands} " | grep -qF " ${user_reg} "; then
+  if [ -n "${user_reg}" ] && [ "${user_reg}" != "${NPM_REGISTRY_DEFAULT}" ] &&
+    [ "${user_reg}" != "${NPM_REGISTRY_DEFAULT}/" ] &&
+    ! printf '%s' " ${cands} " | grep -qF " ${user_reg} "; then
     cands="${user_reg} ${cands}"
     pin_note=" (user .npmrc: ${user_reg} joins the probe)"
   fi
@@ -347,9 +352,13 @@ npm_install_global() {
     log "npm install -g ${NPM_PACKAGE}@latest --registry ${reg} (watchdog ${timeout_s}s) ..."
     npm install -g "${NPM_PACKAGE}@latest" --silent --registry "${reg}" >"${logf}" 2>&1 &
     pid=$!
-    waited=0; timed_out=0
+    waited=0
+    timed_out=0
     while kill -0 "${pid}" 2>/dev/null; do
-      if [ "${waited}" -ge "${timeout_s}" ]; then timed_out=1; break; fi
+      if [ "${waited}" -ge "${timeout_s}" ]; then
+        timed_out=1
+        break
+      fi
       sleep 2
       waited=$((waited + 2))
     done

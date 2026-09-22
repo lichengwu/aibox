@@ -64,7 +64,6 @@ compose_images() {
   compose config --images 2>/dev/null || true
 }
 
-
 # GitLab answers 200 on the sign-in page once rails+puma are up (302 on /).
 http_up() {
   local port code
@@ -168,9 +167,13 @@ upgrade_stops() { # $1=cur_major.minor $2=tgt_major.minor (range for derivation)
   # ≥18: derived from the official cadence — generate x.2/x.5/x.8/x.11 for
   # every major from 18 up to the target's major (one extra major is harmless).
   local cmin tmin cmaj tmaj mj mn
-  cmaj="${cur%%.*}"; cmin="${cur#*.}"; [ "${cmin}" = "${cur}" ] && cmin=0
-  tmaj="${tgt%%.*}"; tmin="${tgt#*.}"; [ "${tmin}" = "${tgt}" ] && tmin=0
-  for (( mj = 18; mj <= tmaj; mj++ )); do
+  cmaj="${cur%%.*}"
+  cmin="${cur#*.}"
+  [ "${cmin}" = "${cur}" ] && cmin=0
+  tmaj="${tgt%%.*}"
+  tmin="${tgt#*.}"
+  [ "${tmin}" = "${tgt}" ] && tmin=0
+  for ((mj = 18; mj <= tmaj; mj++)); do
     for mn in 2 5 8 11; do
       printf '%s.%s\n' "${mj}" "${mn}"
     done
@@ -187,7 +190,7 @@ upgrade_stops() { # $1=cur_major.minor $2=tgt_major.minor (range for derivation)
 # the gate never BLOCKS an otherwise-healthy hop.
 http_up_readiness() {
   local port="${1:-$DEFAULT_HTTP_PORT}" code
-  code="$(docker exec "${CONTAINER_NAME}" curl -s -o /dev/null --max-time 5 -w '%{http_code}'     "http://127.0.0.1:8080/-/readiness" 2>/dev/null || true)"
+  code="$(docker exec "${CONTAINER_NAME}" curl -s -o /dev/null --max-time 5 -w '%{http_code}' "http://127.0.0.1:8080/-/readiness" 2>/dev/null || true)"
   case "$code" in
   200) return 0 ;;
   *) http_up "${port}" ;;

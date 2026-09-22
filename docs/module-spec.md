@@ -428,7 +428,7 @@ upstream release **without any aibox release**:
 6. **Atomic-ish apply**: `.env` → `.env.bak.<ts>` backup; ONLY the declared image keys are
    rewritten (missing keys appended, mode preserved); containers recreated via the module's own
    `svc.sh start` (which health-waits per its normal contract).
-6. **Auto-rollback**: failed health check → restore the backup, recreate, exit `20` with the
+7. **Auto-rollback**: failed health check → restore the backup, recreate, exit `20` with the
    retry hint.
 
 The current live version is reported by `--check`, shown by `dashboard` (module's

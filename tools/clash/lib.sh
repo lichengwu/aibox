@@ -79,9 +79,11 @@ _clash_gh_candidates() { # prints one candidate prefix per line (DIRECT = no pre
   case "${AIBOX_GH_POOL:-}" in
   direct | none | off) : ;;
   "") # shellcheck disable=SC2086
-    printf '%s\n' ${CLASH_GH_POOL_DEFAULT} ;;
+    printf '%s\n' ${CLASH_GH_POOL_DEFAULT}
+    ;;
   *) # shellcheck disable=SC2086
-    printf '%s\n' ${AIBOX_GH_POOL} ;;
+    printf '%s\n' ${AIBOX_GH_POOL}
+    ;;
   esac
   return 0
 }
@@ -116,7 +118,10 @@ clash_gh_get() { # $1=url → body on stdout; nonzero when every candidate fails
   rounds=0
   while [ -z "${body}" ] && [ "${rounds}" -lt 80 ]; do
     for ((j = 1; j <= i; j++)); do
-      if [ -f "$tmpd/b${j}.ok" ]; then body="$tmpd/b${j}"; break; fi
+      if [ -f "$tmpd/b${j}.ok" ]; then
+        body="$tmpd/b${j}"
+        break
+      fi
     done
     if [ -n "${body}" ]; then break; fi
     sleep 0.25
@@ -161,7 +166,10 @@ _clash_probe_one() { # $1=url $2=partial-file $3=result-file
   size="${tstat%% *}"
   t="${tstat##* }"
   rate="$(printf '%s %s' "${size:-0}" "${t:-0}" | awk '{t=$2+0; if (t>0) printf "%d", $1/t; else print 0}')"
-  if [ "${rate:-0}" -le 0 ] || [ ! -s "$pf" ]; then : >"$rf"; return 0; fi
+  if [ "${rate:-0}" -le 0 ] || [ ! -s "$pf" ]; then
+    : >"$rf"
+    return 0
+  fi
   printf '%s\t%s\n' "${rate}" "${url}" >"$rf"
   return 0
 }
@@ -177,7 +185,10 @@ CLASH_PROBE_PARTIAL=""
 clash_rank_candidates() { # $1=asset-url $2=ranked-outfile
   local url="$1" outf="$2" tmpd pid pids="" p i j u first k
   CLASH_PROBE_PARTIAL=""
-  tmpd="$(mktemp -d "${TMPDIR:-/tmp}/clashrank.XXXXXX")" || { printf '%s\n' "$url" >"$outf"; return 0; }
+  tmpd="$(mktemp -d "${TMPDIR:-/tmp}/clashrank.XXXXXX")" || {
+    printf '%s\n' "$url" >"$outf"
+    return 0
+  }
   i=0
   while read -r p; do
     i=$((i + 1))
@@ -251,7 +262,10 @@ download_mihomo() {
   ok=0
   # shellcheck disable=SC2086
   for cand in $cands; do
-    if [ -f "$tmp" ] && gunzip -t "$tmp" 2>/dev/null; then ok=1; break; fi
+    if [ -f "$tmp" ] && gunzip -t "$tmp" 2>/dev/null; then
+      ok=1
+      break
+    fi
     log "  source: ${cand}"
     attempt=0
     until { [ -f "$tmp" ] && gunzip -t "$tmp" 2>/dev/null; } ||
@@ -263,7 +277,10 @@ download_mihomo() {
       fi
       warn "  attempt $((attempt + 1)) interrupted — resuming partial download..."
     done
-    if [ -f "$tmp" ] && gunzip -t "$tmp" 2>/dev/null; then ok=1; break; fi
+    if [ -f "$tmp" ] && gunzip -t "$tmp" 2>/dev/null; then
+      ok=1
+      break
+    fi
   done
   [ "$ok" = 1 ] || die "Download failed on every source tried ($(printf '%s' "$cands" | tr '\n' ' ')); $(du -h "$tmp" 2>/dev/null | cut -f1) partial retained
   Hint: a HTTP/SOCKS proxy →  aibox proxy set <url>
@@ -329,9 +346,9 @@ detect_external_clash() {
     [ -n "${line}" ] || continue
     pid="${line%% *}"
     desc="${line#* }"
-    [ "${pid}" = "${own_pid}" ] && continue          # our own kernel
+    [ "${pid}" = "${own_pid}" ] && continue # our own kernel
     case "${desc}" in
-    *".aibox"* | *"${AIBOX_BIN_DIR:-/nonexistent}"*) continue ;;  # our binary path
+    *".aibox"* | *"${AIBOX_BIN_DIR:-/nonexistent}"*) continue ;; # our binary path
     esac
     printf '%s\t%s\n' "${pid}" "${desc}"
   done <<EXTCLASH
@@ -528,10 +545,11 @@ render_dashboard() {
     printf '  %s%-9s %snot running (aibox clash on)%s\n' "${C_DIM:-}" "kernel:" "${C_YEL:-}" "${C_RST:-}"
   fi
   printf '  %s%-9s 127.0.0.1:%s\n' "${C_DIM:-}" "egress:" "${egress_port}"
-  [ "${mode}" = "internal" ] && printf '  %s%-9s 127.0.0.1:%s (secret %s)\n' "${C_DIM:-}" "api:" "${CLASH_API_PORT}" "$( [ -n "${CLASH_SECRET}" ] && printf 'set' || printf 'unset')"
+  [ "${mode}" = "internal" ] && printf '  %s%-9s 127.0.0.1:%s (secret %s)\n' "${C_DIM:-}" "api:" "${CLASH_API_PORT}" "$([ -n "${CLASH_SECRET}" ] && printf 'set' || printf 'unset')"
   if [ -n "${SUB_URL:-}" ]; then
-    local host="${SUB_URL#*://}"; host="${host%%/*}"
-    printf '  %s%-9s %s · refreshed %s\n' "${C_DIM:-}" "sub:" "${host}" "$( [ -n "${LAST_REFRESH:-}" ] && [ "${LAST_REFRESH}" != "0" ] && date -r "${LAST_REFRESH}" '+%Y-%m-%d %H:%M' 2>/dev/null || echo 'never')"
+    local host="${SUB_URL#*://}"
+    host="${host%%/*}"
+    printf '  %s%-9s %s · refreshed %s\n' "${C_DIM:-}" "sub:" "${host}" "$([ -n "${LAST_REFRESH:-}" ] && [ "${LAST_REFRESH}" != "0" ] && date -r "${LAST_REFRESH}" '+%Y-%m-%d %H:%M' 2>/dev/null || echo 'never')"
   else
     printf '  %s%-9s %snone (aibox clash set <subscription-url>)%s\n' "${C_DIM:-}" "sub:" "${C_YEL:-}" "${C_RST:-}"
   fi

@@ -38,16 +38,16 @@ load_env() {
   [ -f "${envf}" ] || return 0
   while IFS= read -r line || [ -n "${line}" ]; do
     case "${line}" in
-      '' | '#'*) continue ;;
-      *=*) ;;
-      *) continue ;;
+    '' | '#'*) continue ;;
+    *=*) ;;
+    *) continue ;;
     esac
     k="${line%%=*}"
     case "${k}" in
-      '' | *[!A-Za-z0-9_]*) continue ;;
+    '' | *[!A-Za-z0-9_]*) continue ;;
     esac
     export "${k}=${line#*=}"
-  done < "${envf}"
+  done <"${envf}"
 }
 
 # compose wrapper: always runs in the deploy root. This module REQUIRES the
@@ -76,7 +76,6 @@ compose() {
 compose_images() {
   compose config --images 2>/dev/null || true
 }
-
 
 # The app is up when /api/status answers success (upstream's own healthcheck
 # contract — the same endpoint the container-internal wget probe uses; we curl

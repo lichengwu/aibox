@@ -140,7 +140,6 @@ compose_images() {
   compose config --images 2>/dev/null || true
 }
 
-
 ensure_compose() {
   [ -f "$COMPOSE_FILE" ] || die "No compose file (first: aibox install base)"
 }

@@ -43,16 +43,16 @@ load_env() {
   [ -f "${envf}" ] || return 0
   while IFS= read -r line || [ -n "${line}" ]; do
     case "${line}" in
-      '' | '#'*) continue ;;
-      *=*) ;;
-      *) continue ;;
+    '' | '#'*) continue ;;
+    *=*) ;;
+    *) continue ;;
     esac
     k="${line%%=*}"
     case "${k}" in
-      '' | *[!A-Za-z0-9_]*) continue ;;
+    '' | *[!A-Za-z0-9_]*) continue ;;
     esac
     export "${k}=${line#*=}"
-  done < "${envf}"
+  done <"${envf}"
 }
 
 # compose wrapper: always runs in the deploy root. The web service consumes the
@@ -147,7 +147,10 @@ _ghcr_mirror_pull() { # $1 = official ghcr.io ref
     [ -n "${full}" ] || continue
     log "docker pull ${full} (mirror ${m}, watchdog ${AIBOX_GHCR_PULL_TIMEOUT:-1800}s)"
     if _dk_bounded "${AIBOX_GHCR_PULL_TIMEOUT:-1800}" pull "${full}"; then
-      docker tag "${full}" "${img}" || { warn "docker tag failed: ${full} → ${img}"; continue; }
+      docker tag "${full}" "${img}" || {
+        warn "docker tag failed: ${full} → ${img}"
+        continue
+      }
       docker rmi "${full}" >/dev/null 2>&1 || true
       ok "pulled ${img} via ${m}"
       done1=1
@@ -157,7 +160,6 @@ _ghcr_mirror_pull() { # $1 = official ghcr.io ref
   done
   [ "${done1}" = "1" ]
 }
-
 
 # Unified pre-pull entry: routes each image to its registry family's pool
 # (ghcr → ghcr pool; docker.io → docker.io pool; other registries → direct).
@@ -176,7 +178,7 @@ container_running() { # $1 = container name
   docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$1"
 }
 server_running() { container_running "${SERVER_CONTAINER}"; }
-web_running()    { container_running "${WEB_CONTAINER}"; }
+web_running() { container_running "${WEB_CONTAINER}"; }
 
 # The console (nginx → Java) answers HTTP on the console port.
 console_up() {
@@ -201,9 +203,9 @@ ws_listening() {
 }
 
 # Effective ports (deploy .env overrides the module defaults).
-effective_ws_port()       { printf '%s' "${XIAOZHI_WS_PORT:-${DEFAULT_WS_PORT}}"; }
-effective_console_port()  { printf '%s' "${XIAOZHI_CONSOLE_PORT:-${DEFAULT_CONSOLE_PORT}}"; }
-effective_http_port()     { printf '%s' "${XIAOZHI_HTTP_PORT:-${DEFAULT_HTTP_PORT}}"; }
+effective_ws_port() { printf '%s' "${XIAOZHI_WS_PORT:-${DEFAULT_WS_PORT}}"; }
+effective_console_port() { printf '%s' "${XIAOZHI_CONSOLE_PORT:-${DEFAULT_CONSOLE_PORT}}"; }
+effective_http_port() { printf '%s' "${XIAOZHI_HTTP_PORT:-${DEFAULT_HTTP_PORT}}"; }
 
 # The server container's config lives in the ./data bind mount.
 config_file() { printf '%s/data/.config.yaml' "$(deploy_root)"; }
@@ -252,12 +254,18 @@ _lan_ip() {
   Darwin)
     for i in en0 en1 en2 en3; do
       ip="$(ipconfig getifaddr "$i" 2>/dev/null || true)"
-      [ -n "${ip}" ] && { printf '%s' "${ip}"; return 0; }
+      [ -n "${ip}" ] && {
+        printf '%s' "${ip}"
+        return 0
+      }
     done
     ifc="$(route -n get default 2>/dev/null | awk '/interface:/{print $2}' || true)"
     if [ -n "${ifc}" ]; then
       ip="$(ipconfig getifaddr "${ifc}" 2>/dev/null || true)"
-      [ -n "${ip}" ] && { printf '%s' "${ip}"; return 0; }
+      [ -n "${ip}" ] && {
+        printf '%s' "${ip}"
+        return 0
+      }
     fi
     ;;
   *) ip="$(hostname -I 2>/dev/null | awk '{print $1}')" ;;
