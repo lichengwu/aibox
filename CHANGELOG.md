@@ -7,7 +7,7 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
-## [Unreleased]
+## [0.10.1] — 2026-09-22
 
 ### Fixed — unified destructive-verb interaction (the two-gate uninstall)
 
