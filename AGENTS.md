@@ -107,7 +107,7 @@ grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[，。、；：！？（）「」]' <file>
 
 **Fix**: never hang a stray `2>/dev/null` onto an fd-opening `exec`. Guard the failure with `if exec 9>>"$file"; then ... fi` (a failing exec inside an `if` condition is safe under `set -e`) — one real error line to stderr on a bad path is the correct degradation, not silence.
 
-**Detection**: any stderr assertion failing with empty output while the command exits nonzero; `grep -n 'exec [0-9]*>>.*2>' ` over the codebase.
+**Detection**: any stderr assertion failing with empty output while the command exits nonzero; `grep -n 'exec [0-9]*>>.*2>'` over the codebase.
 
 ### #3 Proxy testing: status-code-only is always a false positive
 
@@ -228,6 +228,32 @@ scripts/validate-module.sh <name> | --all                                  # con
 10. **Docs are part of the contract**: `README.md` (commands / ports / env overrides / preflight — validator: ERROR if missing) and `docs/DEVELOPMENT.md` (upstream links, version-pin policy, design decisions, known quirks — validator: WARN if missing).
 11. **No hardcoded credentials** in compose files; shared-PG consumers read `${AIBOX_POSTGRES_*}` from the injected `base.env` (validator scans; base is the only exception by design).
 12. **Residue map for `aibox purge`**: extend the `residue_*` map functions in `bin/aibox` with the module's leftovers (volumes / containers / `/etc/<name>` / units / dispatched binaries / npm packages) — `aibox purge` must be able to remove residue even AFTER the module (or aibox itself) is uninstalled (rescue: curl the single-file `bin/aibox` to /tmp and run `purge --apply`). Validator WARNs when the entry is missing; spec: `docs/module-spec.md` §Residue cleanup.
+
+### #10 macOS bash 3.2 (arm64-darwin26 build): a failing `[[ ]]` does NOT trigger `set -e` — bats mid-test assertions are silently swallowed locally
+
+**Symptom**: tests "pass" on the dev Mac while the identical assertions fail on CI (ubuntu). Observed twice in one day: a stale header assertion ("Available modules", removed by an earlier TUI change) and a spacing regression — both green locally, red on CI.
+
+**Root cause** (measured, minimal repro): on this machine's `/bin/bash 3.2.57 (arm64-apple-darwin26)`:
+
+```bash
+bash -e -c '[[ a == b ]]; echo SURVIVED'   # → SURVIVED, exit 0 (!!)
+bash -e -c '[ a = b ];  echo SURVIVED'     # → exits 1 (correct)
+bash -e -c '[[ a == b ]] || false; echo X' # → exits 1 (correct — the workaround)
+```
+
+`[[ ]]` is a keyword, and this build fails to raise errexit for it; `[ ]` (a builtin command) works. bats runs test bodies under `set -e` and treats the test's EXIT STATUS as the verdict — so a failing `[[ ]]` in the MIDDLE of a test is ignored locally; only the last command's status decides. **Every local "green" only validates the last line of each test.**
+
+**Consequences**:
+
+- CI (ubuntu bash 5, correct errexit) is the AUTHORITATIVE assertion gate — never trust local-only green for assertion changes.
+- A test whose final line passes can hide any number of broken assertions above it.
+
+**Mitigations**:
+
+- For assertions that matter mid-test: `[[ ... ]] || false` (restores errexit semantics on the quirk build), or make the critical assertion the test's LAST line.
+- Verified workaround list: `|| false`, `[ ]` form, or running the suite under a correct bash (CI / `docker run bash:5`).
+
+**Detection**: a test that should obviously fail passes locally — re-run it on ubuntu (`docker run --rm -v "$PWD":/repo -w /repo ubuntu:24.04` + `apt-get install bats`) before trusting it.
 
 ## License
 

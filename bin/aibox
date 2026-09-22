@@ -2636,11 +2636,11 @@ _dash_block() { # $1=module $2=module-version $3=cur-upstream-outfile $4=profile
       ;;
   esac
   if [ -n "${sym}" ] && [ -n "${sword}" ]; then
-    printf '  %s %s %s %s%s%s · %s%s%s\n' "${sym}" "${m}" "${C_DIM}" "${mver}" "${C_RST}" "${C_DIM}" "${sword}" "${C_DIM}" "${C_RST}"
+    printf '  %s %s %s%s%s · %s%s%s\n' "${sym}" "${m}" "${C_DIM}" "${mver}" "${C_RST}" "${C_DIM}" "${sword}" "${C_RST}"
   elif [ -n "${sym}" ]; then
-    printf '  %s %s %s %s%s\n' "${sym}" "${m}" "${C_DIM}" "${mver}" "${C_RST}"
+    printf '  %s %s %s%s%s\n' "${sym}" "${m}" "${C_DIM}" "${mver}" "${C_RST}"
   else
-    printf '  %s %s %s%s\n' "${m}" "${C_DIM}" "${mver}" "${C_RST}"
+    printf '  %s %s%s%s\n' "${m}" "${C_DIM}" "${mver}" "${C_RST}"
   fi
   printf '%s\n' "${info}" | while IFS='=' read -r k v; do
     [ -n "${k}" ] || continue

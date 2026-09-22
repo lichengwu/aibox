@@ -286,20 +286,20 @@ EOF2
     [ "$status" -eq 0 ] || { echo "state=$st"; echo "$output"; false; }
     case "$st" in
     ok)
-      [[ "$output" == *"✓ new-api  1.1.1 · ok"* ]]
+      [[ "$output" == *"✓ new-api 1.1.1 · ok"* ]]
       [[ "$output" != *"state:"* ]]  # consumed by the header, never a detail line
       ;;
     starting)
-      [[ "$output" == *"⚠ new-api  1.1.1 · starting"* ]]
+      [[ "$output" == *"⚠ new-api 1.1.1 · starting"* ]]
       ;;
     stopped)
-      [[ "$output" == *"○ new-api  1.1.1 · stopped"* ]]
+      [[ "$output" == *"○ new-api 1.1.1 · stopped"* ]]
       # the endpoint line carries the actionable hint
       [[ "$output" == *"endpoint: http://127.0.0.1:30300 (stopped — aibox new-api start)"* ]]
       ;;
     na)
       # CLI-type module: plain header, no icon, no state word
-      [[ "$output" == *"  new-api  1.1.1"* ]]
+      [[ "$output" == *"  new-api 1.1.1"* ]]
       [[ "$output" != *"· ok"* && "$output" != *"· stopped"* ]]
       ;;
     esac
@@ -317,6 +317,6 @@ EOF2
     >"$AIBOX_HOME/modules/new-api/lib.sh"
   run bash "$REPO_ROOT/bin/aibox" dashboard
   [ "$status" -eq 0 ]
-  [[ "$output" == *"✓ new-api  1.1.1"* ]]
+  [[ "$output" == *"✓ new-api 1.1.1"* ]]
   [[ "$output" != *"· ok"* && "$output" != *"· stopped"* ]]
 }
