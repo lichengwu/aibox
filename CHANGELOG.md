@@ -7,7 +7,15 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
-## [Unreleased]
+## [0.12.0] — 2026-09-23
+
+### Highlights
+
+- **Dashboard: app vs module versions, one keyline template** — the headline ask of this
+  release: every dashboard now leads with the deployed **app version** (the thing you
+  actually track — `pi-web 0.9.3`, the mihomo kernel tag, docker image tags), while the
+  aibox **module packaging version** sinks to a dim footer row. The old ambiguous
+  `· module <ver>` header is gone everywhere.
 
 ### Added
 
@@ -663,6 +671,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.12.0]: https://github.com/lichengwu/aibox/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/lichengwu/aibox/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/lichengwu/aibox/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/lichengwu/aibox/compare/v0.10.0...v0.10.1

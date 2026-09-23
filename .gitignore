@@ -3,3 +3,6 @@
 .env
 .aibox-local-test/
 node_modules/
+
+# superpowers (brainstorm mockups / SDD workspaces)
+.superpowers/
