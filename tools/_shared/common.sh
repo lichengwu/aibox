@@ -270,17 +270,17 @@ cfg_env_declare() { # $1=module.yaml → declaration lines on stdout
       print key
     }
   ' "$1" | while IFS="$(printf '\t')" read -r k v; do
-      def="${v%% —*}"
-      [ "${def}" = "${v}" ] && def="${v%%—*}"
-      rest="${v#* —}"
-      [ "${rest}" = "${v}" ] && rest="${v}"
-      flags=""
-      case "${v}" in
-      *"["*"]"*) flags="$(printf '%s' "${v}" | sed -n 's/.*\[\([^]]*\)\].*/\1/p')" ;;
-      esac
-      desc="${rest%%\[*}"
-      printf '%s\t%s\t%s\t%s\n' "${k}" "${def}" "$(printf '%s' "${desc}" | sed 's/^ *//; s/ *$//')" "${flags}"
-    done
+    def="${v%% —*}"
+    [ "${def}" = "${v}" ] && def="${v%%—*}"
+    rest="${v#* —}"
+    [ "${rest}" = "${v}" ] && rest="${v}"
+    flags=""
+    case "${v}" in
+    *"["*"]"*) flags="$(printf '%s' "${v}" | sed -n 's/.*\[\([^]]*\)\].*/\1/p')" ;;
+    esac
+    desc="${rest%%\[*}"
+    printf '%s\t%s\t%s\t%s\n' "${k}" "${def}" "$(printf '%s' "${desc}" | sed 's/^ *//; s/ *$//')" "${flags}"
+  done
 }
 
 # Generic `config` action for KEY=value-store modules (spec §Configuration).
