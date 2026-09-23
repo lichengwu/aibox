@@ -48,8 +48,11 @@ restart)
   sleep 3
   show_status
   ;;
-# dashboard is an alias of status (merged 2026-09: one "show state" verb —
-# operational facts + the rich view; the manager-level aibox dashboard stays separate)
+# dashboard is an alias of status — ONE merged "show state" verb, now the
+# keyline rich view only: it carries the service state + pid, endpoint + HTTP
+# verdict, auth, log, module row. Raw launchctl/systemctl/lsof dumps live in
+# `diagnose` (they were interleaved above the rich view before — 精修 removes
+# the raw noise from the human view).
 # config: the plist/unit EnvironmentVariables IS the store (spec §Configuration).
 # set regenerates the service definition (write_service — the single writer,
 # seeded from the STORE: env vars are install-time seeds only) and offers the
@@ -134,7 +137,6 @@ config)
   esac
   ;;
 status | dashboard)
-  show_status
   render_dashboard
   ;;
 logs)

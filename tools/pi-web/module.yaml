@@ -1,5 +1,5 @@
 name: pi-web
-version: 1.3.5
+version: 1.4.0
 description: "Deploy @agegr/pi-web as a launchd/systemd service (HTTP Basic auth, auto-restart)"
 platform: ""
 dir: tools/pi-web

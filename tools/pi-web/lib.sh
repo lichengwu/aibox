@@ -7,6 +7,14 @@ OLD_LABELS=("com.agegr.pi-web")
 # (both layouts agree: cache modules/pi-web/, repo tools/pi-web/). Empty on a
 # missing file → callers fall back to their dim placeholder.
 MODULE_VERSION="$(sed -n 's/^version:[[:space:]]*//p' "$(dirname "${BASH_SOURCE[0]}")/module.yaml" 2>/dev/null | head -1 || true)"
+# Deployed app version: the @agegr/pi-web npm package installed globally
+# (local read, ~0.7s, no network). Empty when npm or the package is absent —
+# callers omit the segment (update.sh's npm_registry_pick is the network path).
+app_version() {
+  command -v npm >/dev/null 2>&1 || return 0
+  npm ls -g @agegr/pi-web --depth=0 2>/dev/null |
+    grep -oE '@agegr/pi-web@[0-9][0-9A-Za-z.-]*' | head -1 | sed 's/.*@//' || true
+}
 OS_KIND="$(uname -s)"
 if [ "$OS_KIND" = "Darwin" ]; then
   PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
@@ -587,19 +595,23 @@ show_status() {
   curl -s -o /dev/null --max-time 3 -w "HTTP %{http_code} (pi/${PASSWORD})\n" -u "pi:${PASSWORD}" "http://127.0.0.1:${PORT}/" || echo "curl probe failed"
 }
 
-# Dashboard interface (called by `aibox dashboard`): outputs endpoint/credential/log/health.
+# Dashboard interface (machine-readable; the manager's views render it).
+# version= is the app version contract key (spec §Dashboard template).
+# Health classes align with the manager's verdict table: 2xx + 3xx + 401 =
+# alive (a 307 redirect to the UI was previously mis-reported "starting").
 dashboard_info() {
   resolve_password
+  local v code
+  v="$(app_version)"
+  [ -n "${v}" ] && echo "version=${v}"
   echo "endpoint=http://127.0.0.1:${PORT}"
   echo "credential=Username pi / password ${PASSWORD}"
   echo "log=${LOG_DIR}/pi-web.log"
-  # state= machine-readable contract (ok=✓ / starting=⚠ / stopped=○).
-  local code
   code="$(curl -s -o /dev/null --max-time 3 -w '%{http_code}' -u "pi:${PASSWORD}" "http://127.0.0.1:${PORT}/" 2>/dev/null || true)"
   case "${code}" in
-  200)
+  200 | 204 | 301 | 302 | 307 | 308 | 401)
     echo "state=ok"
-    echo "health=ok (HTTP 200, basic auth pi)"
+    echo "health=ok (HTTP ${code}, basic auth pi)"
     ;;
   000 | "")
     echo "state=stopped"
@@ -612,48 +624,68 @@ dashboard_info() {
   esac
 }
 
-# ---------- dashboard (the module's rich view) ----------
+# ---------- dashboard (the module's rich view — keyline template) ----------
 render_dashboard() {
   resolve_password
-  printf '%s%spi-web%s %s· module %s%s\n' "${C_BOLD:-}" "" "${C_RST:-}" "${C_DIM:-}" "${MODULE_VERSION:-\?}" "${C_RST:-}"
-  # service state (platform-native) — LABEL, the module's real service name
-  # (profile-scoped deploys derive it: pi-web-<n>). The pre-2026-09 code read a
-  # SERVICE_ID that was never assigned anywhere → unbound variable under set -u
-  # the moment render_dashboard ran (live-caught after update to module 1.3.2).
-  local svc_state="" _pid
+  local aver code state svc="" _pid="" _lcout
+  aver="$(app_version)"
+  # app-level probe: same verdict classes as the manager (redirects/401 = up;
+  # the pre-2026-09 code counted only HTTP 200, mis-reporting 307 as starting)
+  code="$(curl -s -o /dev/null --max-time 5 -w '%{http_code}' -u "pi:${PASSWORD}" "http://127.0.0.1:${PORT}/" 2>/dev/null || echo 000)"
+  [ -z "${code}" ] && code="000"
+  # service-level state + pid (platform-native — LABEL is the module's real
+  # service name; profile-scoped deploys derive it: pi-web-<n>; raw launchctl /
+  # lsof dumps live in the diagnose action)
   case "$(uname -s)" in
   Darwin)
-    # launchctl print (the show_status-proven query; modern launchctl list
-    # prints a JSON-ish blob whose first field is "{" — not a PID table).
-    # ONE call captures both pid and state (the previous shape called it
+    # ONE launchctl call captures pid + state (the previous shape called it
     # twice — a race window between the two reads and a wasted fork).
     # || true: without a running service launchctl exits 1 — under set -o
     # pipefail that FAILED STATUS rides the pipeline into the assignment and
     # errexit kills the whole function (live-caught on the macOS CI runner,
     # where no pi-web service exists; the dev machine's running service masked it)
-    local _lcout=""
     _lcout="$(launchctl print "gui/${UID_}/${LABEL}" 2>/dev/null || true)"
     _pid="$(printf '%s\n' "${_lcout}" | awk '/^[[:space:]]*pid[[:space:]]*=/{print $3; exit}')"
     if printf '%s\n' "${_lcout}" | grep -qE 'state[[:space:]]*=[[:space:]]*running'; then
-      svc_state="running${_pid:+ (pid ${_pid})}"
+      if [ "${code}" = "000" ]; then
+        state="starting"
+        svc="launchd running · app not answering yet${_pid:+ (pid ${_pid})}"
+      else
+        state="running"
+        svc="launchd${_pid:+ · pid ${_pid}}"
+      fi
     else
-      svc_state="not running (aibox pi-web start)"
+      state="stopped"
+      svc="not running (aibox pi-web start)"
     fi
     ;;
   *)
-    systemctl --user is-active "${LABEL}" >/dev/null 2>&1 && svc_state="active" || svc_state="inactive (aibox pi-web start)"
+    if systemctl --user is-active "${LABEL}" >/dev/null 2>&1; then
+      if [ "${code}" = "000" ]; then
+        state="starting"
+        svc="systemd active · app not answering yet"
+      else
+        state="running"
+        svc="systemd active"
+      fi
+    else
+      state="stopped"
+      svc="inactive (aibox pi-web start)"
+    fi
     ;;
   esac
-  printf '  %s%-9s %s\n' "${C_DIM:-}" "service:" "${svc_state}"
-  # health probe
-  local code
-  code="$(curl -s -o /dev/null --max-time 5 -w '%{http_code}' -u "pi:${PASSWORD}" "http://127.0.0.1:${PORT}/" 2>/dev/null || echo 000)"
-  [ -z "${code}" ] && code="000"
-  if [ "${code}" = "200" ]; then
-    printf '  %s%-9s http://127.0.0.1:%s · %s✓ HTTP %s (basic auth pi)%s\n' "${C_DIM:-}" "app:" "${PORT}" "${C_GRN:-}" "${code}" "${C_RST:-}"
+  dash_header "pi-web" "${aver}" "${state}"
+  dash_row "service" "${svc}"
+  if [ "${code}" = "000" ]; then
+    dash_row "endpoint" "http://127.0.0.1:${PORT} ${C_DIM:-}(stopped — aibox pi-web start)${C_RST:-}"
   else
-    printf '  %s%-9s http://127.0.0.1:%s · HTTP %s\n' "${C_DIM:-}" "app:" "${PORT}" "${code}"
+    local mark=""
+    case "${code}" in
+    200 | 204 | 301 | 302 | 307 | 308 | 401) mark=" ${C_GRN:-}✓${C_RST:-}" ;;
+    esac
+    dash_row "endpoint" "http://127.0.0.1:${PORT}${C_DIM:-} · ${C_RST:-}HTTP ${code}${mark}"
   fi
-  printf '  %s%-9s %s\n' "${C_DIM:-}" "log:" "${LOG_DIR}/pi-web.log"
-  printf '  %s%-9s %s\n' "${C_DIM:-}" "module:" "${AIBOX_HOME:-$HOME/.aibox}/modules/pi-web/"
+  dash_row "auth" "pi / ${PASSWORD}"
+  dash_row "log" "${LOG_DIR}/pi-web.log"
+  dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/pi-web/"
 }

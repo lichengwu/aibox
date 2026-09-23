@@ -198,19 +198,45 @@ teardown() {
   ! awk '/^  domains:/{f=1;next} /^  [a-z_]+:/{f=0} f' "$REPO_ROOT/tools/pi-web/module.yaml" | grep -q "registry.npmjs.org"
 }
 
-@test "render_dashboard: no unbound variables under set -u (the SERVICE_ID crash)" {
-  # live-caught: after update to module 1.3.2, `aibox pi-web dashboard` died at
-  # lib.sh line 590 — SERVICE_ID was never assigned anywhere in the module.
-  # render_dashboard must degrade gracefully with NO deployment at all
-  # (fresh sandbox HOME: no plist, no unit, no listener → HTTP 000 path).
+@test "app_version: empty when npm or the package is absent (no die under set -e)" {
+  local sb
+  sb="$(mktemp -d)"
+  run bash -c "set -euo pipefail; HOME='$sb'; PATH=/usr/bin:/bin; . '$REPO_ROOT/tools/pi-web/lib.sh'; app_version"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -z "$output" ] || false
+}
+
+@test "dashboard_info: keeps the endpoint/state contract; state ok on redirects" {
+  local sb
+  sb="$(mktemp -d)"
+  out="$(HOME="$sb" bash -c ". '$REPO_ROOT/tools/pi-web/lib.sh'; dashboard_info" 2>/dev/null)"
+  printf '%s\n' "$out" | grep -q '^endpoint=http://127.0.0.1:30141$' || false
+  printf '%s\n' "$out" | grep -q '^state=stopped$' || false   # nothing listens in the sandbox
+  printf '%s\n' "$out" | grep -q '^credential=Username pi / password ' || false
+  rm -rf "$sb"
+}
+
+@test "render_dashboard: keyline template, no unbound variables under set -u" {
+  # live-caught history: after update to module 1.3.2, `aibox pi-web dashboard`
+  # died at lib.sh line 590 — SERVICE_ID was never assigned anywhere in the
+  # module. render_dashboard must degrade gracefully with NO deployment at
+  # all (fresh sandbox HOME: no plist, no unit, no listener → HTTP 000 path).
+  # NOTE: the sandbox still sees the machine-global npm package and a
+  # possibly-live :30141 — asserts are union-shaped on purpose (structure
+  # only, no environment-dependent values).
   local sb
   sb="$(mktemp -d)"
   run bash -c "set -euo pipefail; HOME='$sb'; . '$REPO_ROOT/tools/pi-web/lib.sh'; render_dashboard"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [[ "$output" == *"pi-web · module"* ]]                       # header renders
-  # degraded, not crashed — Darwin says "not running", Linux says "inactive"
-  [[ "$output" == *"service:"*"not running"* || "$output" == *"service:"*"inactive"* ]]
-  [[ "$output" == *"app:"*"http://127.0.0.1:"* ]]              # endpoint line
+  [[ "$output" != *"· module"* ]] || false                  # ambiguous header gone
+  [ "${lines[1]}" = "$(printf '─%.0s' $(seq 1 64))" ] || false   # rule, non-TTY width
+  # service row renders SOME verdict — degraded ("not running"/"inactive") on
+  # a service-less host (CI), or the live state on the dev machine (the
+  # sandbox HOME does not sandbox launchctl: LABEL=pi-web is machine-level;
+  # the pre-rewrite test relied on pitfall #10 to hide this)
+  [[ "$output" == *"not running"* || "$output" == *"inactive"* || "$output" == *"launchd"* || "$output" == *"systemd active"* ]] || false
+  [[ "$output" == *"endpoint"*"http://127.0.0.1:30141"* ]] || false
+  [[ "$output" == *"module"*"·"*"modules/pi-web/"* ]] || false  # sunk module row
   rm -rf "$sb"
 }
 
@@ -219,6 +245,10 @@ teardown() {
   # machine); CI skips — the unbound-variable guard is the portable part above
   launchctl print "gui/$(id -u)/pi-web" >/dev/null 2>&1 || skip "no local pi-web service"
   run bash -c ". '$REPO_ROOT/tools/pi-web/lib.sh'; render_dashboard"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"service:  running (pid "* ]]
+  [ "$status" -eq 0 ] || false
+  [[ "$output" == *"launchd"*"pid "* ]] || false
+  # NOTE: patterns must NOT end with a multibyte char (bash 3.2 arm64-darwin26
+  # glob quirk: a [[ == ]] pattern whose last quoted segment ends multibyte
+  # never matches — trailing * restores it; see AGENTS.md pitfall log)
+  [[ "$output" == *"· ✓"* || "$output" == *"⚠"* ]] || false
 }
