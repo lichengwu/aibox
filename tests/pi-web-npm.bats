@@ -208,7 +208,8 @@ teardown() {
   run bash -c "set -euo pipefail; HOME='$sb'; . '$REPO_ROOT/tools/pi-web/lib.sh'; render_dashboard"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"pi-web · module"* ]]                       # header renders
-  [[ "$output" == *"service:"*"not running"* ]]                # degraded, not crashed
+  # degraded, not crashed — Darwin says "not running", Linux says "inactive"
+  [[ "$output" == *"service:"*"not running"* || "$output" == *"service:"*"inactive"* ]]
   [[ "$output" == *"app:"*"http://127.0.0.1:"* ]]              # endpoint line
   rm -rf "$sb"
 }
