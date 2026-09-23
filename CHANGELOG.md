@@ -7,6 +7,22 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [Unreleased]
+
+### Fixed
+
+- **gitlab: root login with the shown password failed** — live-caught on a deploy host:
+  `aibox gitlab credentials` read GitLab's 24h `initial_root_password` file, but the
+  docker wrapper re-runs `gitlab-ctl reconfigure` on every container start, which
+  REWRITES that file while the database keeps the first-seed password — the displayed
+  password silently stops matching reality. Credentials are now deterministic and
+  verified: install seeds `GITLAB_ROOT_PASSWORD` into the deploy `.env` (never rotated;
+  compose passes it to the container, applying at first boot with fresh volumes), and
+  `aibox gitlab credentials` checks it against the **live root account** — `✓ verified`,
+  or `INVALID` with the reset recipe (`gitlab-rake "gitlab:password:reset[root]"`, modern
+  syntax) when volumes predate the seed. Legacy installs self-heal: `start`/`install`
+  append the seed to an existing `.env`. (module 1.5.0)
+
 ## [0.12.0] — 2026-09-23
 
 ### Highlights

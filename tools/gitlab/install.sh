@@ -34,6 +34,11 @@ else
   log "kept existing $ROOT/.env (not clobbered)"
 fi
 
+# Deterministic root password: seeds GITLAB_ROOT_PASSWORD when absent (never
+# rotates an existing one; legacy deploys get it appended — it applies at the
+# next first-boot-with-fresh-volumes, `credentials` verifies the live state).
+ensure_root_password
+
 log "installed → $ROOT"
 log "Start     : aibox gitlab start   (first boot takes 3-5 min; needs >= 4GB RAM)"
-log "Login     : root — initial password: aibox gitlab credentials"
+log "Login     : root — password: aibox gitlab credentials (verified live)"

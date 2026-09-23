@@ -10,7 +10,7 @@ docker shape; this module does NOT wire GitLab to the shared aibox base).
 aibox install gitlab            # place compose + write .env (does NOT start)
 aibox gitlab start              # boot + wait until the UI answers (3-5 min first time)
 aibox gitlab stop|restart|status|logs
-aibox gitlab credentials        # initial root password (file auto-deletes 24h after first boot)
+aibox gitlab credentials        # root password (seeded, verified against the live account)
 aibox update gitlab             # refresh compose; .env is never clobbered
 aibox uninstall gitlab          # stop + remove compose; DATA VOLUMES ARE RETAINED
 ```
@@ -79,10 +79,19 @@ path    : 1 required upgrade stop(s) …
 
 ## Credentials
 
-- First boot writes `/etc/gitlab/initial_root_password` inside the container
-  (user `root`); GitLab **auto-deletes it after 24h** → `aibox gitlab
-  credentials` shows it while it exists.
-- After expiry, reset: `docker exec -it aibox-gitlab gitlab-rake gitlab:password:reset USERNAME=root`
+- `aibox gitlab credentials` shows the seeded `GITLAB_ROOT_PASSWORD` (generated at
+  install, stored in the deploy `.env`, never rotated) **and verifies it against the
+  live root account** — the printed verdict comes from GitLab itself, not a file.
+- The seed applies at **first boot with fresh volumes** (compose passes it to the
+  container; omnibus prefers the env over random generation). Volumes seeded before
+  the seed existed ignore it — `credentials` detects that (INVALID) and prints the
+  reset recipe.
+- Reset (also the recovery for any stale password):
+  `docker exec -it aibox-gitlab gitlab-rake "gitlab:password:reset[root]"`
+- GitLab's own `/etc/gitlab/initial_root_password` (24h file) is deliberately NOT
+  used: every container restart re-runs reconfigure, which rewrites that file while
+  the database keeps the first-seed password — the file stops matching reality
+  (live-caught on a deploy host).
 
 ## Docker image source pool
 

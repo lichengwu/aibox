@@ -24,6 +24,13 @@ services:
       - gitlab_logs:/var/log/gitlab
       - gitlab_data:/var/opt/gitlab
     environment:
+      # Seeded root password (lib.sh ensure_root_password guarantees the .env
+      # carries it before any aibox-driven up; ENV wins over omnibus random
+      # generation and applies at FIRST boot with fresh volumes — pre-seeded
+      # volumes ignore it, which `aibox gitlab credentials` detects by
+      # verifying against the live account). The :- default keeps direct
+      # `docker compose up` (bypassing aibox) from erroring on an unset var.
+      GITLAB_ROOT_PASSWORD: "${GITLAB_ROOT_PASSWORD:-}"
       GITLAB_OMNIBUS_CONFIG: |
         external_url '${GITLAB_EXTERNAL_URL:-http://localhost:8929}'
         nginx['listen_port'] = ${GITLAB_HTTP_PORT:-8929}

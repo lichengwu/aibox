@@ -41,6 +41,44 @@ load_env() {
   set +a
 }
 
+# Deterministic root password (replaces the fragile initial_root_password file
+# mechanism — live-caught on a deploy host: the file's password is REGENERATED
+# by every reconfigure while the DB keeps the first-seed one, so the file
+# becomes a lie; official docker docs: the file is best-effort only).
+# Model: install seeds GITLAB_ROOT_PASSWORD into the deploy .env; the compose
+# passes it to the container where ENV wins over random generation (omnibus
+# source: initial_root_password = ENV['GITLAB_ROOT_PASSWORD'] || random).
+# It APPLIES at first boot with fresh volumes; volumes seeded earlier ignore
+# it — `credentials` verifies against the live account and says so.
+ensure_root_password() { # appends GITLAB_ROOT_PASSWORD to the .env if missing (never rotates)
+  local envf pw
+  envf="$(deploy_root)/.env"
+  [ -f "${envf}" ] || return 0
+  grep -q '^GITLAB_ROOT_PASSWORD=' "${envf}" 2>/dev/null && return 0
+  pw="$(openssl rand -hex 16 2>/dev/null || true)"
+  if [ -z "${pw}" ]; then
+    pw="$(od -An -tx1 -N16 /dev/urandom 2>/dev/null | tr -d ' \n' || true)"
+  fi
+  [ -n "${pw}" ] || return 0
+  chmod 600 "${envf}"
+  printf '\n# seeded by aibox gitlab — applies at first boot with fresh volumes\nGITLAB_ROOT_PASSWORD=%s\n' "${pw}" >>"${envf}"
+}
+
+# Verify a password against the LIVE root account (the truth — never trust
+# a file). Prints "true" / "false" / "" (probe failed: container down or
+# rails busy — NOT a verdict). Passwords with single quotes would break the
+# runner string; hex seeds and sane user values are safe, and a broken probe
+# just degrades to "unverified".
+root_password_verify() { # $1=password
+  local out
+  out="$(docker exec "$CONTAINER_NAME" gitlab-rails runner "puts User.find_by(username: 'root').valid_password?('${1}')" 2>/dev/null || true)"
+  case "${out}" in
+  *true*) printf 'true' ;;
+  *false*) printf 'false' ;;
+  *) printf '' ;;
+  esac
+}
+
 # Best-effort LAN IP for external_url (clone URLs embed it); overridable via
 # GITLAB_EXTERNAL_URL at install time. Falls back to localhost.
 detect_external_host() {
@@ -116,7 +154,7 @@ dashboard_info() {
   url="http://127.0.0.1:${port}"
   echo "version=$(app_version)"
   echo "endpoint=${url}"
-  echo "credential=root / initial password via: aibox gitlab credentials"
+  echo "credential=root / password: aibox gitlab credentials (verified live)"
   if container_running; then
     health="$(docker inspect -f '{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo none)"
     if http_up "$port"; then
@@ -160,7 +198,7 @@ render_dashboard() {
   else
     dash_row "container" "${C_YEL:-}not running (aibox gitlab start)${C_RST:-}"
   fi
-  dash_row "auth" "root / initial password (see: aibox gitlab credentials)"
+  dash_row "auth" "root / password (see: aibox gitlab credentials, verified live)"
   dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/gitlab/"
 }
 

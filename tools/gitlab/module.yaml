@@ -1,5 +1,5 @@
 name: gitlab
-version: 1.4.0
+version: 1.5.0
 description: "GitLab CE self-hosted (omnibus docker): web UI + git over SSH, embedded PG/Redis"
 platform: ""
 dir: tools/gitlab
@@ -42,6 +42,7 @@ env:
   GITLAB_EXTERNAL_URL: "http://localhost:8929 — external URL GitLab renders in links"
   GITLAB_HTTP_PORT: "8929 — host HTTP port (upstream default 80 collides)"
   GITLAB_SSH_PORT: "8922 — host SSH clone port"
+  GITLAB_ROOT_PASSWORD: "random — root password seeded at install; applies at first boot with fresh volumes (verify: aibox gitlab credentials) [secret]"
   GITLAB_PUMA_WORKERS: "2 — rails workers"
   GITLAB_SIDEKIQ_CONCURRENCY: "10 — background job workers"
   AIBOX_DOCKER_POOL: "shipped pool — docker.io mirror list override [knob]"
@@ -55,7 +56,7 @@ usage:
   status: "Container + web health + rich view"
   dashboard: "Alias of status"
   logs: "Container logs"
-  credentials: "Show the initial root password"
+  credentials: "Show the seeded root password + verify it against the live account"
   config: "Show/set config keys (store: apps/gitlab/.env)"
 
 upstream:
@@ -64,7 +65,7 @@ upstream:
 
 dashboard:
   endpoints: http://127.0.0.1:8929
-  hint: "Login root; initial password: aibox gitlab credentials (file auto-deletes 24h after first boot)"
+  hint: "Login root; password: aibox gitlab credentials (seeded + verified live)"
 
 # Component upgrades WITHOUT an aibox release (docs/module-spec.md §Component upgrades):
 # `aibox upgrade gitlab` resolves the latest gitlab/gitlab-ce tag from Docker Hub

@@ -41,8 +41,17 @@
 - First boot: container health stays `starting` for minutes (start_period 300s
   in the compose healthcheck); `aibox gitlab status` surfaces the health
   state so callers don't mistake booting for failure.
-- `initial_root_password` disappears after 24h — the `credentials` action falls
-  back to printing the `gitlab-rake gitlab:password:reset` recipe.
+- `initial_root_password` (GitLab's 24h file) is deliberately NOT used for
+  credentials: the docker wrapper re-runs `gitlab-ctl reconfigure` on every
+  container start, which REWRITES the file's password while the DB keeps the
+  first-seed one — the file stops matching reality (live-caught on a deploy
+  host: the displayed password stopped logging root in). The module seeds
+  `GITLAB_ROOT_PASSWORD` in the deploy `.env` at install (applies at first
+  boot with fresh volumes; ENV wins over random generation per omnibus
+  source) and `credentials` VERIFIES it against the live account
+  (`gitlab-rails runner ... valid_password?`), printing the reset recipe
+  (`gitlab-rake "gitlab:password:reset[root]"` — modern bracket syntax) when
+  invalid.
 - Upgrade paths are enforced by GitLab migrations, not by us: bumping
   `GITLAB_IMAGE` across majors without the staged stops can wedge the DB. The
   update hook deliberately does NOT touch `GITLAB_IMAGE`.
