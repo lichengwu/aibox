@@ -188,11 +188,20 @@ _wait_http() { # $1 = port
 @test "dashboard_info: emits version/endpoint/credential/db/health fields" {
   unset NEW_API_PORT || true
   out="$(dashboard_info)"
-  printf '%s\n' "$out" | grep -q '^version=v0\.13\.2$'
+  printf '%s\n' "$out" | grep -q '^version=0\.13\.2$'   # app_version strips the cosmetic v
   printf '%s\n' "$out" | grep -q '^endpoint=http://127\.0\.0\.1:30300$'
   printf '%s\n' "$out" | grep -q '^credential=first login: root / 123456'
   printf '%s\n' "$out" | grep -q '^db=shared base'
   printf '%s\n' "$out" | grep -q '^health=stopped'   # fake docker ps: empty
+}
+
+@test "render_dashboard: keyline header (app version) + sunk module row" {
+  run bash -c ". '$REPO_ROOT/tools/new-api/lib.sh'; render_dashboard"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  # app version in the header (image tag from .env), not the module version
+  [[ "$output" == *"new-api 0.13.2"* ]] || false
+  [[ "$output" != *"· module"* ]] || false                       # old ambiguous header gone
+  [[ "$output" == *"module"*"·"*"modules/new-api/"* ]] || false   # sunk module row
 }
 
 @test "uninstall: removes compose, PRESERVES root/.env by default" {
