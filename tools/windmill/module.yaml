@@ -1,5 +1,5 @@
 name: windmill
-version: 1.3.3
+version: 1.4.0
 description: "Windmill self-host ops CLI (init/upgrade/backup/drill/doctor)"
 platform: ""
 dir: tools/windmill

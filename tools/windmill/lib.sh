@@ -137,7 +137,12 @@ wm_deploy_root() {
 
 # Dashboard interface (called by aibox dashboard): outputs endpoint/credential/health
 dashboard_info() {
-  local port="8080" envf p
+  # app version: the installed ops CLI's version (the dispatched CLI is this
+  # module's deployable; the REMOTE deploy's own version is the CLI status's
+  # business, not locally knowable)
+  local v port="8080" envf p
+  v="$(installed_version 2>/dev/null || true)"
+  [ -n "${v}" ] && echo "version=${v}"
   envf="$(wm_deploy_root)/.env"
   if [ -f "$envf" ]; then
     p="$(grep -E '^HTTP_PORT=' "$envf" 2>/dev/null | cut -d= -f2- | tr -d '"' || true)"

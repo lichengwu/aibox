@@ -156,6 +156,12 @@ openmaic_deploy_root() {
 
 # Dashboard interface (called by aibox dashboard): outputs endpoint/credential/health
 dashboard_info() {
+  # app version: the installed ops CLI's version (the dispatched CLI is this
+  # module's deployable; the REMOTE deploy's own version is the CLI status's
+  # business, not locally knowable)
+  local v
+  v="$(installed_version 2>/dev/null || true)"
+  [ -n "${v}" ] && echo "version=${v}"
   echo "endpoint=http://127.0.0.1:3000"
   echo "credential=.env.local (API Key, access password)"
   # na: CLI-type module — its "state" is a remote deploy's state, not a local
