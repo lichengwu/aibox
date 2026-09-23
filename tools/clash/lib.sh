@@ -229,7 +229,10 @@ _clash_verify_gz() { # $1=gz-path $2=expected version (e.g. 1.19.31)
   [ -f "$1" ] || return 1
   gunzip -t "$1" 2>/dev/null || return 1
   local probe="${1}.verify" out
-  gunzip -c "$1" >"$probe" 2>/dev/null || { rm -f "$probe"; return 1; }
+  gunzip -c "$1" >"$probe" 2>/dev/null || {
+    rm -f "$probe"
+    return 1
+  }
   chmod 0755 "$probe" 2>/dev/null || true
   out="$("$probe" -v 2>/dev/null | head -n 1)"
   rm -f "$probe"
