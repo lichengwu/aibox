@@ -1,10 +1,57 @@
+<div align="center">
+
 # aibox
 
-> AI coding toolkit — a lightweight module manager plus a set of independent tools. One-line `curl|bash` install; install / update / uninstall each module on demand.
+**A zero-dependency, pure-bash module manager for AI coding toolkits.**
 
-`aibox` is a pure-bash module manager (zero runtime dependencies, compatible with the bash 3.2 that ships with macOS). Each "module" is a directory under `tools/<name>/` in the repo, shipping its own `install / uninstall / update / svc` hooks and dispatched uniformly by `aibox`.
+[![Latest Release](https://img.shields.io/github/v/release/lichengwu/aibox?color=blue&label=release)](https://github.com/lichengwu/aibox/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/lichengwu/aibox/lint.yml?label=CI)](https://github.com/lichengwu/aibox/actions/workflows/lint.yml)
+[![Bash 3.2+](https://img.shields.io/badge/bash-3.2%2B-4EAA25?logo=gnu-bash&logoColor=white)](https://www.gnu.org/software/bash/)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-lightgrey)](#requirements)
 
-> **Scope note:** the `windmill` and `openmaic` modules bundle full self-host ops CLIs (a few thousand lines each) inside this repo — they are the source of truth for those ops tools, not vendored copies. The core manager itself is `bin/aibox` (single file, ~3.4k lines — one file is the curl|bash deployment constraint). See [Bundled ops CLIs](#bundled-ops-clis).
+[Install](#install) · [Quick Start](#quick-start) · [CLI Grammar](#cli-grammar) · [Modules](#modules) · [中文文档](README.zh.md)
+
+</div>
+
+`aibox` treats every self-hosted tool you deploy — a GitLab, a Dify, a Clash
+proxy pool — as a **module**: a directory with `install / uninstall / update /
+svc` hooks, dispatched uniformly by one ~3.4k-line single-file CLI. No runtime
+dependencies, no package manager, works on the bash 3.2 that ships with macOS.
+
+## Features
+
+- **One grammar** — `aibox <verb> <module>` for everything: `install`, `update`,
+  `uninstall`, `check`, `upgrade`, `dashboard`, `purge`. One mental model, no sub-family verbs.
+- **Preflight-gated installs** — deps, disk, domains, docker daemon reachability and
+  shared-service readiness are probed *before* anything is touched; a bad network tries the
+  configured alternative routes (direct / clash / mirror) automatically.
+- **Download source pools** — every download family (GitHub raw/releases/API, docker.io,
+  npm, ghcr, node-dist) races candidates concurrently, ranks by measured throughput,
+  and fails over per source. On a healthy network this costs nothing.
+- **Mirror acceleration built in** — GitHub / docker.io / npm mirrors are pre-ranked by
+  real downloads on your machine, not guessed. Verification-gated: a mirror serving a
+  corrupt body is discarded and the next source is tried.
+- **Staged upgrades** — `aibox upgrade <module>` bumps the deployed upstream version
+  without an aibox release: pin the target, per-hop health gates, auto-rollback.
+  GitLab's official required-upgrade-stops rule is automated (multi-hop path computed,
+  each hop on the latest patch, readiness-gated between hops).
+- **Local-first dashboards** — `aibox dashboard` renders state (✓ ok / ⚠ starting /
+  ○ stopped), endpoints, credentials, port listeners from local metadata; async probes
+  never block the view.
+- **Per-module help, offline** — `aibox <module> --help` renders an action table from
+  the module's own `usage:` map; `aibox <module> <action> --help` renders the single action.
+- **Safe by default** — every destructive verb confirms interactively (uninstall asks,
+  then asks about data; purge asks, then asks about running containers); scripts decline
+  with exit 2 unless `--yes`.
+- **Residue cleanup** — `aibox purge` scans and removes what uninstall hooks leave behind
+  (volumes, `/etc` dirs, units, binaries), even after aibox itself is uninstalled.
+
+## Requirements
+
+- **macOS or Linux** with bash 3.2+ (the version that ships with macOS works).
+- `curl`. Docker is required only by container-deploying modules (the preflight will tell you).
+- Zero runtime dependencies otherwise; no jq/python needed.
 
 ## Install
 
@@ -12,253 +59,168 @@
 curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main/install.sh | bash
 ```
 
-On networks where raw.githubusercontent.com is blocked (CN common), prefix a
-mirror — the bootstrap itself races direct + mirrors for everything it
-downloads (see [Download source pools](#download-source-pools-mirror-acceleration)):
+On networks where raw.githubusercontent.com is blocked (common in CN), prefix a
+mirror — the bootstrap itself races direct + mirrors for everything it downloads:
 
 ```bash
 curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/lichengwu/aibox/main/install.sh | bash
 ```
 
-This installs the `aibox` main CLI to `~/.local/bin/aibox` (PATH is handled automatically). Then install your first module:
+Installs to `~/.local/bin/aibox` (PATH handled automatically).
+
+Optional checksum verification for the `curl | bash` bootstrap:
 
 ```bash
-aibox install pi-web
+AIBOX_SHA256=<hex>     curl -fsSL …/install.sh | bash   # pin an exact binary
+AIBOX_VERIFY=1         curl -fsSL …/install.sh | bash   # check the release SHA256SUMS
 ```
 
-Optional checksum verification (defense in depth for the `curl|bash` bootstrap):
+## Quick Start
 
 ```bash
-# Pin a specific SHA256 of bin/aibox:
-AIBOX_SHA256=<hex> curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main/install.sh | bash
-
-# Or verify against the release SHA256SUMS sidecar (graceful if absent):
-AIBOX_VERIFY=1 curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main/install.sh | bash
+aibox install pi-web        # preflight-gated module install
+aibox pi-web start          # service lifecycle: start / stop / restart / status / logs
+aibox dashboard             # all modules: state, endpoints, credentials, ports
 ```
 
-## Commands
-
-```
-aibox install <module> [--skip-checks]   install a module (preflight-gated)
-aibox uninstall <module>|self [--purge] [--yes]
-                                  uninstall a module (asks first; then asks whether
-                                  to delete DATA too — --purge answers yes upfront,
-                                  --yes skips the prompts for scripts).
-                                  'self' = the manager: default removes ONLY aibox
-                                  (services/data KEPT, apps/ preserved); --purge =
-                                  cascade full teardown (every module's uninstall
-                                  --purge, then manager + rc block)
-aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks]
-                                  update modules; self = aibox itself; --all = modules + self
-aibox upgrade <module> [--check] [--to <version>] [--yes]
-                                  upgrade the deployed COMPONENT to a newer upstream release
-                                  WITHOUT an aibox release: the repo pins the install floor,
-                                  the deploy .env floats (auto-rollback on failed health)
-                                  — `update` refreshes module scripts; `upgrade` bumps versions
-aibox check <module>|self         module preflight; 'self' = environment check
-                                  (egress, core domains, docker, disk)
-aibox dashboard [--available] [<module>]
-                                  overview (modules + versions + endpoints + credentials +
-                                  port table) / registry catalog / single-module detail + health
-aibox purge [<module>...|self] [--apply] [--stop] [--yes]
-                                  residue scan/cleanup (dry-run by default): volumes, apps/,
-                                  /etc dirs, units, binaries left after uninstalls. --apply
-                                  confirms, then asks inline whether to stop RUNNING
-                                  containers (--stop answers yes upfront)
-aibox <module> <action> [args]    invoke a module action (e.g. aibox pi-web start)
-aibox <module> --help             per-module help: action table from the module's usage:
-                                  stanza (offline). aibox <module> <action> --help = the
-                                  single action's usage (args hint + description)
-
-Every install/update is gated by a **preflight check** (domains reachable / disk / deps / base
-services ready — declared per module in `module.yaml` `checks:`; see `docs/module-spec.md`).
-On network failure it tries the configured alternatives (direct / clash pool / gh mirror /
-static proxy) and adopts a working route for that run. `aibox check self` checks the
-environment, `aibox check <module>` runs a module preflight proactively;
-`--skip-checks` (or `AIBOX_SKIP_CHECKS=1`) bypasses it.
-
-aibox proxy                       show proxy config and state
-aibox proxy set <url> [--no-test|--no-check]
-                                  set proxy: test -> save -> verify site connectivity
-aibox proxy check [url]           no url: dev-site connectivity matrix; with url:
-                                  single-target reachability + direct-connection control
-aibox proxy on | off              enable / disable (config retained)
-aibox proxy unset                 clear the config
-aibox proxy env [--remote]        print export statements / remote-ship format
-aibox --no-proxy <command>        bypass the proxy for this invocation
-
-aibox clash set <sub-url>          store the subscription + generate config (mihomo kernel, auto speed-test/switch)
-aibox clash on | off               start/stop (on switches aibox egress to local mihomo)
-aibox clash status | refresh       status/current node | force-refresh the subscription (auto after 1 week)
-aibox clash select <node>          switch node manually
-aibox clash test | logs | doctor   probe / logs / self-check
-```
-
-## Proxy
-
-aibox has two proxy egress paths:
-
-- **Static proxy** (`aibox proxy set`): manually specify an http/https/socks5 proxy (below).
-- **clash subscription pool** (`aibox install clash` + `aibox clash set <sub-url>`): orchestrates the local mihomo kernel; subscription nodes are auto speed-tested (pick fastest) and failed over. See the [clash module](tools/clash/README.md). Clash takes priority over the static proxy when on.
-
-In some environments (e.g. direct-to-GitHub from CN) `aibox` can't pull modules, or git/npm inside module hooks can't reach out. Configure a static proxy once and both `aibox` itself and the module hooks it spawns use it:
+Deploy a shared PostgreSQL + Redis base, then a module that uses it:
 
 ```bash
-aibox proxy set http://10.0.0.2:7897           # set -> test -> save -> verify sites
-aibox proxy check                              # recheck site connectivity anytime
-aibox --no-proxy list --available                # bypass once
+aibox install base          # shared PG18 + Redis7 (each module gets its own DB)
+aibox base create postgres dify
+aibox install dify
+aibox dify start
 ```
 
-The config lives at `~/.aibox/config` (mode 600) and **does not touch your shell config** — to make terminal git/brew use the proxy too, decide for yourself with `eval "$(aibox proxy env)"`.
+## CLI Grammar
 
-### Site connectivity is verified right after `set`
+One grammar: **`aibox <verb> <module>`** — "self" is a module too (the manager itself).
 
-A single-point probe only proves "this url can reach out"; it doesn't prove "the sites you need are reachable" — proxies are often **partially available** (reach GitHub but not Docker Hub). So `set` automatically runs the site list after saving:
-
-```
-  Connectivity check (via proxy http://10.0.0.2:7897)
-  Any HTTP answer counts as reachable — 401/404/405 just mean the link reached the peer
-  Dev deps
-  ✓ github.com                   200   0.65s
-  ✓ docker hub                   401   1.45s
-  ✓ ghcr.io                      405   0.86s
-  ✗ google                       000   8.00s  connection failed or timed out
-  CN mirrors
-  ✓ npmmirror                    200   0.09s
-  ✓ tuna                         200   0.18s
-
-  14 items: 13 ok · 1 failed
-  All traffic confirmed via proxy (curl %{proxy_used})
-  unreachable:
-    google
-       Troubleshoot: `aibox proxy check <url>` for the direct-connection control; or try another proxy
-```
-
-**If any fail it asks whether to revert**, restoring the pre-set state exactly (back to unconfigured if there was none, or back to the previous proxy if there was one). To skip the prompt:
-
-```bash
-aibox proxy set <url> --no-check    # single-point test only, no site verification
-aibox proxy set <url> --no-test     # test nothing, just save
-```
-
-Verdict rule: **any HTTP response counts as reachable** — `401` (private registry needs auth), `404` (no content at root), `405` (no HEAD) all just mean the peer answered normally. Only connection-layer failure (`000`) counts as unreachable; `5xx` is recorded as suspicious.
-
-The default list has 14 entries: GitHub (home / API / raw), Docker Hub, GHCR, npm, PyPI, Go proxy, Google, Hugging Face, Maven Central, plus npmmirror / TUNA / dashscope as CN mirror controls. Override with your own:
-
-```bash
-export AIBOX_PROBE_SITES='my source|https://example.com|custom group
-another|https://example.org|custom group'
-aibox proxy check
-```
-
-Prefer ASCII labels — alignment is byte-based, so multibyte labels misalign. Default timeout is 8s, adjustable via `AIBOX_PROBE_TIMEOUT`.
-
-Effect is layered; the first two layers are automatic:
-
-| Layer | What it covers | How it takes effect |
-| --- | --- | --- |
-| 1. Main process | `aibox`'s own registry / module / self-update fetches | env vars exported at startup |
-| 2. Child process | curl / git / npm inside module hooks (`install.sh` etc.) | env vars inherited by children |
-| 3. Persistent | networking when a module runs on **another machine, another time** | the module writes the proxy into its own config file; needs module cooperation |
-
-Why layer 3 is necessary: the `openmaic` module's dispatched CLI runs `openmaic upgrade` on the deploy host when `aibox` isn't present at all, and env vars don't cross that boundary. So `aibox install openmaic` also writes the proxy into `/etc/openmaic/openmaic.conf`.
-
-### What happens when the proxy is down
-
-**Configured is enforced**: if the proxy is down, it errors; it does not silently fall back to direct (otherwise it'd表现为 wait-for-timeout-then-fallback every time — slow and untraceable). Four escape hatches:
-
-```bash
-aibox proxy check     # site-level connectivity (14 by default)
-aibox proxy check <url>   # single-target reachability + direct-connection control
-aibox proxy off       # disable globally (config retained)
-aibox --no-proxy ...  # bypass once
-```
-
-If `set` finds failures it asks whether to revert — you don't have to remember what you had before.
-
-`proxy check <url>` additionally runs a "direct-connection control" and tells you plainly whether the proxy is required on the current network — because **"can I reach it" is misleading**; see [AGENTS.md](AGENTS.md) pitfall #3.
-
-### What is NOT overridden
-
-The proxy is **process-level env vars**, affecting only tools that honor `*_proxy` (curl / git / wget / npm / pip / apt). **Docker daemon pulls go through `/etc/docker/daemon.json` and are unaffected**; already-running daemons can't be changed either — restart them.
-
-## Download source pools (mirror acceleration)
-
-Every download aibox performs goes through a **source pool**: mainstream
-accelerated mirrors race the direct route with a REAL download, the fastest
-measured source serves, and a stalled/failed source fails over to the next —
-every reachable source is tried before giving up. On healthy networks the
-direct route wins the race and nothing changes.
-
-| family | where | shipped pool (live-verified, content-checked) |
-| --- | --- | --- |
-| npm (pi-web) | module install/update | npmjs + npmmirror + Tencent + Huawei Cloud mirrors |
-| GitHub raw/api (scripts, registry, bootstrap, self-update, upgrades) | every manager download | direct + gh-proxy.com + ghproxy.net (+ a raw→api rewrite fallback) |
-| GitHub releases ~20MB (clash mihomo) | clash install | same mirrors — rate-probed on the real asset, resumable, per-source failover |
-| docker.io images (dify / gitlab / base; openmaic via its CLI) | module start / `up` (pre-pull + `docker tag`) | direct (daemon-routed probe) + docker.1ms.run + daocloud + dockerproxy + rat.dev |
-| node dist (nvm `node:22` dep) | dependency auto-install | nodejs.org + npmmirror + Aliyun (exports NVM_NODEJS_ORG_MIRROR) |
-| ghcr (windmill) | windmill's own CLI | ghcr.nju.edu.cn + ghcr.dockerproxy.net (auto-probed, persisted to .env) |
-
-Mirrors that served divergent content were measured and EXCLUDED (ghproxy.link,
-ghproxy.cn — truncated/wrong-size; tencent node-dist — stale index). Per-family
-knobs (see [docs/module-spec.md](docs/module-spec.md) §Download source pools for
-the full contract):
+### Manager verbs (module lifecycle)
 
 ```text
-AIBOX_GH_POOL=<urls|direct>                    GitHub family mirror list ("direct" = no pool)
-AIBOX_GH_MIRROR / CLASH_MIRROR                 your mirror — joins the race as a candidate
-AIBOX_NPM_REGISTRY / AIBOX_NPM_REGISTRIES / AIBOX_NPM_TIMEOUT      npm family
-AIBOX_DOCKER_POOL / AIBOX_DOCKER_MIRROR / AIBOX_DOCKER_FORCE_POOL  docker.io family
-AIBOX_NODE_POOL / AIBOX_NODE_MIRROR             node-dist family
-CLASH_PROBE_TIME / CLASH_TAG_TIMEOUT / CLASH_DOWNLOAD_ATTEMPTS     clash binary download
+aibox install <module> [flags]    preflight-gated install (--skip-checks to bypass)
+aibox uninstall <module>|self     asks first, then asks about DATA (--purge answers
+                                  yes upfront; --yes skips prompts for scripts)
+aibox update <module>|self|--all  refresh module SCRIPTS (the repo-pinned floor)
+aibox upgrade <module> [flags]    bump the deployed UPSTREAM version (dockerhub /
+                                  github-release resolver, health gate, auto-rollback,
+                                  staged multi-hop for gitlab). update ≠ upgrade:
+                                  scripts vs upstream app version
+aibox check <module>|self         preflight dry-run; self = environment check
+aibox dashboard [--available]     overview (installed modules) / catalog
+aibox dashboard <module>          single-module detail + health probe
+aibox purge [<module>...|self]    residue scan/cleanup (dry-run by default; --apply
+                                  confirms, then asks about RUNNING containers)
+aibox proxy {show|set|on|off|…}   static egress proxy config (global)
+aibox --no-proxy <command>        bypass the proxy for one command
 ```
 
-Note the docker.io pool composes with the proxy note above: the proxy env vars
-still do not affect the daemon — the pool instead pre-pulls mirror-prefixed
-refs and `docker tag`s them to the official names, so `compose up` finds the
-images locally.
+### Module verbs (pass-through to the module's svc.sh)
+
+```text
+aibox <module> <action> [args]    e.g. aibox pi-web start · aibox clash select <node>
+aibox <module> --help             action table (offline, from the module's usage: map)
+aibox <module> <action> --help    the single action's usage (args + description)
+```
+
+Every service module implements the standard lifecycle
+(`start / stop / restart / status / logs`) plus its own domain actions
+(`base create postgres <db>`, `gitlab credentials`, `clash select <node>`, …).
+`status` shows the module's operational facts **and its rich view**
+(containers, health, endpoints, credentials, port listeners) — `dashboard` is
+an alias of `status` at the module level.
+
+### Ports & endpoints
+
+> **Heads-up: aibox-deployed services don't always use upstream's default ports.**
+> Port collisions across modules are prevented by an internal port registry —
+> e.g. new-api serves on **30300** (upstream default 3000), GitLab on **8929**,
+> dify on **8088**. Profiles derive further ports (`--profile prod` shifts base
+> to 35177/36336).
+
+Find the actual ports and endpoints at any time:
+
+```bash
+aibox dashboard            # the port table + listeners for every installed module
+aibox dashboard <module>   # the single module's endpoint + health
+aibox <module> status      # same, from the module itself
+```
 
 ## Modules
 
-| Module | Description |
-| --- | --- |
-| [`pi-web`](tools/pi-web/README.md) | Deploys `@agegr/pi-web` as a macOS launchd service (HTTP Basic Auth + auto-restart) |
-| [`openmaic`](tools/openmaic/README.md) | [OpenMAIC](https://github.com/THU-MAIC/OpenMAIC) ops CLI, dispatched to Linux deploy hosts (install / upgrade / backup / doctor) |
-| [`windmill`](tools/windmill/README.md) | [Windmill](https://www.windmill.dev) self-host ops CLI, docker compose deploy (init / upgrade / backup / drill / doctor) |
-| [`clash`](tools/clash/README.md) | Clash subscription proxy pool, orchestrates local mihomo (auto speed-test / failover / auto-refresh after 1 week) |
-| [`base`](tools/base/README.md) | Shared base components (PostgreSQL 18 + Redis 7); each module gets its own DB |
-| [`gitlab`](tools/gitlab/README.md) | [GitLab CE](https://about.gitlab.com/) self-hosted (omnibus docker): web UI + git over SSH, embedded PG/Redis |
-| [`dify`](tools/dify/README.md) | [Dify](https://github.com/langgenius/dify) self-hosted (docker compose): LLM app builder, api/worker/web/nginx + weaviate (v1.17.1) |
-| [`new-api`](tools/new-api/README.md) | [New API](https://github.com/QuantumNous/new-api) self-hosted (docker compose): LLM API gateway — OpenAI-compatible relay, key/quota management, usage analytics (v0.13.2) |
-| [`xiaozhi`](tools/xiaozhi/README.md) | [Xiaozhi ESP32 server](https://github.com/xinnan-tech/xiaozhi-esp32-server) self-hosted (docker compose): backend for xiaozhi-esp32 AI voice devices — console + ws relay + bundled MySQL (v0.9.6) |
+| Module | What it deploys | Docs |
+| --- | --- | --- |
+| [`base`](tools/base/) | Shared PostgreSQL 18 + Redis 7; each module gets its own DB | [README](tools/base/README.md) |
+| [`clash`](tools/clash/) | Clash subscription proxy pool (mihomo kernel, auto speed-test/failover) | [README](tools/clash/README.md) |
+| [`dify`](tools/dify/) | [Dify](https://github.com/langgenius/dify) LLM app builder (docker compose) | [README](tools/dify/README.md) |
+| [`gitlab`](tools/gitlab/) | [GitLab CE](https://gitlab.com/gitlab-org/gitlab) omnibus (staged upgrades) | [README](tools/gitlab/README.md) |
+| [`new-api`](tools/new-api/) | [New API](https://github.com/QuantumNous/new-api) LLM gateway | [README](tools/new-api/README.md) |
+| [`pi-web`](tools/pi-web/) | [@agegr/pi-web](https://github.com/agegr/pi-web) as a launchd/systemd service | [README](tools/pi-web/README.md) |
+| [`openmaic`](tools/openmaic/) | [OpenMAIC](https://github.com/THU-MAIC/OpenMAIC) deploy-host ops CLI | [README](tools/openmaic/README.md) |
+| [`windmill`](tools/windmill/) | [Windmill](https://github.com/windmill-labs/windmill) self-host ops CLI | [README](tools/windmill/README.md) |
+| [`xiaozhi`](tools/xiaozhi/) | [Xiaozhi ESP32 server](https://github.com/xinnan-tech/xiaozhi-esp32-server) (voice assistant backend) | [README](tools/xiaozhi/README.md) |
 
-### Bundled ops CLIs
+> **Scope note:** `windmill` and `openmaic` bundle full self-host ops CLIs (a few
+> thousand lines each) in this repo — they are the source of truth for those ops
+> tools, not vendored copies. The core manager itself is `bin/aibox` (single file —
+> the curl|bash deployment constraint).
 
-The `tools/windmill/cli/windmill` and `tools/openmaic/cli/openmaic` files are full single-file ops CLIs (3.6k and 1.7k lines respectively) authored for this repo — they are the source of truth for operating Windmill/OpenMAIC deployments, not vendored third-party copies. They're large because they own the entire lifecycle (init/upgrade/rollback/backup/restore/migrate/drill/doctor, incl. Docker image-source blackhole detection and pull-stall handling). The core `aibox` manager is unaffected by their size.
+## Advanced
 
-## Developing a new module
+<details>
+<summary><b>Egress proxy</b> (aibox proxy on/off/set, clash-managed)</summary>
 
-A module = a `tools/<name>/` directory + a `module.yaml` declaration (the source of truth; the registry is discovered from `tools/*/module.yaml`). The hook contract is in [`docs/module-spec.md`](docs/module-spec.md). A minimal module needs only an `install.sh`.
+`aibox proxy set <url>` stores a static proxy used by every aibox download;
+`aibox clash on` routes egress through the locally-managed mihomo instead.
+Site connectivity is verified right after `set`, with a direct-connection
+control so the verdict can't be a false positive. See the
+[Proxy](README.md#proxy) section history / [clash README](tools/clash/README.md).
+</details>
+
+<details>
+<summary><b>Download source pools</b> (how mirror acceleration works)</summary>
+
+Every download family — GitHub raw / releases / API, docker.io images, npm
+packages, ghcr, node-dist — maintains a candidate pool. Installs race the
+candidates with bounded partial downloads of the REAL asset, rank by measured
+bytes/sec, and fail over on failure. Completed bodies are verified before
+acceptance (gzip integrity + execution + version pin where applicable); a bad
+mirror is discarded, not fatal. See
+[tools/clash/README](tools/clash/README.md#download-source-pool-the-mihomo-binary)
+for a worked example.
+</details>
+
+<details>
+<summary><b>Developing a new module</b> (scaffold + validator + spec)</summary>
 
 ```bash
-# local trial against your working tree, no network:
-AIBOX_RAW=file:///path/to/aibox aibox dashboard --available
-AIBOX_RAW=file:///path/to/aibox aibox install <your-module>
+scripts/new-module.sh mytool            # scaffold a conformant skeleton
+scripts/validate-module.sh mytool       # conformance gate (CI runs --all)
 ```
 
-## Design tradeoffs
+The contract is [`docs/module-spec.md`](docs/module-spec.md) (normative):
+module.yaml schema (ports/checks/usage/includes/upgrade), hook rules,
+preflight contract, residue map, exit codes, interaction gates. Reference
+implementation: [`tools/gitlab/`](tools/gitlab/).
+</details>
 
-- **Registry uses a shell-sourceable format, not JSON**: zero runtime dependencies, compatible with macOS bash 3.2; the main CLI sources it directly, no `jq` / `python`.
-- **Module scripts are cached on disk**: `aibox` downloads module scripts to `~/.aibox/modules/<name>/` before executing; hooks can reuse `lib.sh`, and `svc.sh` pass-through doesn't re-fetch every time.
-- **Self-update = idempotent re-bootstrap**: `aibox update self` re-runs `curl|bash install.sh` to overwrite the main CLI, with no git / Releases dependency. Optional `AIBOX_SHA256` / `AIBOX_VERIFY=1` add checksum defense in depth.
-- **Platform is self-reported by the module**: a `platform=darwin` module only warns on non-macOS; the real constraint is reported by the module hook at runtime.
-- **`AIBOX_RAW` is overridable**: supports local sources / mirrors (e.g. `AIBOX_RAW=file:///path/to/aibox aibox dashboard --available`). Remote registry results are cached with a TTL to dodge the unauthenticated GitHub API rate limit.
-- **A module need not ship a daemon**: `pi-web` manages a launchd service, while `openmaic` only dispatches a CLI and passes `aibox openmaic <action>` through to it — in the contract, `svc.sh` is an "action entry point", not "must be a daemon".
-- **Module runtime environment is self-reported**: cross-platform install modules (like `openmaic`) don't set `platform`; the CLI refuses unsupported platforms at execution with a clear message, which is less false-positive-prone than hard-blocking at install time (install itself is side-effect-free on any OS).
-- **Proxy config is separated from runtime**: config is written to `~/.aibox/config` (600) and exported as env vars at startup. So it covers both `aibox` itself and the module hooks it spawns (child inheritance), with no changes to existing module code. The cross-machine / cross-time layer (a module networking elsewhere on its own) must be handled by the module writing the value into its own config file — env vars don't cross that boundary by nature; this isn't a trick, it's the boundary.
-- **Proxy failure is deterministic, no silent fallback**: if the proxy is down, it errors. Silent fallback would make "proxy broken" look like "a bit slow every time", which is harder to diagnose. `test` / `off` / `--no-proxy` are three escape hatches so you're never stuck.
-- **Doesn't touch your shell config**: `aibox proxy set` only writes its own config, never injects into `~/.zshrc` — a global proxy would affect services that shouldn't go through it, out of scope for aibox. For global effect use `eval "$(aibox proxy env)"`.
-- **clash pool doesn't parse the subscription yaml itself**: `aibox clash` writes the subscription URL into mihomo's `proxy-providers`; fetch/parse/speed-test/switch are all delegated to the kernel — pure bash shouldn't write a yaml parser (fragile), and subscription format changes are adapted by mihomo.
+<details>
+<summary><b>Design tradeoffs</b></summary>
+
+- **Single-file main CLI** (~3.4k lines): the curl|bash one-line install constraint. Internally sectioned.
+- **Pure bash, zero deps**: runs on stock macOS bash 3.2; the repo's pitfall log (AGENTS.md) turns every platform gotcha into a CI assertion.
+- **Registry = `tools/*/module.yaml`**: adding a module is creating a directory; no central registry to edit.
+- **Local-first dashboards**: the default view needs no network; version probes are async.
+
+</details>
+
+## Contributing
+
+PRs welcome. Read [`AGENTS.md`](AGENTS.md) first — it carries the bash coding
+conventions, the pitfall log (platform traps with minimal repros), and the
+module spec pointers. Conventional Commits; every release follows the
+[changelog standard](CHANGELOG.md).
 
 ## License
 

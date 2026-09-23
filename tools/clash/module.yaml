@@ -1,5 +1,5 @@
 name: clash
-version: 1.3.3
+version: 1.3.4
 description: "Clash subscription proxy pool — mihomo kernel orchestration (auto speed-test/switch/failover)"
 platform: ""
 dir: tools/clash
@@ -48,8 +48,8 @@ usage:
   start: "Start the mihomo kernel + switch aibox egress"
   stop: "Stop the kernel (egress falls back)"
   restart: "Stop + start"
-  status: "Kernel + subscription state"
-  dashboard: "State + nodes + latency table"
+  status: "Kernel + subscription state + node latency table"
+  dashboard: "Alias of status"
   refresh: "Force-refresh the subscription (auto: 1 week)"
   set: "<subscription-url> — store the subscription + generate config"
   select: "<node-name> — switch the active node"

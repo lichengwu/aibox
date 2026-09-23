@@ -1,5 +1,5 @@
 name: gitlab
-version: 1.3.3
+version: 1.3.4
 description: "GitLab CE self-hosted (omnibus docker): web UI + git over SSH, embedded PG/Redis"
 platform: ""
 dir: tools/gitlab
@@ -41,8 +41,8 @@ usage:
   start: "Start the container (source pool pulls; 3-5 min first boot)"
   stop: "Stop the container"
   restart: "Recreate the container"
-  status: "Container + web health"
-  dashboard: "Container + web + SSH state"
+  status: "Container + web health + rich view"
+  dashboard: "Alias of status"
   logs: "Container logs"
   credentials: "Show the initial root password"
 

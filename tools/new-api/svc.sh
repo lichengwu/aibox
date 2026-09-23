@@ -24,7 +24,6 @@ _ensure_base() {
 }
 
 case "${action}" in
-dashboard) render_dashboard ;;
 start)
   _ensure_base
   # docker.io source pool: bounded direct probe (healthy → compose pulls
@@ -74,7 +73,9 @@ restart)
   warn "api did not answer within ${timeout_s}s — inspect: aibox ${MODULE_NAME} logs"
   exit 1
   ;;
-status)
+# dashboard is an alias of status (merged 2026-09: one "show state" verb —
+# operational facts + the rich view; the manager-level aibox dashboard stays separate)
+status|dashboard)
   compose ps
   port="$(effective_port)"
   if container_running; then
@@ -87,6 +88,7 @@ status)
   else
     warn "no container running (start: aibox ${MODULE_NAME} start)"
   fi
+  render_dashboard
   ;;
 logs)
   compose logs --tail "${NEW_API_LOG_TAIL:-200}" "$@"

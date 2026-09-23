@@ -1,5 +1,5 @@
 name: pi-web
-version: 1.3.2
+version: 1.3.3
 description: "Deploy @agegr/pi-web as a launchd/systemd service (HTTP Basic auth, auto-restart)"
 platform: ""
 dir: tools/pi-web
@@ -48,8 +48,8 @@ usage:
   start: "Start the launchd/systemd service"
   stop: "Stop the service"
   restart: "Recreate the service (applies config changes)"
-  status: "Service + HTTP health"
-  dashboard: "Service + app + log state"
+  status: "Service + HTTP health + rich view"
+  dashboard: "Alias of status"
   logs: "Follow the app log"
   diagnose: "Self-check (port/auth/process/log)"
 

@@ -66,3 +66,14 @@ teardown() {
   [[ "$output" == *"unknown action: bogus"* ]]
   [[ "$output" == *"aibox base --help"* ]]
 }
+
+@test "status|dashboard merge: module-level dashboard is an alias of status (same output)" {
+  # merged 2026-09: one "show state" verb — operational facts + the rich view;
+  # the manager-level aibox dashboard stays separate. Both action names must
+  # produce IDENTICAL output (fall-through case, not two implementations).
+  run env AIBOX_MODULE=base bash "$SVC" status
+  local st_out="$output" st_rc=$status
+  run env AIBOX_MODULE=base bash "$SVC" dashboard
+  [ "$status" -eq "$st_rc" ]
+  [ "$output" = "$st_out" ]
+}

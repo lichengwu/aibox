@@ -116,7 +116,6 @@ _staged_up() {
 }
 
 case "${action}" in
-dashboard) render_dashboard ;;
 start)
   _ensure_base
   # Source pools: ghcr (server/web) + docker.io (mysql) — bounded direct
@@ -145,7 +144,9 @@ restart)
     _staged_up || exit 1
   fi
   ;;
-status)
+# dashboard is an alias of status (merged 2026-09: one "show state" verb —
+# operational facts + the rich view; the manager-level aibox dashboard stays separate)
+status|dashboard)
   compose ps
   cport="$(effective_console_port)"
   wport="$(effective_ws_port)"
@@ -165,6 +166,7 @@ status)
   else
     warn "stack not running (start: aibox ${MODULE_NAME} start)"
   fi
+  render_dashboard
   ;;
 logs)
   compose logs --tail "${XIAOZHI_LOG_TAIL:-200}" "$@"

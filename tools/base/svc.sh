@@ -15,8 +15,12 @@ restart)
   cmd_stop
   cmd_start
   ;;
-status) cmd_status ;;
-dashboard) render_dashboard ;;
+# dashboard is an alias of status (merged 2026-09: one "show state" verb —
+# operational facts + the rich view; the manager-level aibox dashboard stays separate)
+status|dashboard)
+  cmd_status
+  render_dashboard
+  ;;
 logs)
   ensure_compose
   compose logs -f

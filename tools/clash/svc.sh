@@ -24,10 +24,10 @@ restart)
   stop_kernel
   start_kernel
   ;;
-status)
+# dashboard is an alias of status (merged 2026-09: one "show state" verb —
+# operational facts + the rich view; the manager-level aibox dashboard stays separate)
+status|dashboard)
   show_status
-  ;;
-dashboard)
   render_dashboard
   ;;
 use-external)

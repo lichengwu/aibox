@@ -8,7 +8,6 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 action="${1:-status}"
 case "$action" in
-dashboard) render_dashboard ;;
 start)
   if [ "$OS_KIND" = "Darwin" ]; then
     [ ! -f "$PLIST" ] && die "$PLIST does not exist; run: aibox install pi-web"
@@ -48,8 +47,11 @@ restart)
   sleep 3
   show_status
   ;;
-status)
+# dashboard is an alias of status (merged 2026-09: one "show state" verb —
+# operational facts + the rich view; the manager-level aibox dashboard stays separate)
+status|dashboard)
   show_status
+  render_dashboard
   ;;
 logs)
   tail -f "$LOG_DIR/pi-web.log" "$LOG_DIR/pi-web.err.log"

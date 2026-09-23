@@ -11,7 +11,6 @@ action="${1:-status}"
 load_env
 
 case "${action}" in
-dashboard) render_dashboard ;;
 start)
   if shared_base_enabled && [ ! -f "${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/base.env" ]; then
     die "DIFY_SHARED_BASE=1 but base.env is missing — run: aibox base start"
@@ -60,7 +59,9 @@ restart)
   warn "dify did not answer within ${timeout_s}s — inspect: aibox ${MODULE_NAME} logs"
   exit 1
   ;;
-status)
+# dashboard is an alias of status (merged 2026-09: one "show state" verb —
+# operational facts + the rich view; the manager-level aibox dashboard stays separate)
+status|dashboard)
   compose ps
   port="$(effective_port)"
   if containers_running 2>/dev/null; then
@@ -75,6 +76,7 @@ status)
   else
     warn "no dify containers running (start: aibox ${MODULE_NAME} start)"
   fi
+  render_dashboard
   ;;
 logs)
   compose logs --tail "${DIFY_LOG_TAIL:-200}" "$@"

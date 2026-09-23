@@ -9,6 +9,29 @@ GitHub release notes are auto-generated from the previous tag; this file is the 
 
 ## [Unreleased]
 
+### Changed — module-level `dashboard` merged into `status` (one "show state" verb)
+
+Both actions rendered overlapping information (status = operational facts,
+dashboard = facts + structured extras) — a historical evolution artifact, not a
+meaningful distinction for users. Now: `aibox <module> status` shows the
+operational facts AND the rich view (containers, health, endpoints, credentials,
+port listeners); `dashboard` is an alias producing identical output (verified by
+test). All 7 compose/service modules converted (fall-through case); openmaic/
+windmill already mapped dashboard → their CLI's status. The manager-level
+`aibox dashboard` (fleet overview) and `aibox dashboard <module>` (detail) are
+unaffected — different scope.
+
+### Changed — README rewritten to open-source standards
+
+Badge header (release/license/CI/bash/platforms), nav links, Features section,
+Requirements, Quick Start, a **CLI Grammar** section (manager verbs vs module
+verbs, update ≠ upgrade), and a dedicated **Ports & endpoints** heads-up:
+aibox-deployed services use the internal port registry, not upstream defaults
+(new-api 30300 vs upstream 3000, GitLab 8929, dify 8088; profiles derive
+further) — find actuals via `aibox dashboard` / `aibox <module> status`.
+Advanced topics (proxy, source pools, module development, design tradeoffs)
+folded into collapsible details. README.zh.md mirrors the structure.
+
 ### Fixed — clash mihomo download: verification-gated failover (a bad mirror no longer kills the install)
 
 Live-caught on a Linux host: `aibox install clash` took the "fast route" (the

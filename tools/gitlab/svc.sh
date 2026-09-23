@@ -11,7 +11,6 @@ action="${1:-status}"
 load_env
 
 case "$action" in
-dashboard) render_dashboard ;;
 start)
   # docker.io source pool: bounded direct probe (healthy → compose pulls direct,
   # zero overhead); direct dead → ranked mirror pre-pull + tag (see lib.sh).
@@ -49,7 +48,9 @@ restart)
   compose restart "$@"
   ok "restarted (the entrypoint re-runs omnibus reconfigure on boot)"
   ;;
-status)
+# dashboard is an alias of status (merged 2026-09: one "show state" verb —
+# operational facts + the rich view; the manager-level aibox dashboard stays separate)
+status|dashboard)
   compose ps
   port="${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
   if container_running; then
@@ -64,6 +65,7 @@ status)
   else
     warn "container ${CONTAINER_NAME} is not running (start: aibox gitlab start)"
   fi
+  render_dashboard
   ;;
 logs)
   compose logs --tail "${GITLAB_LOG_TAIL:-200}" "$@"
