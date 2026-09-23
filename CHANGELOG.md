@@ -7,7 +7,7 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
-## [Unreleased]
+## [0.12.1] — 2026-09-23
 
 ### Fixed
 
@@ -687,6 +687,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.12.1]: https://github.com/lichengwu/aibox/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/lichengwu/aibox/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/lichengwu/aibox/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/lichengwu/aibox/compare/v0.10.1...v0.10.2
