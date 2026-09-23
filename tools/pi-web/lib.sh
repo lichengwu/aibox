@@ -92,6 +92,34 @@ _profile_load
 # Priority: PI_WEB_PASSWORD env > password in the installed plist (idempotent: re-install/update
 # doesn't rotate) > random on first install. Avoids a fixed weak default on a host service
 # reachable from the network.
+# Config store reader: the service definition IS the store (spec §Configuration).
+# Darwin: the plist's EnvironmentVariables; Linux: the unit's Environment= lines.
+# Empty when the key/file is absent. `config set` regenerates the whole
+# definition via write_service (single writer), then restart re-reads it.
+_store_get() { # $1=aibox-facing KEY → value or ""
+  # key mapping: the env: declaration carries the aibox-facing names users
+  # know from the README; the service definition writes the app's runtime
+  # names (write_plist: PI_WEB_BIND → PI_WEB_HOSTNAME, PI_WEB_PORT → PORT).
+  local sk out
+  case "$1" in
+  PI_WEB_BIND) sk="PI_WEB_HOSTNAME" ;;
+  PI_WEB_PORT) sk="PORT" ;;
+  *) sk="$1" ;;
+  esac
+  if [ "$OS_KIND" = "Darwin" ] && [ -f "$PLIST" ]; then
+    # PlistBuddy prints errors to STDOUT as well as stderr ("Error Reading
+    # File: …") — only accept clean output as a value.
+    out="$(/usr/libexec/PlistBuddy -c "Print :EnvironmentVariables:${sk}" "$PLIST" 2>/dev/null || true)"
+    case "${out}" in
+    "" | "Error "*) return 0 ;;
+    *) printf '%s\n' "${out}" ;;
+    esac
+  elif [ -n "${UNIT_FILE:-}" ] && [ -f "$UNIT_FILE" ]; then
+    sed -nE "s/^Environment=\"${sk}=([^\"]*)\".*$/\1/p" "$UNIT_FILE" 2>/dev/null | head -1
+  fi
+  return 0
+}
+
 resolve_password() {
   if [ -n "${PI_WEB_PASSWORD:-}" ]; then
     PASSWORD="$PI_WEB_PASSWORD"
@@ -334,6 +362,7 @@ npm_registry_pick() {
   wline="$(printf '%s\n' "${sorted}" | awk -F'\t' 'NF==3 && $3!=""' | head -1)"
   NPM_REGISTRY="$(printf '%s' "${wline}" | cut -f2)"
   NPM_LATEST="$(printf '%s' "${wline}" | cut -f3)"
+  export NPM_LATEST
   local wspeed n
   wspeed="$(printf '%s' "${wline}" | cut -f1)"
   n="$(printf '%s\n' "${ranked}" | grep -c .)"

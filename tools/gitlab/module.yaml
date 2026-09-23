@@ -1,5 +1,5 @@
 name: gitlab
-version: 1.3.4
+version: 1.3.5
 description: "GitLab CE self-hosted (omnibus docker): web UI + git over SSH, embedded PG/Redis"
 platform: ""
 dir: tools/gitlab
@@ -36,6 +36,17 @@ actions:
   - dashboard
   - logs
   - credentials
+  - config
+
+env:
+  GITLAB_EXTERNAL_URL: "http://localhost:8929 — external URL GitLab renders in links"
+  GITLAB_HTTP_PORT: "8929 — host HTTP port (upstream default 80 collides)"
+  GITLAB_SSH_PORT: "8922 — host SSH clone port"
+  GITLAB_PUMA_WORKERS: "2 — rails workers"
+  GITLAB_SIDEKIQ_CONCURRENCY: "10 — background job workers"
+  AIBOX_DOCKER_POOL: "shipped pool — docker.io mirror list override [knob]"
+  AIBOX_DOCKER_MIRROR: "(unset) — user mirror, tried first [knob]"
+  AIBOX_DOCKER_FORCE_POOL: "0 — 1 = skip the direct probe, always engage the pool [knob]"
 
 usage:
   start: "Start the container (source pool pulls; 3-5 min first boot)"
@@ -45,6 +56,7 @@ usage:
   dashboard: "Alias of status"
   logs: "Container logs"
   credentials: "Show the initial root password"
+  config: "Show/set config keys (store: apps/gitlab/.env)"
 
 upstream:
   homepage: https://about.gitlab.com/

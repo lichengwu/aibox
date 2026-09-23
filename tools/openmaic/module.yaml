@@ -1,5 +1,5 @@
 name: openmaic
-version: 1.2.2
+version: 1.2.3
 description: "OpenMAIC ops CLI (install/upgrade/backup/doctor)"
 platform: ""
 dir: tools/openmaic
@@ -63,6 +63,20 @@ actions:
   - clean
   - powerlog
   - url
+
+env:
+  OPENMAIC_PROXY_URL: "(unset) — proxy for pulling source (synced by aibox proxy set; store: /etc/openmaic/openmaic.conf)"
+  OPENMAIC_BIN_DIR: "${AIBOX_BIN_DIR:-~/.local/bin} — install target of the dispatched CLI [knob]"
+  OPENMAIC_CONF_DIR: "/etc/openmaic — conf file location [knob]"
+  OPENMAIC_BASE_DIR: "$AIBOX_HOME/apps/openmaic — deploy root [knob]"
+  OPENMAIC_HEALTH_URL: "http://127.0.0.1:3000/api/health — health probe URL [knob]"
+  OPENMAIC_HEALTH_TIMEOUT: "300 — health-wait seconds [knob]"
+  OPENMAIC_BACKUP_KEEP: "14 — backup retention count [knob]"
+  OPENMAIC_RENDER_ENABLED: "1 — render component switch [knob]"
+  OPENMAIC_SHARED_PG: "0 — 1 = use the aibox shared base PG [knob]"
+  OPENMAIC_PROXY_HOST: "(unset) — proxy host for build-time source pulls [knob]"
+  OPENMAIC_BUILD_TIMEOUT_MAIN: "3600 — main image build timeout seconds [knob]"
+  OPENMAIC_BUILD_TIMEOUT_RENDER: "2400 — render image build timeout seconds [knob]"
 
 usage:
   status: "Version / health / containers / resources overview"

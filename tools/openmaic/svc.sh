@@ -18,7 +18,7 @@ shift
 # Naming collision reminder: aibox's install/uninstall installs the "module", while openmaic's install/clean
 # deploys/cleans OpenMAIC itself. The two differ only by word order, worth a one-time reminder.
 case "${action}" in
-install | clean)
+install|clean)
   warn "note: openmaic ${action} here means 'deploy / clean OpenMAIC itself'"
   warn "      to install this module use: aibox install openmaic"
   ;;

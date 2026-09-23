@@ -50,7 +50,16 @@ restart)
   ;;
 # dashboard is an alias of status (merged 2026-09: one "show state" verb —
 # operational facts + the rich view; the manager-level aibox dashboard stays separate)
-status|dashboard)
+# config: the deploy .env is the store (spec §Configuration).
+config)
+  load_env
+  ROOT="$(deploy_root)"
+  CFG_YAML="${DIR}/module.yaml" \
+  CFG_STORE="${ROOT}/.env" \
+  CFG_APPLY="aibox gitlab restart" \
+  cfg_action "$@"
+  ;;
+status | dashboard)
   compose ps
   port="${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
   if container_running; then

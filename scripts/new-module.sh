@@ -126,6 +126,14 @@ actions:
 includes:
   - common
 
+# Config keys (spec §Configuration): "default — description [flags]";
+# flags: secret (masked in config listings) / knob (env-only, not persisted).
+# `aibox __NAME__ config [get|set|unset]` reads/writes the module's store;
+# `aibox __NAME__ --help` renders this table. The validator cross-checks it
+# against the README env table (no drift).
+env:
+  # TODO_KEY: "TODO default — TODO description [secret|knob]"
+
 # Per-action help text (one line each) — `aibox __NAME__ --help` renders this
 # table. The validator WARNs when a declared action has no usage entry.
 usage:
@@ -183,6 +191,14 @@ actions:
 # cache as _common.sh; lib.sh sources it. NEVER copy pool/helper code.
 includes:
   - common
+
+# Config keys (spec §Configuration): "default — description [flags]";
+# flags: secret (masked in config listings) / knob (env-only, not persisted).
+# `aibox __NAME__ config [get|set|unset]` reads/writes the module's store;
+# `aibox __NAME__ --help` renders this table. The validator cross-checks it
+# against the README env table (no drift).
+env:
+  # TODO_KEY: "TODO default — TODO description [secret|knob]"
 
 # Per-action help text (one line each) — `aibox __NAME__ --help` renders this
 # table. The validator WARNs when a declared action has no usage entry.

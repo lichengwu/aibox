@@ -12,7 +12,7 @@ action="${1:-status}"
 state_load
 
 case "$action" in
-start | on)
+start|on)
   start_kernel
   echo
   log "aibox egress switched to local mihomo (socks5://127.0.0.1:${CLASH_PORT})"
@@ -26,7 +26,7 @@ restart)
   ;;
 # dashboard is an alias of status (merged 2026-09: one "show state" verb —
 # operational facts + the rich view; the manager-level aibox dashboard stays separate)
-status|dashboard)
+status | dashboard)
   show_status
   render_dashboard
   ;;
@@ -39,7 +39,7 @@ use-external)
     ext="$(detect_external_clash | head -1)"
     if [ -n "${ext}" ]; then
       desc="${ext#*\t}"
-      case "${desc}" in *"Clash Verge"*|*clash-verge*) guessed="7897" ;; esac
+      case "${desc}" in *"Clash Verge"* | *clash-verge*) guessed="7897" ;; esac
       port="${guessed:-7890}"
     fi
   fi

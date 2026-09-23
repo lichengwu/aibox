@@ -333,6 +333,38 @@ check still hard-gates the tool's existence):
 - `cr.weaviate.io` (dify's vector store) — no mainstream mirror proxies it; direct-only, documented
 - openmaic's in-build npm — already accelerated via its Dockerfile patch
 
+## Configuration (`env:` stanza + `config` action)
+
+**Model — "seed at install, store after"**: the deploy's store is the single source of truth; environment variables are install-time seeds only. `PI_WEB_PASSWORD=x aibox update` takes effect ONCE and is written into the store; afterwards plain restarts use the stored value.
+
+**Declaration (`module.yaml env:`)** — the CLI-discoverable config surface, same flat-map parser subset as `checks:`/`usage:`:
+
+```yaml
+env:
+  PI_WEB_PASSWORD: "random — HTTP Basic Auth password (user pi) [secret]"
+  PI_WEB_BIND: "0.0.0.0 — listen address"
+  AIBOX_NPM_TIMEOUT: "240 — npm watchdog seconds [knob]"
+```
+
+Value shape: `default — description [flags]`. Flags: `secret` (masked in `config` listings; `config get` returns the plaintext) and `knob` (env-only runtime knob — declared for discovery, NOT persisted, excluded from the `config` view).
+
+**Store (per module type)**:
+
+| type | store | write | apply |
+| --- | --- | --- | --- |
+| compose | `apps/<m>/.env` | `cfg_kv_set` (shared helper) | `aibox <m> restart` (compose up -d recreates) |
+| service-defined (pi-web) | plist `EnvironmentVariables` / unit `Environment=` | regenerate the whole definition (`write_service` — the single writer) | `restart` = bootout + bootstrap (RE-READS the definition; the old kickstart -k did not apply changes — live-caught) |
+| CLI (windmill) | `/etc/<m>/<m>.conf` | `cfg_kv_set` | next invocation (immediate) |
+| state (clash) | — | — | exempt: subscription/node state has its own action semantics |
+
+**User surface**: `aibox <m> config` (list: value + masked secrets + defaults), `config get KEY` (plaintext single value, script-friendly), `config set KEY VALUE` (writes the store; interactively offers the apply, non-interactive prints the apply command), `config unset KEY` (back to the declared default). `aibox <m> --help` renders the declared keys (offline, local-first).
+
+**Key mapping**: declared keys are the aibox-facing names; the store may carry the app's runtime names (pi-web: `PI_WEB_BIND` → plist `PI_WEB_HOSTNAME`, `PI_WEB_PORT` → `PORT`). The module maps them in its store read/write helpers — one user-facing name per knob.
+
+**Shared helpers** (`tools/_shared/common.sh`): `cfg_kv_get/set/unset` (KEY=value stores: comments, order and mode preserved; idempotent), `cfg_env_declare` (module.yaml env: → tab-separated declaration lines), `cfg_secret_p`/`cfg_mask`, `cfg_action` (the generic `config` action implementation — a compose module's `config)` is one call), `cfg_confirm_apply` (default-Y, non-interactive declines to a hint).
+
+**Validator (S17d)**: env entry format ERROR; every declared key documented in README (WARN); every README env-table key declared (WARN — the discoverability gap this closes); declared keys referenced in module code (WARN).
+
 ## Per-action help (`usage:` stanza)
 
 Every module declares a `usage:` map in `module.yaml` — one entry per declared action. `aibox <module> --help` (and bare `aibox <module>`, `help`, `-h`) renders a fixed-column action table from this stanza; `aibox <module> <action> --help` renders the single action's usage block. Both are local-first (module cache → registry, no network when installed).

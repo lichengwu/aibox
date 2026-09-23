@@ -9,6 +9,44 @@ GitHub release notes are auto-generated from the previous tag; this file is the 
 
 ## [Unreleased]
 
+### Added — configuration system (env: declaration + `config` action; spec §Configuration)
+
+The missing piece of the module contract: how a deploy is configured, how
+changes are discovered, and how they take effect. Model — **"seed at install,
+store after"**: the deploy's store is the single source of truth; environment
+variables are install-time seeds only.
+
+- **`module.yaml env:` declaration** (flat map, same parser subset as
+  `checks:`/`usage:`): `KEY: "default — description [flags]"`; flags `secret`
+  (masked in listings) / `knob` (env-only, not persisted, excluded from the
+  view). All 9 modules declare their surfaces (clash exempt: state-managed).
+- **`aibox <module> config`** — list (values + masked secrets + defaults +
+  apply hint) / `get KEY` (script-friendly plaintext) / `set KEY VALUE`
+  (writes the store; interactively offers the apply, non-interactive prints
+  the command) / `unset KEY` (back to the declared default).
+  `aibox <module> --help` renders the config keys table (offline, local-first
+  — same mechanism as the action table).
+- **Stores per module type** (no new formats): compose → `.env`;
+  service-defined (pi-web) → plist/unit `EnvironmentVariables` with
+  regeneration via the single writer (`write_service`) and runtime key-name
+  mapping (PI_WEB_BIND → PI_WEB_HOSTNAME); CLI (windmill) → `/etc/<m>/<m>.conf`;
+  openmaic keeps its CLI's native config action. Shared helpers in
+  `tools/_shared/common.sh` (cfg_kv_get/set/unset, cfg_env_declare,
+  cfg_secret_p/mask, cfg_action — a compose module's config action is one call).
+- **pi-web restart FIXED to honor its documented "applies config changes"**:
+  bootout + bootstrap RE-READS the service definition (the old kickstart -k
+  only restarted the process with the already-loaded definition — config
+  changes silently did not apply).
+- **Validator S17d**: env format ERROR; README ↔ env: bidirectional drift
+  WARN (the discoverability gap this closes); declared-key-referenced-in-code
+  WARN. Scaffolder emits the env: TODO skeleton.
+- 11 new tests: kv helpers (mode/comments/order preserved, idempotent),
+  declaration parsing, masking, the generic action, --help rendering,
+  validator rules, pi-web plist roundtrip + key mapping, restart re-read.
+
+Module bumps: base 1.3.4, clash —, dify 1.18.4, gitlab 1.3.5, new-api 1.1.3,
+openmaic 1.2.3, pi-web 1.3.5, windmill 1.3.3, xiaozhi 1.1.4.
+
 ### Fixed — pi-web dashboard crashed with `SERVICE_ID: unbound variable` after update
 
 Live-caught (module 1.3.2): `aibox pi-web dashboard` died at lib.sh line 590 —

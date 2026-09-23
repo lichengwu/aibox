@@ -2877,6 +2877,36 @@ cmd_dashboard_detail() {
 # Read one action's usage line from the per-module module.yaml (the `usage:`
 # map stanza). Cache (installed modules) → in-process registry vars (load_registry
 # already ran — file:// or remote) → registry cache file. Empty → bare action list.
+# env: declaration for the help view — "KEY\tdefault\tdesc\tflags" lines.
+# Cache module.yaml first (installed modules — offline); registry vars fallback
+# (load_registry already ran when the cache is missing). Same local-first shape
+# as _module_usage_local. NOTE: the manager is the single-file CLI — it does
+# NOT source tools/_shared/common.sh, so this is the same parser inline.
+_module_env_local() { # $1=module
+  local f="$AIBOX_MOD_DIR/$1/module.yaml" mu var k v def rest flags desc
+  if [ -f "$f" ]; then
+    sed -n '/^env:/,/^[a-zA-Z]/p' "$f" | sed -n 's/^  \([A-Z_][A-Z0-9_]*\): *"\([^"]*\)".*/\1\t\2/p' 2>/dev/null | while IFS="$(printf '\t')" read -r k v; do
+      def="${v%% —*}"; [ "${def}" = "${v}" ] && def="${v%%—*}"
+      rest="${v#* —}"; [ "${rest}" = "${v}" ] && rest="${v}"
+      flags=""; case "${v}" in *"["*"]"*) flags="$(printf '%s' "${v}" | sed -n 's/.*\[\([^]]*\)\].*/\1/p')" ;; esac
+      desc="${rest%%\[*}"
+      printf '%s\t%s\t%s\t%s\n' "${k}" "${def}" "$(printf '%s' "${desc}" | sed 's/^ *//; s/ *$//')" "${flags}"
+    done
+    return 0
+  fi
+  mu="${1//-/_}"
+  for var in $(compgen -v 2>/dev/null | grep "^AIBOX_MODULE_${mu}_env_" || true); do
+    k="${var#AIBOX_MODULE_${mu}_env_}"
+    eval "v=\"\${${var}}\"" 2>/dev/null || v=""
+    def="${v%% —*}"; [ "${def}" = "${v}" ] && def="${v%%—*}"
+    rest="${v#* —}"; [ "${rest}" = "${v}" ] && rest="${v}"
+    flags=""; case "${v}" in *"["*"]"*) flags="$(printf '%s' "${v}" | sed -n 's/.*\[\([^]]*\)\].*/\1/p')" ;; esac
+    desc="${rest%%\[*}"
+    printf '%s\t%s\t%s\t%s\n' "${k}" "${def}" "$(printf '%s' "${desc}" | sed 's/^ *//; s/ *$//')" "${flags}"
+  done
+  return 0
+}
+
 _module_usage_local() { # $1=module $2=action
   local f v mu act
   f="$AIBOX_MOD_DIR/$1/module.yaml"
@@ -2924,6 +2954,21 @@ cmd_module_help() {
       else
         printf '  %-24s\n' "${act}"
       fi
+    done
+  fi
+  # config keys: the env: declaration (spec §Configuration) — same local-first
+  # source as the action table. Secrets are marked; `config` masks their values.
+  local envdecl ek ed ef efl
+  envdecl="$(_module_env_local "${name}")"
+  if [ -n "${envdecl}" ]; then
+    echo
+    info "config:  aibox ${name} config [get|set|unset]"
+    printf '  %-22s %-14s %s\n' "${C_DIM}KEY${C_RST}" "${C_DIM}default${C_RST}" "${C_DIM}description${C_RST}"
+    printf '%s\n' "${envdecl}" | while IFS="$(printf '\t')" read -r ek ed ef efl; do
+      [ -n "${ek}" ] || continue
+      case " ${efl} " in *" knob "*) continue ;; esac
+      [ -n "${efl}" ] && ef="${ef} [${efl}]"
+      printf '  %-22s %-14s %s\n' "${ek}" "${ed}" "${ef}"
     done
   fi
   echo

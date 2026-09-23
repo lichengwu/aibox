@@ -17,7 +17,16 @@ restart)
   ;;
 # dashboard is an alias of status (merged 2026-09: one "show state" verb —
 # operational facts + the rich view; the manager-level aibox dashboard stays separate)
-status|dashboard)
+# config: base.env is the store (spec §Configuration). set offers the apply
+# (restart recreates the containers; consuming modules re-read base.env at
+# their next start).
+config)
+  CFG_YAML="${DIR}/module.yaml" \
+  CFG_STORE="${ENV_FILE}" \
+  CFG_APPLY="aibox base restart" \
+  cfg_action "$@"
+  ;;
+status | dashboard)
   cmd_status
   render_dashboard
   ;;

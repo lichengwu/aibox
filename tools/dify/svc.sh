@@ -52,7 +52,10 @@ restart)
   waited=0
   timeout_s="${DIFY_START_TIMEOUT:-300}"
   while [ "${waited}" -lt "${timeout_s}" ]; do
-    if http_up "${port}"; then ok "dify is up: http://127.0.0.1:${port}"; exit 0; fi
+    if http_up "${port}"; then
+      ok "dify is up: http://127.0.0.1:${port}"
+      exit 0
+    fi
     sleep 10
     waited=$((waited + 10))
   done
@@ -61,7 +64,15 @@ restart)
   ;;
 # dashboard is an alias of status (merged 2026-09: one "show state" verb —
 # operational facts + the rich view; the manager-level aibox dashboard stays separate)
-status|dashboard)
+# config: the deploy .env is the store (spec §Configuration).
+config)
+  ROOT="$(deploy_root)"
+  CFG_YAML="${DIR}/module.yaml" \
+  CFG_STORE="${ROOT}/.env" \
+  CFG_APPLY="aibox dify restart" \
+  cfg_action "$@"
+  ;;
+status | dashboard)
   compose ps
   port="$(effective_port)"
   if containers_running 2>/dev/null; then

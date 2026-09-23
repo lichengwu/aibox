@@ -18,6 +18,15 @@ shift
 # Naming collision reminder: aibox's install installs the "module", while windmill's init/destroy
 # deploys/tears down Windmill itself. One word apart, worth a one-time reminder.
 case "${action}" in
+# config: /etc/windmill/windmill.conf is the store (spec §Configuration).
+# CLI-type module — applies at the NEXT invocation (no restart).
+config)
+  CFG_YAML="${DIR}/module.yaml" \
+  CFG_STORE="/etc/windmill/windmill.conf" \
+  CFG_APPLY="" \
+  cfg_action "$@"
+  exit $? # handled here — never falls through to the CLI dispatch
+  ;;
 init | destroy)
   warn "note: windmill ${action} here means 'deploy / tear down Windmill itself'"
   warn "      to install this module use: aibox install windmill"

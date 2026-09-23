@@ -146,7 +146,15 @@ restart)
   ;;
 # dashboard is an alias of status (merged 2026-09: one "show state" verb —
 # operational facts + the rich view; the manager-level aibox dashboard stays separate)
-status|dashboard)
+# config: the deploy .env is the store (spec §Configuration).
+config)
+  ROOT="$(deploy_root)"
+  CFG_YAML="${DIR}/module.yaml" \
+  CFG_STORE="${ROOT}/.env" \
+  CFG_APPLY="aibox xiaozhi restart" \
+  cfg_action "$@"
+  ;;
+status | dashboard)
   compose ps
   cport="$(effective_console_port)"
   wport="$(effective_ws_port)"

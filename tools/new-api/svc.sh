@@ -66,7 +66,10 @@ restart)
   waited=0
   timeout_s="${NEW_API_START_TIMEOUT:-120}"
   while [ "${waited}" -lt "${timeout_s}" ]; do
-    if api_up "${port}"; then ok "new-api is up: http://127.0.0.1:${port}"; exit 0; fi
+    if api_up "${port}"; then
+      ok "new-api is up: http://127.0.0.1:${port}"
+      exit 0
+    fi
     sleep 5
     waited=$((waited + 5))
   done
@@ -75,7 +78,17 @@ restart)
   ;;
 # dashboard is an alias of status (merged 2026-09: one "show state" verb —
 # operational facts + the rich view; the manager-level aibox dashboard stays separate)
-status|dashboard)
+# config: the deploy .env is the store (spec §Configuration). set offers the
+# apply (restart recreates containers with the new env).
+config)
+  load_env
+  ROOT="$(deploy_root)"
+  CFG_YAML="${DIR}/module.yaml" \
+  CFG_STORE="${ROOT}/.env" \
+  CFG_APPLY="aibox new-api restart" \
+  cfg_action "$@"
+  ;;
+status | dashboard)
   compose ps
   port="$(effective_port)"
   if container_running; then

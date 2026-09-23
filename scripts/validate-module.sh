@@ -462,6 +462,58 @@ validate_module() {
     esac
   fi
 
+  # --- S17d: env: declaration (config system; spec §Configuration) ---
+  # format: KEY: "default — description [flags]"; flags ∈ {secret, knob}
+  if grep -qE '^env:' "$f"; then
+    local envline ekey eval flags
+    while IFS= read -r envline; do
+      envline="$(printf '%s' "${envline}" | sed 's/^ *//; s/ *$//')"
+      [ -n "${envline}" ] || continue
+      case "${envline}" in
+      '#'*) continue ;; # TODO skeletons / commented examples
+      esac
+      if ! printf '%s' "${envline}" | grep -qE '^[A-Z_][A-Z0-9_]*: ".*"$'; then
+        err "env entry malformed (KEY: \"default — description [flags]\"): ${envline}"
+        continue
+      fi
+      ekey="${envline%%:*}"
+      eval="$(printf '%s' "${envline}" | sed 's/^[^:]*: *"//; s/"$//')"
+      case "${eval}" in
+      *" — "*) ;;
+      *) warn "env entry '${ekey}': value should carry a ' — ' separator (default — description)" ;;
+      esac
+      flags="$(printf '%s' "${eval}" | sed -n 's/.*\[\([^]]*\)\].*/\1/p')"
+      # " ${flags} " pads: empty flags → "  " (two spaces); flags may combine
+      case " ${flags} " in
+      "  " | *" secret "* | *" knob "*) ;;
+      *) warn "env entry '${ekey}': unknown flag(s) [${flags}] (valid: secret, knob)" ;;
+      esac
+      # every declared key must be referenced somewhere in the module (dead
+      # declarations drift from reality)
+      grep -rq "${ekey}" "$d" || warn "env key ${ekey} is never referenced in the module code"
+    done <<ENVLIST
+$(sed -n '/^env:/,/^[a-zA-Z]/p' "$f" | sed -n 's/^  //p' | grep -vE '^(env:)?$')
+ENVLIST
+    # README cross-check (bidirectional, exact names): the declaration is the
+    # CLI-discoverable surface; the README table is the documented one —
+    # they must not drift apart (the gap the config system closed)
+    if [ -f "$d/README.md" ]; then
+      local rdkey
+      while IFS= read -r ekey; do
+        [ -n "${ekey}" ] || continue
+        grep -qE "\`+${ekey}\`+" "$d/README.md" || warn "env key ${ekey} is declared but not documented in README.md"
+      done <<DECL
+$(sed -n '/^env:/,/^[a-zA-Z]/p' "$f" | grep -oE '^  [A-Z_][A-Z0-9_]*' | sed 's/^  //')
+DECL
+      while IFS= read -r rdkey; do
+        [ -n "${rdkey}" ] || continue
+        grep -qE "^  ${rdkey}:" "$f" || warn "README documents \`${rdkey}\` but module.yaml env: does not declare it (not CLI-discoverable: aibox ${m} --help)"
+      done <<READM
+$(grep -oE '^\| \`+[A-Z_][A-Z0-9_]+\`+' "$d/README.md" | sed -E 's/^\| \`+//; s/\`+$//' | sort -u)
+READM
+    fi
+  fi
+
   # --- S18: upstream links ---
   [ -n "$(module_field "$m" upstream_homepage)" ] || warn "upstream.homepage missing (dev-guide link)"
   [ -n "$(module_field "$m" upstream_docs)" ] || warn "upstream.docs missing (dev-guide link)"
