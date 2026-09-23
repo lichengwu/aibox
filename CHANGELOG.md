@@ -7,7 +7,17 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
-## [Unreleased]
+## [0.11.0] — 2026-09-23
+
+### Highlights
+
+- **Configuration system** — every module's config surface is now CLI-discoverable and settable:
+  `aibox <module> config [get|set|unset]` + `aibox <module> --help` renders the config keys table.
+- **Module-level `dashboard` merged into `status`** — one "show state" verb (facts + rich view).
+- **README rewritten to open-source standards** — badges, Features, CLI Grammar, and a dedicated
+  Ports & endpoints heads-up (aibox-deployed services don't use upstream default ports).
+- **clash download: verification-gated failover** — a mirror serving a corrupt body is discarded,
+  the next source is tried (previously: a valid gzip of the wrong thing killed the install).
 
 ### Added — configuration system (env: declaration + `config` action; spec §Configuration)
 
@@ -47,60 +57,68 @@ variables are install-time seeds only.
 Module bumps: base 1.3.4, clash —, dify 1.18.4, gitlab 1.3.5, new-api 1.1.3,
 openmaic 1.2.3, pi-web 1.3.5, windmill 1.3.3, xiaozhi 1.1.4.
 
-### Fixed — pi-web dashboard crashed with `SERVICE_ID: unbound variable` after update
-
-Live-caught (module 1.3.2): `aibox pi-web dashboard` died at lib.sh line 590 —
-the rich dashboard read a `SERVICE_ID` that was never assigned anywhere in the
-module. The real service name is `LABEL` ("pi-web", profile-derived pi-web-<n>).
-
-- Service state now queries `launchctl print gui/<uid>/<label>` (show_status's
-  proven shape; modern `launchctl list` prints a JSON-ish blob — its first
-  field is "{", not a PID) / `systemctl --user is-active <label>`.
-- `MODULE_VERSION` was also never set → the header showed a stale hardcoded
-  "1.2.1". It now reads the module.yaml sitting next to lib.sh (both layouts).
-- Regression test: render_dashboard under `set -euo pipefail` in a bare sandbox
-  (no plist, no unit, no listener) must degrade gracefully — the exact class
-  of the crash.
-
 ### Changed — module-level `dashboard` merged into `status` (one "show state" verb)
 
 Both actions rendered overlapping information (status = operational facts,
 dashboard = facts + structured extras) — a historical evolution artifact, not a
 meaningful distinction for users. Now: `aibox <module> status` shows the
-operational facts AND the rich view (containers, health, endpoints, credentials,
-port listeners); `dashboard` is an alias producing identical output (verified by
-test). All 7 compose/service modules converted (fall-through case); openmaic/
-windmill already mapped dashboard → their CLI's status. The manager-level
-`aibox dashboard` (fleet overview) and `aibox dashboard <module>` (detail) are
-unaffected — different scope.
+operational facts AND the rich view; `dashboard` is an alias producing identical
+output (verified by test). All 7 compose/service modules converted; openmaic/
+windmill already mapped dashboard → their CLI's status.
 
 ### Changed — README rewritten to open-source standards
 
 Badge header (release/license/CI/bash/platforms), nav links, Features section,
-Requirements, Quick Start, a **CLI Grammar** section (manager verbs vs module
-verbs, update ≠ upgrade), and a dedicated **Ports & endpoints** heads-up:
-aibox-deployed services use the internal port registry, not upstream defaults
-(new-api 30300 vs upstream 3000, GitLab 8929, dify 8088; profiles derive
-further) — find actuals via `aibox dashboard` / `aibox <module> status`.
-Advanced topics (proxy, source pools, module development, design tradeoffs)
+Requirements, Quick Start, CLI Grammar (manager verbs vs module verbs,
+update ≠ upgrade), and a dedicated **Ports & endpoints** heads-up: aibox-deployed
+services use the internal port registry, not upstream defaults (new-api 30300 vs
+upstream 3000, GitLab 8929, dify 8088; profiles derive further). Advanced topics
 folded into collapsible details. README.zh.md mirrors the structure.
 
-### Fixed — clash mihomo download: verification-gated failover (a bad mirror no longer kills the install)
+### Fixed — clash mihomo download: verification-gated failover
 
-Live-caught on a Linux host: `aibox install clash` took the "fast route" (the
-rate probe completed the whole file), `gunzip -t` passed, but the payload was
-not a runnable mihomo — the install died at the post-download `-v` check with
-"Downloaded binary won't run (arch mismatch?)" and never tried another source.
+Live-caught on a Linux host: the rate-probe winner's body completed and passed
+`gunzip -t`, but the payload was not a runnable mihomo — the install died at
+the post-download `-v` check with "arch mismatch?" and never tried another
+source. `_clash_verify_gz` (gzip integrity + payload runs `-v` + version pin)
+now gates acceptance INSIDE the source loop: bad complete body → discard + next
+source; incomplete gzip → resume seed.
 
-- `_clash_verify_gz`: gzip integrity + the payload EXECUTES `-v` + the output
-  carries the pinned version tag. Acceptance now happens INSIDE the source
-  loop: a verified-bad COMPLETE body is discarded and the next-ranked source
-  is tried; an INCOMPLETE gzip stays as a resumable partial (unchanged).
-- The final `-v` die keeps its role as a last-resort guard, now naming the
-  asset + host arch for diagnosis.
-- 5 new tests: 4 verification shapes (good / garbage-gzip / wrong-version /
-  truncated) + a two-source failover integration (bad winner → good runner-up
-  lands, both sources logged).
+### Fixed — pi-web: three latent bugs in the rich dashboard (all live-caught)
+
+1. `SERVICE_ID: unbound variable` — the variable was never assigned anywhere
+   in the module; the real service name is `LABEL`.
+2. `MODULE_VERSION` also never set → the header showed a stale hardcoded
+   "1.2.1"; now reads the module.yaml next to lib.sh.
+3. pipefail killed `render_dashboard` when no service exists (launchctl exit 1
+   rides the pipeline into the assignment; errexit kills the function).
+   `|| true` neutralizes; verified with a fake exit-1 launchctl.
+
+Also fixed: pi-web `restart` now actually honors its documented "applies config
+changes" — bootout + bootstrap RE-READS the service definition (the old
+kickstart -k only restarted the process with the already-loaded definition).
+
+### Fixed — validator: BSD/GNU platform divergences (two new pitfall-class discoveries)
+
+- **`\`` (backslash-backtick) in single-quoted grep ERE**: escaped backtick
+  on BSD grep (matches), literal backslash+backtick on GNU (matches nothing) —
+  the README↔env: drift WARN silently never fired on Linux.
+- **GNU sed `\`` anchor trap**:`\`` is the start-of-pattern-space anchor
+  (zero-width); a `+` quantifier on it → "Invalid preceding regular expression".
+
+### Fixed — code-review findings
+
+- pi-web Darwin branch: single `launchctl print` call (was two — a race window
+  and a wasted fork).
+- help config keys table: `%-28s` column width (was `%-22s`, overflowed on the
+  27-char `AIBOX_BASE_POSTGRES_PASSWORD`).
+- `cfg_env_declare`: one awk pass for key extraction + bash for value splitting
+  (was one sed fork per key; the 3-byte em-dash separator is a C-locale awk
+  byte/char counting divergence).
+
+Module bumps in this release: base 1.3.4, clash 1.3.4, dify 1.18.4,
+gitlab 1.3.5, new-api 1.1.3, openmaic 1.2.3, pi-web 1.3.5, windmill 1.3.3,
+xiaozhi 1.1.4.
 
 ## [0.10.2] — 2026-09-22
 
@@ -621,6 +639,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.11.0]: https://github.com/lichengwu/aibox/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/lichengwu/aibox/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/lichengwu/aibox/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/lichengwu/aibox/compare/v0.9.1...v0.10.0
