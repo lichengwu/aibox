@@ -2875,7 +2875,6 @@ cmd_dashboard_detail() {
   fi
   ver="$(_module_version_local "$name")"
   [ -n "${ver}" ] || ver="$(module_field "$name" version)"
-  printf '%s%s v%s%s\n' "$C_BOLD" "$name" "${ver:-\?}" "$C_RST"
   if ! is_installed "$name"; then
     warn "$name is not installed"
     hint="$(module_field "$name" dashboard_hint)"
@@ -2884,29 +2883,65 @@ cmd_dashboard_detail() {
     info "install: aibox install $name"
     return
   fi
-  local info endpoint cred logf health code
+  local info endpoint cred logf health state sym aver code ports entry port mark plist
   info="$(AIBOX_MODULE="$name" AIBOX_HOME="$AIBOX_HOME" bash -c ". '$AIBOX_MOD_DIR/$name/lib.sh' 2>/dev/null && dashboard_info 2>/dev/null || true" 2>/dev/null)"
+  aver="$(printf '%s\n' "$info" | sed -n 's/^version=//p' | head -1)"
+  aver="${aver#v}"
   endpoint=$(printf '%s\n' "$info" | sed -n 's/^endpoint=//p')
   cred=$(printf '%s\n' "$info" | sed -n 's/^credential=//p')
   logf=$(printf '%s\n' "$info" | sed -n 's/^log=//p')
   health=$(printf '%s\n' "$info" | sed -n 's/^health=//p')
-  ok "installed"
-  [ -n "$endpoint" ] && log "endpoint:  $endpoint"
-  [ -n "$cred" ]    && log "auth:      $cred"
-  [ -n "$logf" ]    && log "log:       $logf"
-  if [ -n "$endpoint" ]; then
-    case "$endpoint" in
-      http://*|https://*)
-        code=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "$endpoint" 2>/dev/null) || code="000"
-        [ -n "$code" ] || code="000"
-        case "$code" in
-          200|204|301|302|307|308|401) ok "health: HTTP $code" ;;
-          000) bad "unreachable" ;;
-          *) warn "HTTP $code" ;;
-        esac ;;
-      *) [ -n "$health" ] && log "probe:     $health" ;;
-    esac
+  state="$(printf '%s\n' "$info" | sed -n 's/^state=//p' | head -1)"
+  # keyline header (spec §Dashboard template): name + app version (dim
+  # module-version fallback) + state word; then the rule
+  sym=""
+  case "${state}" in
+  ok)       sym="${C_GRN}✓ ok${C_RST}" ;;
+  starting) sym="${C_YEL}⚠ starting${C_RST}" ;;
+  stopped)  sym="${C_DIM}○ stopped${C_RST}" ;;
+  esac
+  printf '%s%s%s' "$C_BOLD" "$name" "$C_RST"
+  if [ -n "$aver" ]; then
+    printf ' %s%s%s' "$C_CYA" "$aver" "$C_RST"
+  else
+    printf ' %s%s%s' "$C_DIM" "${ver:-\?}" "$C_RST"
   fi
+  [ -n "$sym" ] && printf ' %s·%s %s' "$C_DIM" "$C_RST" "$sym"
+  printf '\n'
+  _dash_rule_line
+  # endpoint row: live HTTP probe verdict merged (same 3s curl the old view
+  # ran — local-first holds); non-http endpoints use the module's health=
+  if [ -n "$endpoint" ]; then
+    local verdict=""
+    case "$endpoint" in
+    http://*|https://*)
+      code=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "$endpoint" 2>/dev/null) || code="000"
+      [ -n "$code" ] || code="000"
+      case "$code" in
+      200|204|301|302|307|308|401) verdict=" ${C_DIM}·${C_RST} ${C_GRN}✓${C_RST} HTTP $code" ;;
+      000) verdict=" ${C_DIM}(unreachable)${C_RST}" ;;
+      *) verdict=" ${C_DIM}·${C_RST} HTTP $code" ;;
+      esac ;;
+    *) [ -n "$health" ] && verdict=" ${C_DIM}·${C_RST} $health" ;;
+    esac
+    printf '  %s%-10s%s %s%s\n' "$C_DIM" "endpoint" "$C_RST" "$endpoint" "$verdict"
+  elif [ -n "$health" ]; then
+    printf '  %s%-10s%s %s\n' "$C_DIM" "health" "$C_RST" "$health"
+  fi
+  [ -n "$cred" ] && printf '  %s%-10s%s %s\n' "$C_DIM" "auth" "$C_RST" "$cred"
+  [ -n "$logf" ] && printf '  %s%-10s%s %s\n' "$C_DIM" "log" "$C_RST" "$logf"
+  # ports from LOCAL metadata + listen marks
+  plist=""
+  ports="$(_module_meta_local "$name" ports)"
+  if [ -n "$ports" ]; then
+    for entry in ${ports}; do
+      port="${entry%%/*}"
+      if _port_is_listening "${port}"; then mark="${C_GRN}✓${C_RST}"; else mark="${C_DIM}—${C_RST}"; fi
+      plist="${plist:+${plist}  }${entry} ${mark}"
+    done
+    printf '  %s%-10s%s %s\n' "$C_DIM" "ports" "$C_RST" "$plist"
+  fi
+  printf '  %s%-10s %s · %s%s\n' "$C_DIM" "module" "${ver:-\?}" "$AIBOX_MOD_DIR/$name/" "$C_RST"
 }
 
 # Print a module dev guide (upstream links + DEVELOPMENT.md path), read from module.yaml upstream.

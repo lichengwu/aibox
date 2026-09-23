@@ -119,9 +119,12 @@ EOF
     >"$AIBOX_HOME/modules/base/lib.sh"
   run bash "$REPO_ROOT/bin/aibox" dashboard base
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [[ "$output" == *"base v1.2.1"* ]]
-  [[ "$output" == *"installed"* ]]
-  [[ "$output" != *"Failed to fetch module list"* ]]
+  # keyline: dim module-version fallback (no version= in this mock), rule,
+  # health merged into the endpoint row, sunk module row
+  [[ "$output" == *"base 1.2.1"* ]] || false
+  [[ "$output" == *"pg://127.0.0.1:35432 · ok"* ]] || false
+  [[ "$output" == *"module"*"1.2.1 · "*"modules/base/"* ]] || false
+  [[ "$output" != *"Failed to fetch module list"* ]] || false
 }
 
 @test "proxy check <url> = single-target mode; no proxy configured → clear die" {
