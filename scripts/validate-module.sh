@@ -448,6 +448,18 @@ validate_module() {
     [ -n "$missing" ] && warn "actions without usage: entries (aibox <module> --help renders bare action names): ${missing}"
   fi
 
+  # --- S18: dashboard keyline template (rich views use the shared header) ---
+  if printf '%s\n' $acts | grep -qx dashboard && [ -f "$d/lib.sh" ] && grep -q 'render_dashboard()' "$d/lib.sh"; then
+    grep -q 'dash_header' "$d/lib.sh" ||
+      warn "render_dashboard must render via dash_header (spec §Dashboard template)"
+  fi
+
+  # --- S19: dashboard_info must report the app version ---
+  if [ -f "$d/lib.sh" ] && grep -q 'dashboard_info()' "$d/lib.sh"; then
+    sed -n '/dashboard_info()/,/^}/p' "$d/lib.sh" | grep -q 'version=' ||
+      warn "dashboard_info must report the deployed app version (version=…; spec §Dashboard template)"
+  fi
+
   # --- S17c: shared-library includes — entry resolves to tools/_shared/<inc>.sh;
   # docker_images consumers MUST include common (the pool code lives there) ---
   local inc incs

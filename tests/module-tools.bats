@@ -124,3 +124,28 @@ actions:\
   [ "$status" -eq 0 ] || echo "$output"
   [[ "$output" == *"PASS: 0 error(s)"* ]]
 }
+
+@test "scaffold: lib.sh ships the keyline template skeleton" {
+  run bash "$REPO_ROOT/scripts/new-module.sh" tmplmod --desc "T" --out "$OUT"
+  [ "$status" -eq 0 ] || echo "$output"
+  grep -q 'app_version()' "$OUT/tmplmod/lib.sh" || false
+  grep -q 'dash_header' "$OUT/tmplmod/lib.sh" || false
+  sed -n '/dashboard_info()/,/^}/p' "$OUT/tmplmod/lib.sh" | grep -q 'version=' || false
+  grep -q 'render_dashboard' "$OUT/tmplmod/svc.sh" || false
+}
+
+@test "validator: S18 — dashboard action whose render_dashboard skips dash_header WARNs" {
+  bash "$REPO_ROOT/scripts/new-module.sh" s18mod --desc "T" --out "$OUT" >/dev/null 2>&1
+  printf 'render_dashboard() { printf "custom view\\n"; }\n' >"$OUT/s18mod/lib.sh"
+  run env VALIDATE_TOOLS_DIR="$OUT" bash "$REPO_ROOT/scripts/validate-module.sh" s18mod
+  [ "$status" -eq 0 ] || echo "$output"        # WARN, not ERROR
+  [[ "$output" == *"dash_header"* ]] || false
+}
+
+@test "validator: S19 — dashboard_info without version= WARNs" {
+  bash "$REPO_ROOT/scripts/new-module.sh" s19mod --desc "T" --out "$OUT" >/dev/null 2>&1
+  printf 'dashboard_info() { echo "endpoint=http://x"; }\n' >"$OUT/s19mod/lib.sh"
+  run env VALIDATE_TOOLS_DIR="$OUT" bash "$REPO_ROOT/scripts/validate-module.sh" s19mod
+  [ "$status" -eq 0 ] || echo "$output"        # WARN, not ERROR
+  [[ "$output" == *"version="* ]] || false
+}

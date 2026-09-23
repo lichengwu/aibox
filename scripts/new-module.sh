@@ -118,6 +118,7 @@ actions:
   - stop
   - restart
   - status
+  - dashboard
   - logs
 
 # Shared-library include: repo tools/_shared/common.sh (output helpers
@@ -185,6 +186,7 @@ hooks:
 # CLI-dispatch style (like openmaic/windmill): list the passthrough actions.
 actions:
   - status
+  - dashboard
 
 # Shared-library include: repo tools/_shared/common.sh (output helpers
 # log/warn/ok/info/die + the docker.io download pool) ships into the module
@@ -204,6 +206,7 @@ env:
 # table. The validator WARNs when a declared action has no usage entry.
 usage:
   status: "TODO what status shows"
+  dashboard: "TODO module-owned rich view (see lib.sh render_dashboard)"
 
 upstream:
   homepage: https://example.com/TODO
@@ -241,6 +244,43 @@ deploy_root() {
   root="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}"
   [ -n "$root" ] || die "cannot determine deploy root: HOME and AIBOX_HOME are both empty"
   printf '%s' "$root/apps/$MODULE_NAME"
+}
+
+# Module version — read from module.yaml next to this lib (cache and repo
+# layouts agree; empty on a missing file → callers fall back to dim ?).
+MODULE_VERSION="$(sed -n 's/^version:[[:space:]]*//p' "$(dirname "${BASH_SOURCE[0]}")/module.yaml" 2>/dev/null | head -1 || true)"
+
+# ---------- dashboard (keyline template; spec §Dashboard template) ----------
+# App version = the DEPLOYED software's version (npm package / image tag /
+# kernel tag — whatever THIS module manages). Empty when not locally knowable.
+app_version() {
+  # TODO: report the deployed app version, e.g.
+  #   npm ls -g <pkg> --depth=0 | grep -oE '<pkg>@[0-9][0-9A-Za-z.-]*' | head -1 | sed 's/.*@//'
+  #   docker inspect -f '{{.Config.Image}}' <container> 2>/dev/null | ...
+  printf ''
+}
+
+# Dashboard interface (machine-readable; the manager's overview + detail views
+# render it). version= is the app version (validator S19 WARNs without it).
+dashboard_info() {
+  local v
+  v="$(app_version)"
+  [ -n "${v}" ] && echo "version=${v}"
+  echo "endpoint=http://127.0.0.1:TODO_PORT"
+  # state= contract: ok / starting / stopped / na
+  echo "state=stopped"
+  echo "health=TODO probe verdict (one line)"
+}
+
+# The module's rich view (aibox __NAME__ dashboard) — keyline via the shared
+# helpers (_common.sh ships them; spec §Dashboard template).
+render_dashboard() {
+  local v
+  v="$(app_version)"
+  dash_header "__NAME__" "${v}" "stopped"
+  dash_row "endpoint" "http://127.0.0.1:TODO_PORT"
+  dash_row "health" "TODO probe verdict"
+  dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-${HOME:-~}/.aibox}/modules/__NAME__/"
 }
 EOF
 
@@ -335,6 +375,9 @@ case "$action" in
     ;;
   status)
     docker compose ps
+    ;;
+  dashboard)
+    render_dashboard
     ;;
   logs)
     docker compose logs --tail 100 "$@"
