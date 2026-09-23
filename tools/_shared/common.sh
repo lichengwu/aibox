@@ -19,6 +19,78 @@ die() {
   exit 1
 }
 
+# ---------- dashboard keyline template (spec §Dashboard template) ----------
+# Shared render helpers for module-owned rich views (render_dashboard); the
+# manager (bin/aibox, a single-file CLI that cannot source this file) inlines
+# the SAME shapes — keep them in sync via the spec. Plain (NO_COLOR) shapes:
+#   <name> <appver> · ✓ running
+#   ─────────────────────────────────────────────────────────────────
+#     service    launchd · pid 38243
+#     module     1.3.5 · ~/.aibox/modules/<name>/        (whole row dim)
+# Colors inherit aibox's exported C_* (empty standalone → plain). Rule width:
+# TTY → tput cols clamped [40,72]; non-TTY → 64 (pipes/tests get a stable
+# shape). Rules repeat COMPLETE ─ literals — never sliced (pitfall #6).
+
+_dash_width() { # prints the rule width for this context
+  local w=64
+  if [ -t 1 ] 2>/dev/null && command -v tput >/dev/null 2>&1; then
+    w="$(tput cols 2>/dev/null || echo 64)"
+    case "${w}" in '' | *[!0-9]*) w=64 ;; esac
+    [ "${w}" -lt 40 ] && w=40
+    [ "${w}" -gt 72 ] && w=72
+  fi
+  printf '%s' "${w}"
+}
+
+_dash_rule_n() { # $1=count → that many complete ─ literals
+  local i=0
+  while [ "${i}" -lt "${1}" ]; do
+    printf '─'
+    i=$(( i + 1 ))
+  done
+}
+
+dash_rule() { # the dim horizontal rule
+  printf '%s%s%s\n' "${C_DIM:-}" "$(_dash_rule_n "$(_dash_width)")" "${C_RST:-}"
+}
+
+# state word → colored "<icon> <word>" segment; empty for na/unknown words
+_dash_state_seg() { # $1=state word (ok|running|starting|stopped|na|"")
+  case "${1:-}" in
+  ok | running) printf '%s✓ %s%s' "${C_GRN:-}" "${1}" "${C_RST:-}" ;;
+  starting) printf '%s⚠ %s%s' "${C_YEL:-}" "${1}" "${C_RST:-}" ;;
+  stopped) printf '%s○ %s%s' "${C_DIM:-}" "${1}" "${C_RST:-}" ;;
+  *) printf '' ;;
+  esac
+}
+
+dash_header() { # $1=name $2=app_version (""=omit) $3=state word (see _dash_state_seg)
+  local seg
+  printf '%s%s%s' "${C_BOLD:-}" "${1}" "${C_RST:-}"
+  [ -n "${2}" ] && printf ' %s%s%s' "${C_CYA:-}" "${2}" "${C_RST:-}"
+  seg="$(_dash_state_seg "${3:-}")"
+  [ -n "${seg}" ] && printf ' %s·%s %s' "${C_DIM:-}" "${C_RST:-}" "${seg}"
+  printf '\n'
+  dash_rule
+}
+
+dash_row() { # $1=label (ASCII, ≤10 chars) $2=value (verbatim; may embed color spans)
+  printf '  %s%-10s%s %s\n' "${C_DIM:-}" "${1}" "${C_RST:-}" "${2}"
+}
+
+dash_module_row() { # $1=module_version $2=module_dir — sunk, whole row dim
+  printf '  %s%-10s %s · %s%s\n' "${C_DIM:-}" "module" "${1:-\?}" "${2:-}" "${C_RST:-}"
+}
+
+dash_secheader() { # $1=title (ASCII) → "── title ───…" to the rule width
+  local n
+  n=$(( $(_dash_width) - ${#1} - 6 ))
+  [ "${n}" -lt 3 ] && n=3
+  printf '%s%s── %s%s%s %s%s%s\n' \
+    "${C_DIM:-}" "" "${C_BOLD:-}${C_CYA:-}" "${1}" "${C_RST:-}" \
+    "${C_DIM:-}" "$(_dash_rule_n "${n}")" "${C_RST:-}"
+}
+
 # ---------- docker.io download source pool (pull-via-mirror + tag) ----------
 # Compose images are pulled by the docker DAEMON — whose egress differs from
 # the host's (spec §Preflight: host-curl probes of docker.io are unreliable;
