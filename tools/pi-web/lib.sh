@@ -3,6 +3,10 @@
 
 LABEL="pi-web"
 OLD_LABELS=("com.agegr.pi-web")
+# Module version for display headers — read from module.yaml next to this lib
+# (both layouts agree: cache modules/pi-web/, repo tools/pi-web/). Empty on a
+# missing file → callers fall back to their dim placeholder.
+MODULE_VERSION="$(sed -n 's/^version:[[:space:]]*//p' "$(dirname "${BASH_SOURCE[0]}")/module.yaml" 2>/dev/null | head -1 || true)"
 OS_KIND="$(uname -s)"
 if [ "$OS_KIND" = "Darwin" ]; then
   PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
@@ -582,19 +586,25 @@ dashboard_info() {
 # ---------- dashboard (the module's rich view) ----------
 render_dashboard() {
   resolve_password
-  printf '%s%spi-web%s %s· module %s%s\n' "${C_BOLD:-}" "" "${C_RST:-}" "${C_DIM:-}" "${MODULE_VERSION:-1.2.1}" "${C_RST:-}"
-  # service state (platform-native)
-  local svc_state=""
+  printf '%s%spi-web%s %s· module %s%s\n' "${C_BOLD:-}" "" "${C_RST:-}" "${C_DIM:-}" "${MODULE_VERSION:-\?}" "${C_RST:-}"
+  # service state (platform-native) — LABEL, the module's real service name
+  # (profile-scoped deploys derive it: pi-web-<n>). The pre-2026-09 code read a
+  # SERVICE_ID that was never assigned anywhere → unbound variable under set -u
+  # the moment render_dashboard ran (live-caught after update to module 1.3.2).
+  local svc_state="" _pid
   case "$(uname -s)" in
   Darwin)
-    if launchctl list "${SERVICE_ID}" >/dev/null 2>&1; then
-      svc_state="$(launchctl list "${SERVICE_ID}" 2>/dev/null | awk '{print "pid " $1}')"
+    # launchctl print (the show_status-proven query; modern launchctl list
+    # prints a JSON-ish blob whose first field is "{" — not a PID table)
+    _pid="$(launchctl print "gui/${UID_}/${LABEL}" 2>/dev/null | awk '/^[[:space:]]*pid[[:space:]]*=/{print $3; exit}')"
+    if launchctl print "gui/${UID_}/${LABEL}" 2>/dev/null | grep -qE 'state[[:space:]]*=[[:space:]]*running'; then
+      svc_state="running${_pid:+ (pid ${_pid})}"
     else
-      svc_state="not loaded (aibox pi-web start)"
+      svc_state="not running (aibox pi-web start)"
     fi
     ;;
   *)
-    systemctl --user is-active "${SERVICE_ID}" >/dev/null 2>&1 && svc_state="active" || svc_state="inactive (aibox pi-web start)"
+    systemctl --user is-active "${LABEL}" >/dev/null 2>&1 && svc_state="active" || svc_state="inactive (aibox pi-web start)"
     ;;
   esac
   printf '  %s%-9s %s\n' "${C_DIM:-}" "service:" "${svc_state}"

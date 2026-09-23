@@ -9,6 +9,21 @@ GitHub release notes are auto-generated from the previous tag; this file is the 
 
 ## [Unreleased]
 
+### Fixed — pi-web dashboard crashed with `SERVICE_ID: unbound variable` after update
+
+Live-caught (module 1.3.2): `aibox pi-web dashboard` died at lib.sh line 590 —
+the rich dashboard read a `SERVICE_ID` that was never assigned anywhere in the
+module. The real service name is `LABEL` ("pi-web", profile-derived pi-web-<n>).
+
+- Service state now queries `launchctl print gui/<uid>/<label>` (show_status's
+  proven shape; modern `launchctl list` prints a JSON-ish blob — its first
+  field is "{", not a PID) / `systemctl --user is-active <label>`.
+- `MODULE_VERSION` was also never set → the header showed a stale hardcoded
+  "1.2.1". It now reads the module.yaml sitting next to lib.sh (both layouts).
+- Regression test: render_dashboard under `set -euo pipefail` in a bare sandbox
+  (no plist, no unit, no listener) must degrade gracefully — the exact class
+  of the crash.
+
 ### Changed — module-level `dashboard` merged into `status` (one "show state" verb)
 
 Both actions rendered overlapping information (status = operational facts,

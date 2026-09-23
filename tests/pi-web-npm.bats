@@ -197,3 +197,27 @@ teardown() {
   # The explanatory comment legitimately mentions npmjs — parse the block, not the file.
   ! awk '/^  domains:/{f=1;next} /^  [a-z_]+:/{f=0} f' "$REPO_ROOT/tools/pi-web/module.yaml" | grep -q "registry.npmjs.org"
 }
+
+@test "render_dashboard: no unbound variables under set -u (the SERVICE_ID crash)" {
+  # live-caught: after update to module 1.3.2, `aibox pi-web dashboard` died at
+  # lib.sh line 590 — SERVICE_ID was never assigned anywhere in the module.
+  # render_dashboard must degrade gracefully with NO deployment at all
+  # (fresh sandbox HOME: no plist, no unit, no listener → HTTP 000 path).
+  local sb
+  sb="$(mktemp -d)"
+  run bash -c "set -euo pipefail; HOME='$sb'; . '$REPO_ROOT/tools/pi-web/lib.sh'; render_dashboard"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"pi-web · module"* ]]                       # header renders
+  [[ "$output" == *"service:"*"not running"* ]]                # degraded, not crashed
+  [[ "$output" == *"app:"*"http://127.0.0.1:"* ]]              # endpoint line
+  rm -rf "$sb"
+}
+
+@test "render_dashboard: service state via the label (running service detected)" {
+  # only meaningful where a pi-web launchd service actually runs (the dev
+  # machine); CI skips — the unbound-variable guard is the portable part above
+  launchctl print "gui/$(id -u)/pi-web" >/dev/null 2>&1 || skip "no local pi-web service"
+  run bash -c ". '$REPO_ROOT/tools/pi-web/lib.sh'; render_dashboard"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"service:  running (pid "* ]]
+}
