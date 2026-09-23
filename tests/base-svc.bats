@@ -77,3 +77,11 @@ teardown() {
   [ "$status" -eq "$st_rc" ]
   [ "$output" = "$st_out" ]
 }
+
+@test "render_dashboard: keyline header + module row with no docker" {
+  run bash -c ". '$REPO_ROOT/tools/base/lib.sh'; PATH=/usr/bin:/bin; render_dashboard"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" != *"· module"* ]] || false
+  [[ "$output" == *"base"* ]] || false
+  [[ "$output" == *"module"*"·"*"modules/base/"* ]] || false
+}

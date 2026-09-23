@@ -10,6 +10,9 @@
 
 export CLI_NAME="clash"
 KERNEL_NAME="mihomo"
+# Module version — read from module.yaml next to this lib (cache and repo
+# layouts agree; empty on a missing file → callers fall back to dim ?).
+MODULE_VERSION="$(sed -n 's/^version:[[:space:]]*//p' "$(dirname "${BASH_SOURCE[0]}")/module.yaml" 2>/dev/null | head -1 || true)"
 
 # mihomo binary location
 CLASH_BIN_DIR="${CLASH_BIN_DIR:-${AIBOX_BIN_DIR:-${HOME}/.local/bin}}"
@@ -559,28 +562,41 @@ _nodes_lines() { # → "delay|alive|name" lines, sorted by delay (dead last)
 # Render the module dashboard (invoked by `aibox clash dashboard`).
 render_dashboard() {
   state_load
-  local mode="${CLASH_MODE:-internal}" egress_port="${CLASH_PORT:-7890}"
+  local mode="${CLASH_MODE:-internal}" egress_port="${CLASH_PORT:-7890}" aver state
   [ "${mode}" = "external" ] && egress_port="${CLASH_EXT_PORT:-${CLASH_PORT}}"
-  printf '%s%s clash%s %s· %s mode%s\n' "${C_BOLD:-}" "" "${C_RST:-}" "${C_DIM:-}" "${mode}" "${C_RST:-}"
+  if [ "${mode}" = "internal" ]; then
+    aver="mihomo v${KERNEL_TAG:-unknown}"
+    if kernel_running; then
+      state="ok"
+    else
+      state="stopped"
+    fi
+  else
+    aver=""
+    state=""
+  fi
+  dash_header "clash" "${aver}" "${state}"
 
   # --- state rows ---
   if [ "${mode}" = "external" ]; then
     local ext="$(detect_external_clash | head -1)" app="clash kernel"
     [ -n "${ext}" ] && app="$(ext_app_name "${ext#*\t}")"
-    printf '  %s%-9s %s (external clash client — node control via its own app)\n' "${C_DIM:-}" "kernel:" "${app} on 127.0.0.1:${egress_port}"
+    dash_row "kernel" "${app} on 127.0.0.1:${egress_port} (external clash client — node control via its own app)"
   elif kernel_running; then
-    printf '  %s%-9s mihomo v%s · pid %s\n' "${C_DIM:-}" "kernel:" "${KERNEL_TAG:-unknown}" "$(cat "$(pid_file)" 2>/dev/null)"
+    dash_row "kernel" "mihomo v${KERNEL_TAG:-unknown} ${C_DIM:-}·${C_RST:-} pid $(cat "$(pid_file)" 2>/dev/null)"
   else
-    printf '  %s%-9s %snot running (aibox clash on)%s\n' "${C_DIM:-}" "kernel:" "${C_YEL:-}" "${C_RST:-}"
+    dash_row "kernel" "${C_YEL:-}not running (aibox clash on)${C_RST:-}"
   fi
-  printf '  %s%-9s 127.0.0.1:%s\n' "${C_DIM:-}" "egress:" "${egress_port}"
-  [ "${mode}" = "internal" ] && printf '  %s%-9s 127.0.0.1:%s (secret %s)\n' "${C_DIM:-}" "api:" "${CLASH_API_PORT}" "$([ -n "${CLASH_SECRET}" ] && printf 'set' || printf 'unset')"
+  dash_row "egress" "127.0.0.1:${egress_port}"
+  if [ "${mode}" = "internal" ]; then
+    dash_row "api" "127.0.0.1:${CLASH_API_PORT} (secret $([ -n "${CLASH_SECRET}" ] && printf 'set' || printf 'unset'))"
+  fi
   if [ -n "${SUB_URL:-}" ]; then
     local host="${SUB_URL#*://}"
     host="${host%%/*}"
-    printf '  %s%-9s %s · refreshed %s\n' "${C_DIM:-}" "sub:" "${host}" "$([ -n "${LAST_REFRESH:-}" ] && [ "${LAST_REFRESH}" != "0" ] && date -r "${LAST_REFRESH}" '+%Y-%m-%d %H:%M' 2>/dev/null || echo 'never')"
+    dash_row "sub" "${host} ${C_DIM:-}·${C_RST:-} refreshed $([ -n "${LAST_REFRESH:-}" ] && [ "${LAST_REFRESH}" != "0" ] && date -r "${LAST_REFRESH}" '+%Y-%m-%d %H:%M' 2>/dev/null || echo 'never')"
   else
-    printf '  %s%-9s %snone (aibox clash set <subscription-url>)%s\n' "${C_DIM:-}" "sub:" "${C_YEL:-}" "${C_RST:-}"
+    dash_row "sub" "${C_YEL:-}none (aibox clash set <subscription-url>)${C_RST:-}"
   fi
 
   # --- nodes (internal mode only — external mode has no API access) ---
@@ -623,6 +639,7 @@ NODES2
     echo
     printf '  %snode list unavailable in external mode (managed by the clash app itself)\n' "${C_DIM:-}"
   fi
+  dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/clash/"
 }
 
 # Have mihomo immediately fetch the subscription (skip cache).
@@ -712,6 +729,11 @@ probe_via_clash() {
 # Dashboard interface (called by `aibox dashboard`): outputs endpoint/credential/log/health.
 dashboard_info() {
   state_load
+  # app version: the deployed mihomo kernel tag (internal mode only —
+  # external mode has no kernel of ours)
+  if [ "${CLASH_MODE:-internal}" = "internal" ] && [ -n "${KERNEL_TAG:-}" ]; then
+    echo "version=mihomo v${KERNEL_TAG}"
+  fi
   echo "endpoint=socks5://127.0.0.1:${CLASH_PORT}"
   echo "credential=API secret ${CLASH_SECRET:-unset}"
   echo "log=$(log_dir)/mihomo.log"

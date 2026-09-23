@@ -287,3 +287,13 @@ exit 0'
   grep -q "github.com" "$FAKE_CURL_LOG"
   grep -q "gh-proxy.com" "$FAKE_CURL_LOG"
 }
+
+@test "render_dashboard: keyline header degrades with no state file" {
+  local sb
+  sb="$(mktemp -d)"
+  run bash -c "HOME='$sb'; . '$REPO_ROOT/tools/clash/lib.sh'; render_dashboard"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" != *"· module"* ]] || false
+  [[ "$output" == *"module"*"·"*"modules/clash/"* ]] || false
+  rm -rf "$sb"
+}

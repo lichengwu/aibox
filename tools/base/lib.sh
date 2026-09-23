@@ -3,6 +3,9 @@
 # (<module> or <module>_<usage>).
 
 CLI_NAME="base"
+# Module version — read from module.yaml next to this lib (cache and repo
+# layouts agree; empty on a missing file → callers fall back to dim ?).
+MODULE_VERSION="$(sed -n 's/^version:[[:space:]]*//p' "$(dirname "${BASH_SOURCE[0]}")/module.yaml" 2>/dev/null | head -1 || true)"
 # Shared library (output helpers + docker.io pool): repo tools/_shared/common.sh,
 # shipped per-module as _common.sh (module.yaml includes: [common]).
 LIB_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -229,6 +232,13 @@ cmd_createdb() {
 
 # ---------- Dashboard interface ----------
 dashboard_info() {
+  # app version: both components' image tags (multi-component module — the
+  # keyline header omits it, the generic manager views render the row)
+  local v="" pg_tag rd_tag
+  pg_tag="$(docker inspect -f '{{.Config.Image}}' "${POSTGRES_CONTAINER}" 2>/dev/null | sed -n 's/.*://p')"
+  rd_tag="$(docker inspect -f '{{.Config.Image}}' "${REDIS_CONTAINER}" 2>/dev/null | sed -n 's/.*://p')"
+  [ -n "${pg_tag}" ] && [ -n "${rd_tag}" ] && v="postgres ${pg_tag} / redis ${rd_tag}"
+  [ -n "${v}" ] && echo "version=${v}"
   echo "endpoint=pg://${PG_HOST}:${PG_PORT} (user=${PG_USER}) + redis://${REDIS_HOST}:${REDIS_PORT}"
   echo "credential=PG user/password ${PG_USER}/* (override via AIBOX_BASE_POSTGRES_PASSWORD; consuming modules see ${ENV_FILE})"
   # state= is the machine-readable contract (aibox dashboard renders the icon:
@@ -249,9 +259,25 @@ dashboard_info() {
 
 # ---------- dashboard (the module's rich view) ----------
 render_dashboard() {
-  printf '%s%sbase%s %s· shared PG + Redis%s\n' "${C_BOLD:-}" "" "${C_RST:-}" "${C_DIM:-}" "${C_RST:-}"
+  # keyline header: no single app version (multi-component: the rows carry the
+  # per-component image tags); state from both containers
+  local state=""
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    local _pg _rd
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${POSTGRES_CONTAINER}" && _pg=1
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${REDIS_CONTAINER}" && _rd=1
+    if [ -n "${_pg}" ] && [ -n "${_rd}" ]; then
+      state="ok"
+    elif [ -n "${_pg}" ] || [ -n "${_rd}" ]; then
+      state="starting"
+    else
+      state="stopped"
+    fi
+  fi
+  dash_header "base" "" "${state}"
   if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-    printf '  %s%-9s docker daemon unreachable\n' "${C_DIM:-}" "state:"
+    dash_row "state" "docker daemon unreachable"
+    dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/base/"
     return 0
   fi
   # PG
@@ -261,17 +287,17 @@ render_dashboard() {
   if [ -n "${pg_up}" ]; then
     local pg_status
     pg_status="$(docker ps --filter "name=${POSTGRES_CONTAINER}" --format '{{.Status}}' 2>/dev/null | head -1)"
-    printf '  %s%-9s %s · 127.0.0.1:%s · %s\n' "${C_DIM:-}" "postgres:" "${pg_ver}" "${PG_PORT}" "${pg_status:-up}"
+    dash_row "postgres" "${pg_ver} ${C_DIM:-}·${C_RST:-} 127.0.0.1:${PG_PORT} ${C_DIM:-}·${C_RST:-} ${pg_status:-up}"
     # databases + sizes (the module's own + consumers')
-    printf '  %s%-9s\n' "${C_DIM:-}" "databases:"
+    printf '  %s%-10s\n' "${C_DIM:-}" "databases:"
     while IFS='|' read -r db size; do
       [ -n "${db}" ] || continue
-      printf '  %s%-9s %s (%s)\n' "" "" "${db}" "${size}"
+      printf '  %s%-10s %s (%s)\n' "${C_DIM:-}" "" "${db}" "${size}"
     done <<DASHDB
 $(docker exec "${POSTGRES_CONTAINER}" psql -U "${PG_USER}" -tAc "SELECT datname || '|' || pg_size_pretty(pg_database_size(datname)) FROM pg_database WHERE datistemplate = false ORDER BY pg_database_size(datname) DESC" 2>/dev/null || true)
 DASHDB
   else
-    printf '  %s%-9s %snot running (aibox base start)%s\n' "${C_DIM:-}" "postgres:" "${C_YEL:-}" "${C_RST:-}"
+    dash_row "postgres" "${C_YEL:-}not running (aibox base start)${C_RST:-}"
   fi
   # Redis
   local rd_up="" rd_ver="" rd_keys=""
@@ -279,9 +305,10 @@ DASHDB
   rd_ver="$(docker inspect -f '{{.Config.Image}}' "${REDIS_CONTAINER}" 2>/dev/null || echo redis)"
   if [ -n "${rd_up}" ]; then
     rd_keys="$(docker exec "${REDIS_CONTAINER}" redis-cli dbsize 2>/dev/null || echo '?')"
-    printf '  %s%-9s %s · 127.0.0.1:%s · %s keys\n' "${C_DIM:-}" "redis:" "${rd_ver}" "${REDIS_PORT}" "${rd_keys}"
+    dash_row "redis" "${rd_ver} ${C_DIM:-}·${C_RST:-} 127.0.0.1:${REDIS_PORT} ${C_DIM:-}·${C_RST:-} ${rd_keys} keys"
   else
-    printf '  %s%-9s %snot running%s\n' "${C_DIM:-}" "redis:" "${C_YEL:-}" "${C_RST:-}"
+    dash_row "redis" "${C_YEL:-}not running${C_RST:-}"
   fi
-  printf '  %s%-9s %s\n' "${C_DIM:-}" "network:" "${AIBOX_BASE_NETWORK:-aibox-base}"
+  dash_row "network" "${AIBOX_BASE_NETWORK:-aibox-base}"
+  dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/base/"
 }

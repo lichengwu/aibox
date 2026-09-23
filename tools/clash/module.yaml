@@ -1,5 +1,5 @@
 name: clash
-version: 1.3.4
+version: 1.4.0
 description: "Clash subscription proxy pool — mihomo kernel orchestration (auto speed-test/switch/failover)"
 platform: ""
 dir: tools/clash
