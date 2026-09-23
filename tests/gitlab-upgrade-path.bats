@@ -124,3 +124,9 @@ STUB
   [ "$(grep -m1 '^GITLAB_IMAGE=' "$envf" | cut -d= -f2-)" = "gitlab/gitlab-ce:19.8.3-ce.0" ]
   rm -rf "$root"
 }
+
+@test "render_dashboard: no docker → degrades, exit 0 under set -euo pipefail" {
+  run bash -c "set -euo pipefail; PATH=/usr/bin:/bin; . '$REPO_ROOT/tools/gitlab/lib.sh'; render_dashboard"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"not running (aibox gitlab start)"* ]] || false
+}

@@ -57,3 +57,31 @@ setup() {
   [ "$output" = "$(printf '─%.0s' $(seq 1 64))" ] || false
   case "$output" in *$'\033'*) false ;; *) : ;; esac
 }
+
+@test "dash_rule: TTY width adapts to terminal columns (clamped [40,72])" {
+  command -v expect >/dev/null 2>&1 || skip "no expect"
+  # A pty of 50 cols must yield a 50-char rule. (RED against the old code:
+  # [ -t 1 ] ran inside $(…) — always a pipe — so the width was dead-fixed 64.
+  # expect's spawn has no TERM by default — export one or tput dies; the
+  # command travels via $env() so Tcl never eats the shell's [ ].)
+  local cmd chars
+  cmd="cd '$REPO_ROOT'; export TERM=xterm; . tools/_shared/common.sh; stty cols 50; dash_rule"
+  chars="$(EXPECT_CMD="$cmd" expect -c '
+    log_user 0
+    spawn /bin/bash -c $env(EXPECT_CMD)
+    expect {
+      -re "(.+)\r" { puts [string length $expect_out(1,string)] }
+      timeout { puts TIMEOUT; exit 3 }
+    }
+  ' | tail -1 | tr -d '[:space:]')"
+  [ "$chars" = "50" ] || { echo "rule chars: [$chars]"; false; }
+}
+
+@test "bash glob semantics pin: multibyte suffix patterns match fine (the misdiagnosed #11)" {
+  # *"X" anchors at END-OF-STRING; *"X"* is containment. A multibyte tail is
+  # NOT a bash 3.2 bug — pinned so nobody re-misdiagnoses a suffix-pattern miss.
+  run /bin/bash -c '[[ "m 1 · ✓" == *"· ✓" ]]'
+  [ "$status" -eq 0 ] || false
+  run /bin/bash -c '[[ "a · ✓ b" == *"· ✓" ]]'
+  [ "$status" -ne 0 ] || false   # suffix anchor: "b" follows — correctly NO
+}

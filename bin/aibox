@@ -2620,31 +2620,55 @@ _dash_probe_latest() { # $1=module → prints the latest version
 # tools/_shared/common.sh's dash_* helpers; keep in sync via the spec. The
 # manager is the single-file CLI: it does NOT source the shared include, so it
 # inlines the same formats (as it already does for the yaml parsers).
-_dash_width() {
+# Rule width: TTY → tput cols clamped [40,72]; non-TTY → 64. The [ -t 1 ]
+# check runs in the function's own body — never inside $(…) (command
+# substitution turns stdout into a pipe; the branch would be dead code —
+# live-caught by review).
+_dash_w() { # $1 = stdout-is-tty flag ("1"/"0") → prints the width
   local w=64
-  if [ -t 1 ] 2>/dev/null && command -v tput >/dev/null 2>&1; then
-    w="$(tput cols 2>/dev/null || echo 64)"
-    case "${w}" in '' | *[!0-9]*) w=64 ;; esac
-    [ "${w}" -lt 40 ] && w=40
-    [ "${w}" -gt 72 ] && w=72
+  if [ "${1:-0}" = "1" ]; then
+    # stty via /dev/tty — works inside $(…); tput's stdout would be the pipe
+    # and ncurses would fall back to terminfo cols (measured: 80 on a 50-col pty)
+    local sz
+    sz="$(stty size </dev/tty 2>/dev/null || true)"
+    case "${sz}" in
+    *" "*) w="${sz##* }" ;;
+    esac
   fi
+  case "${w}" in '' | *[!0-9]*) w=64 ;; esac
+  [ "${w}" -lt 40 ] && w=40
+  [ "${w}" -gt 72 ] && w=72
   printf '%s' "${w}"
 }
-_dash_rule_n() {
-  local i=0
-  while [ "${i}" -lt "${1}" ]; do
-    printf '─'
+_dash_rule_line() {
+  local w i=0 out=""
+  if [ -t 1 ] 2>/dev/null; then
+    w="$(_dash_w 1)"
+  else
+    w=64
+  fi
+  while [ "${i}" -lt "${w}" ]; do
+    out="${out}─"
     i=$(( i + 1 ))
   done
+  printf '%s%s%s\n' "${C_DIM}" "${out}" "${C_RST}"
 }
-_dash_rule_line() { printf '%s%s%s\n' "${C_DIM}" "$(_dash_rule_n "$(_dash_width)")" "${C_RST}"; }
 _dash_secheader() { # $1=title (ASCII) → "── title ───…" (dim dashes, bold-cyan title)
-  local n
-  n=$(( $(_dash_width) - ${#1} - 6 ))
+  local w n i=0 out=""
+  if [ -t 1 ] 2>/dev/null; then
+    w="$(_dash_w 1)"
+  else
+    w=64
+  fi
+  n=$(( w - ${#1} - 6 ))
   [ "${n}" -lt 3 ] && n=3
+  while [ "${i}" -lt "${n}" ]; do
+    out="${out}─"
+    i=$(( i + 1 ))
+  done
   printf '\n%s%s── %s%s%s %s%s%s\n' \
     "${C_DIM}" "" "${C_BOLD}${C_CYA}" "${1}" "${C_RST}" \
-    "${C_DIM}" "$(_dash_rule_n "${n}")" "${C_RST}"
+    "${C_DIM}" "${out}" "${C_RST}"
 }
 
 # Render ONE module block from LOCAL data (cache lib.sh dashboard_info +
@@ -2904,7 +2928,7 @@ cmd_dashboard_detail() {
   if [ -n "$aver" ]; then
     printf ' %s%s%s' "$C_CYA" "$aver" "$C_RST"
   else
-    printf ' %s%s%s' "$C_DIM" "${ver:-\?}" "$C_RST"
+    printf ' %s%s%s' "$C_DIM" "${ver:-?}" "$C_RST"
   fi
   [ -n "$sym" ] && printf ' %s·%s %s' "$C_DIM" "$C_RST" "$sym"
   printf '\n'
@@ -2941,7 +2965,7 @@ cmd_dashboard_detail() {
     done
     printf '  %s%-10s%s %s\n' "$C_DIM" "ports" "$C_RST" "$plist"
   fi
-  printf '  %s%-10s %s · %s%s\n' "$C_DIM" "module" "${ver:-\?}" "$AIBOX_MOD_DIR/$name/" "$C_RST"
+  printf '  %s%-10s %s · %s%s\n' "$C_DIM" "module" "${ver:-?}" "$AIBOX_MOD_DIR/$name/" "$C_RST"
 }
 
 # Print a module dev guide (upstream links + DEVELOPMENT.md path), read from module.yaml upstream.

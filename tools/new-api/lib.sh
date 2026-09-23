@@ -143,7 +143,7 @@ render_dashboard() {
   load_env
   local port st state tbl="0"
   port="$(effective_port)"
-  st="$(docker ps --filter "name=${CONTAINER}" --format '{{.Image}} {{.Status}}' 2>/dev/null | head -1)"
+  st="$(docker ps --filter "name=${CONTAINER}" --format '{{.Image}} {{.Status}}' 2>/dev/null | head -1 || true)"
   if [ -n "${st}" ] && api_up "${port}"; then
     state="ok"
   elif [ -n "${st}" ]; then

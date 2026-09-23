@@ -85,3 +85,9 @@ teardown() {
   [[ "$output" == *"base"* ]] || false
   [[ "$output" == *"module"*"·"*"modules/base/"* ]] || false
 }
+
+@test "dashboard_info: no docker → degrades, exit 0 under set -euo pipefail" {
+  run bash -c "set -euo pipefail; PATH=/usr/bin:/bin; . '$REPO_ROOT/tools/base/lib.sh'; dashboard_info"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  printf '%s\n' "$output" | grep -q '^state=stopped$' || false
+}

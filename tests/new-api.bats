@@ -259,3 +259,9 @@ _wait_http() { # $1 = port
   # no hardcoded credentials (validator also scans; assert here)
   ! grep -qE '(PASSWORD|SECRET_KEY|API_KEY)=[^$]' "$y"
 }
+
+@test "render_dashboard: no docker → degrades, exit 0 under set -euo pipefail" {
+  run bash -c "set -euo pipefail; PATH=/usr/bin:/bin; . '$REPO_ROOT/tools/new-api/lib.sh'; render_dashboard"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"not running (aibox new-api start)"* ]] || false
+}

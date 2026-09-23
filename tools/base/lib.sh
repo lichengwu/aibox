@@ -235,8 +235,8 @@ dashboard_info() {
   # app version: both components' image tags (multi-component module — the
   # keyline header omits it, the generic manager views render the row)
   local v="" pg_tag rd_tag
-  pg_tag="$(docker inspect -f '{{.Config.Image}}' "${POSTGRES_CONTAINER}" 2>/dev/null | sed -n 's/.*://p')"
-  rd_tag="$(docker inspect -f '{{.Config.Image}}' "${REDIS_CONTAINER}" 2>/dev/null | sed -n 's/.*://p')"
+  pg_tag="$(docker inspect -f '{{.Config.Image}}' "${POSTGRES_CONTAINER}" 2>/dev/null | sed -n 's/.*://p' || true)"
+  rd_tag="$(docker inspect -f '{{.Config.Image}}' "${REDIS_CONTAINER}" 2>/dev/null | sed -n 's/.*://p' || true)"
   [ -n "${pg_tag}" ] && [ -n "${rd_tag}" ] && v="postgres ${pg_tag} / redis ${rd_tag}"
   [ -n "${v}" ] && echo "version=${v}"
   echo "endpoint=pg://${PG_HOST}:${PG_PORT} (user=${PG_USER}) + redis://${REDIS_HOST}:${REDIS_PORT}"

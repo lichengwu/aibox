@@ -29,29 +29,28 @@ die() {
 #     module     1.3.5 · ~/.aibox/modules/<name>/        (whole row dim)
 # Colors inherit aibox's exported C_* (empty standalone → plain). Rule width:
 # TTY → tput cols clamped [40,72]; non-TTY → 64 (pipes/tests get a stable
-# shape). Rules repeat COMPLETE ─ literals — never sliced (pitfall #6).
+# shape). NOTE: the [ -t 1 ] check MUST run in the function's own body —
+# never inside $(…): command substitution turns stdout into a pipe and the
+# TTY branch would never fire (live-caught by review: width was dead-fixed
+# 64 everywhere). Rules repeat COMPLETE ─ literals — never sliced (#6).
 
-_dash_width() { # prints the rule width for this context
+_dash_w() { # prints the rule width; $1 = stdout-is-tty flag ("1"/"0")
   local w=64
-  if [ -t 1 ] 2>/dev/null && command -v tput >/dev/null 2>&1; then
-    w="$(tput cols 2>/dev/null || echo 64)"
-    case "${w}" in '' | *[!0-9]*) w=64 ;; esac
-    [ "${w}" -lt 40 ] && w=40
-    [ "${w}" -gt 72 ] && w=72
+  if [ "${1:-0}" = "1" ]; then
+    # stty talks to the CONTROLLING terminal via /dev/tty — works even inside
+    # $(…) (tput's stdout would be the substitution pipe, not the tty, and
+    # ncurses would fall back to terminfo's cols — live-measured: 80 on an
+    # xterm pty set to 50 cols).
+    local sz
+    sz="$(stty size </dev/tty 2>/dev/null || true)"
+    case "${sz}" in
+    *" "*) w="${sz##* }" ;;
+    esac
   fi
+  case "${w}" in '' | *[!0-9]*) w=64 ;; esac
+  [ "${w}" -lt 40 ] && w=40
+  [ "${w}" -gt 72 ] && w=72
   printf '%s' "${w}"
-}
-
-_dash_rule_n() { # $1=count → that many complete ─ literals
-  local i=0
-  while [ "${i}" -lt "${1}" ]; do
-    printf '─'
-    i=$(( i + 1 ))
-  done
-}
-
-dash_rule() { # the dim horizontal rule
-  printf '%s%s%s\n' "${C_DIM:-}" "$(_dash_rule_n "$(_dash_width)")" "${C_RST:-}"
 }
 
 # state word → colored "<icon> <word>" segment; empty for na/unknown words
@@ -79,16 +78,39 @@ dash_row() { # $1=label (ASCII, ≤10 chars) $2=value (verbatim; may embed color
 }
 
 dash_module_row() { # $1=module_version $2=module_dir — sunk, whole row dim
-  printf '  %s%-10s %s · %s%s\n' "${C_DIM:-}" "module" "${1:-\?}" "${2:-}" "${C_RST:-}"
+  printf '  %s%-10s %s · %s%s\n' "${C_DIM:-}" "module" "${1:-?}" "${2:-}" "${C_RST:-}"
+}
+
+dash_rule() { # the dim horizontal rule (width per the header comment)
+  local w i=0 out=""
+  if [ -t 1 ] 2>/dev/null; then
+    w="$(_dash_w 1)"
+  else
+    w=64
+  fi
+  while [ "${i}" -lt "${w}" ]; do
+    out="${out}─"
+    i=$(( i + 1 ))
+  done
+  printf '%s%s%s\n' "${C_DIM:-}" "${out}" "${C_RST:-}"
 }
 
 dash_secheader() { # $1=title (ASCII) → "── title ───…" to the rule width
-  local n
-  n=$(( $(_dash_width) - ${#1} - 6 ))
+  local w n i=0 out=""
+  if [ -t 1 ] 2>/dev/null; then
+    w="$(_dash_w 1)"
+  else
+    w=64
+  fi
+  n=$(( w - ${#1} - 6 ))
   [ "${n}" -lt 3 ] && n=3
+  while [ "${i}" -lt "${n}" ]; do
+    out="${out}─"
+    i=$(( i + 1 ))
+  done
   printf '%s%s── %s%s%s %s%s%s\n' \
     "${C_DIM:-}" "" "${C_BOLD:-}${C_CYA:-}" "${1}" "${C_RST:-}" \
-    "${C_DIM:-}" "$(_dash_rule_n "${n}")" "${C_RST:-}"
+    "${C_DIM:-}" "${out}" "${C_RST:-}"
 }
 
 # ---------- docker.io download source pool (pull-via-mirror + tag) ----------

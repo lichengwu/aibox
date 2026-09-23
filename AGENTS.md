@@ -263,33 +263,33 @@ bash -e -c '[[ a == b ]] || false; echo X' # → exits 1 (correct — the workar
 
 **Detection**: a test that should obviously fail passes locally — re-run it on ubuntu (`docker run --rm -v "$PWD":/repo -w /repo ubuntu:24.04` + `apt-get install bats`) before trusting it.
 
-### #11 macOS bash 3.2 (arm64-darwin26 build): `[[ == ]]` glob pattern ending in a multibyte character never matches
+### #11 Test glob patterns: `*"X"` anchors at END-OF-STRING — a miss is pattern semantics, not a bash bug (a misdiagnosis post-mortem)
 
-**Symptom**: an assertion like `[[ "$output" == *"pi-web"*"· ✓" ]]` fails on the dev Mac while the output plainly contains `pi-web · ✓ running`; the same content matched on CI (ubuntu bash 5).
+**Symptom**: an assertion like `[[ "$output" == *"pi-web"*"· ✓" ]]` fails while the output plainly contains `pi-web · ✓ running` — and it's tempting to blame the macOS bash 3.2 build.
 
-**Root cause** (measured, minimal repro, `/bin/bash 3.2.57 arm64-apple-darwin26`):
+**Root cause (verified — NOT a bash bug)**: `*"X"` requires X at the END of the
+string (suffix anchor); `*"X"*` is containment. `· ✓` mid-string followed by
+`running` correctly fails a suffix pattern. Measured on `/bin/bash 3.2.57
+arm64-apple-darwin26` AND bash 5.3: `[[ "m 1 · ✓" == *"· ✓" ]]` matches —
+multibyte tails are fine. (This entry replaces an earlier "measured bash
+3.2 multibyte glob quirk" claim that was a misdiagnosis of exactly this
+suffix-vs-containment mistake — caught by whole-branch review with a
+cross-version repro.)
+
+**Fix**: for containment use `*"X"*` (trailing `*`); for a real suffix test
+keep `*"X"` and put X last in the string. Multibyte characters (✓ ⚠ ○ · — …)
+are safe in either form.
+
+**Detection**: when an assert contradicts visible output, test the pattern
+against a string that ENDS with the literal before suspecting the shell:
 
 ```bash
-out="pi-web · ✓ running"
-[[ "$out" == *"· ✓" ]]    # → NO  (never matches — pattern ENDS with multibyte ✓)
-[[ "$out" == *"· ✓"* ]]   # → YES (trailing * restores matching)
-case "$out" in *"· ✓") echo YES;; esac   # → YES (case is unaffected)
-[[ "$out" == *"✓ running"* ]] # → YES (multibyte followed by ASCII is fine)
+[[ "x · ✓" == *"· ✓" ]]   # matches → the shell is fine; check your pattern
 ```
 
-A `[[ == ]]` glob whose LAST quoted segment ends with a multibyte character
-(✓ ⚠ ○ · — …) fails to match on this build; an ASCII tail, a trailing `*`,
-or a runtime-expanded pattern (`*"· ${seg}"`) all work. `case` and `=`
-equality are unaffected. Pairs viciously with pitfall #10 (the failure is
-silently swallowed in mid-test `[[ ]]` on the same machine).
-
-**Fix**: never let a test pattern end with a multibyte character — append a
-trailing `*`, an ASCII char, or restructure (`*"✓ running"*` instead of
-`*"· ✓"`).
-
-**Detection**: `printf '%s' "$pattern" | od -c` the test's literals when an
-assertion contradicts visible output; grep test files for patterns ending in
-multibyte: `grep -rnE '\*"[^"]*[✓✗⚠○·—…]"\]\]' tests/`.
+**Interaction with #10**: the suffix-pattern miss was invisible for months
+because pitfall #10 swallows failing mid-test `[[ ]]` — the `|| false`
+discipline is what surfaced it.
 
 ## License
 

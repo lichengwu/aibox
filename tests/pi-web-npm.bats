@@ -247,8 +247,7 @@ teardown() {
   run bash -c ". '$REPO_ROOT/tools/pi-web/lib.sh'; render_dashboard"
   [ "$status" -eq 0 ] || false
   [[ "$output" == *"launchd"*"pid "* ]] || false
-  # NOTE: patterns must NOT end with a multibyte char (bash 3.2 arm64-darwin26
-  # glob quirk: a [[ == ]] pattern whose last quoted segment ends multibyte
-  # never matches — trailing * restores it; see AGENTS.md pitfall log)
+  # NOTE: patterns use containment (*"X"*) — *"X" alone anchors at end-of-string
+  # (AGENTS.md pitfall #11: a suffix miss is pattern semantics, not a bash bug)
   [[ "$output" == *"· ✓"* || "$output" == *"⚠"* ]] || false
 }

@@ -344,7 +344,7 @@ render_dashboard() {
   dash_header "xiaozhi" "$(app_version)" "${state}"
   # server container
   local st=""
-  st="$(docker ps --filter "name=${SERVER_CONTAINER}" --format '{{.Image}} {{.Status}}' 2>/dev/null | head -1)"
+  st="$(docker ps --filter "name=${SERVER_CONTAINER}" --format '{{.Image}} {{.Status}}' 2>/dev/null | head -1 || true)"
   if [ -n "${st}" ]; then
     dash_row "server" "${st}"
   else
@@ -352,9 +352,9 @@ render_dashboard() {
   fi
   # web + mysql
   local web_st mysql_st
-  web_st="$(docker ps --filter "name=${WEB_CONTAINER}" --format '{{.Status}}' 2>/dev/null | head -1)"
+  web_st="$(docker ps --filter "name=${WEB_CONTAINER}" --format '{{.Status}}' 2>/dev/null | head -1 || true)"
   [ -n "${web_st}" ] && dash_row "console" "http://127.0.0.1:${cport} ${C_DIM:-}·${C_RST:-} ${web_st}"
-  mysql_st="$(docker ps --filter "name=${MYSQL_CONTAINER}" --format '{{.Status}}' 2>/dev/null | head -1)"
+  mysql_st="$(docker ps --filter "name=${MYSQL_CONTAINER}" --format '{{.Status}}' 2>/dev/null | head -1 || true)"
   [ -n "${mysql_st}" ] && dash_row "mysql" "${MYSQL_CONTAINER} ${C_DIM:-}·${C_RST:-} ${mysql_st}"
   # ws + device URL
   if ws_listening "${wport}"; then
@@ -362,7 +362,7 @@ render_dashboard() {
   fi
   # secret state
   local secret_set
-  secret_set="$(grep -A3 '^manager-api:' "$(config_file)" 2>/dev/null | sed -n 's/.*secret:[[:space:]]*//p' | tr -d '"')"
+  secret_set="$(grep -A3 '^manager-api:' "$(config_file)" 2>/dev/null | sed -n 's/.*secret:[[:space:]]*//p' | tr -d '"' || true)"
   if [ -n "${secret_set}" ] && [ "${secret_set}" != '""' ]; then
     dash_row "secret" "${C_GRN:-}✓ configured${C_RST:-}"
   else

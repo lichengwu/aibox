@@ -337,3 +337,9 @@ teardown() {
   # no hardcoded credentials (validator also scans; assert here)
   ! grep -qE '(PASSWORD|SECRET)=[^$]' "$y"
 }
+
+@test "render_dashboard: no docker → degrades, exit 0 under set -euo pipefail" {
+  run bash -c "set -euo pipefail; PATH=/usr/bin:/bin; . '$REPO_ROOT/tools/xiaozhi/lib.sh'; render_dashboard"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"not running (aibox xiaozhi start)"* ]] || false
+}

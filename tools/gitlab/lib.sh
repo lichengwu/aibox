@@ -137,7 +137,7 @@ render_dashboard() {
   load_env
   local port st state code
   port="${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
-  st="$(docker ps --filter "name=${CONTAINER_NAME}" --format '{{.Image}} {{.Status}}' 2>/dev/null | head -1)"
+  st="$(docker ps --filter "name=${CONTAINER_NAME}" --format '{{.Image}} {{.Status}}' 2>/dev/null | head -1 || true)"
   if [ -n "${st}" ]; then
     if http_up "${port}"; then
       state="ok"
