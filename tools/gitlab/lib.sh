@@ -2,6 +2,9 @@
 # Conventions: docs/module-spec.md — deploy root = $AIBOX_HOME/apps/gitlab.
 
 MODULE_NAME="gitlab"
+# Module version — read from module.yaml next to this lib (cache and repo
+# layouts agree; empty on a missing file → callers fall back to dim ?).
+MODULE_VERSION="$(sed -n 's/^version:[[:space:]]*//p' "$(dirname "${BASH_SOURCE[0]}")/module.yaml" 2>/dev/null | head -1 || true)"
 CONTAINER_NAME="aibox-gitlab"
 DEFAULT_HTTP_PORT="8929"
 DEFAULT_SSH_PORT="8922"
@@ -87,6 +90,15 @@ effective_image() {
   printf '%s' "${GITLAB_IMAGE:-$DEFAULT_IMAGE}"
 }
 
+# Deployed app version: the gitlab-ce image tag.
+app_version() {
+  local img tag
+  load_env
+  img="${GITLAB_IMAGE:-$DEFAULT_IMAGE}"
+  tag="${img##*:}"
+  printf '%s' "${tag#v}"
+}
+
 # SSH clone base URL (host part best-effort; the authoritative value is the
 # clone button in the GitLab UI — external_url controls what GitLab renders).
 ssh_clone_url() {
@@ -102,6 +114,7 @@ dashboard_info() {
   load_env
   port="${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
   url="http://127.0.0.1:${port}"
+  echo "version=$(app_version)"
   echo "endpoint=${url}"
   echo "credential=root / initial password via: aibox gitlab credentials"
   if container_running; then
@@ -119,28 +132,36 @@ dashboard_info() {
   fi
 }
 
-# ---------- dashboard (the module's rich view) ----------
+# ---------- dashboard (the module's rich view — keyline template) ----------
 render_dashboard() {
   load_env
-  local port
+  local port st state code
   port="${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
-  printf '%s%sgitlab%s %s· module %s%s\n' "${C_BOLD:-}" "" "${C_RST:-}" "${C_DIM:-}" "${MODULE_VERSION:-1.2.1}" "${C_RST:-}"
-  local st=""
   st="$(docker ps --filter "name=${CONTAINER_NAME}" --format '{{.Image}} {{.Status}}' 2>/dev/null | head -1)"
   if [ -n "${st}" ]; then
-    printf '  %s%-9s %s\n' "${C_DIM:-}" "container:" "${st}"
-    local code
+    if http_up "${port}"; then
+      state="ok"
+    else
+      state="starting"
+    fi
+  else
+    state="stopped"
+  fi
+  dash_header "gitlab" "$(app_version)" "${state}"
+  if [ -n "${st}" ]; then
+    dash_row "container" "${st}"
     code="$(curl -s -o /dev/null --max-time 5 -w '%{http_code}' "http://127.0.0.1:${port}/" 2>/dev/null || echo 000)"
     [ -z "${code}" ] && code="000"
     case "${code}" in
-    2?? | 3?? | 401) printf '  %s%-9s http://127.0.0.1:%s · %s✓ HTTP %s%s\n' "${C_DIM:-}" "web:" "${port}" "${C_GRN:-}" "${code}" "${C_RST:-}" ;;
-    *) printf '  %s%-9s http://127.0.0.1:%s · %sHTTP %s%s\n' "${C_DIM:-}" "web:" "${port}" "${C_YEL:-}" "${code}" "${C_RST:-}" ;;
+    2?? | 3?? | 401) dash_row "web" "http://127.0.0.1:${port} ${C_DIM:-}·${C_RST:-} ${C_GRN:-}✓ HTTP ${code}${C_RST:-}" ;;
+    *) dash_row "web" "http://127.0.0.1:${port} ${C_DIM:-}·${C_RST:-} ${C_YEL:-}HTTP ${code}${C_RST:-}" ;;
     esac
-    printf '  %s%-9s :%s (git over SSH)\n' "${C_DIM:-}" "ssh:" "${GITLAB_SSH_PORT:-8922}"
+    dash_row "ssh" ":${GITLAB_SSH_PORT:-8922} (git over SSH)"
   else
-    printf '  %s%-9s %snot running (aibox gitlab start)%s\n' "${C_DIM:-}" "container:" "${C_YEL:-}" "${C_RST:-}"
+    dash_row "container" "${C_YEL:-}not running (aibox gitlab start)${C_RST:-}"
   fi
-  printf '  %s%-9s root / initial password (see: aibox gitlab credentials)\n' "${C_DIM:-}" "auth:"
+  dash_row "auth" "root / initial password (see: aibox gitlab credentials)"
+  dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/gitlab/"
 }
 
 # ---------- GitLab upgrade path (required upgrade stops) ----------

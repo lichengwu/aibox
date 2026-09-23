@@ -2,6 +2,9 @@
 # Conventions: docs/module-spec.md — deploy root = $AIBOX_HOME/apps/xiaozhi.
 
 MODULE_NAME="xiaozhi"
+# Module version — read from module.yaml next to this lib (cache and repo
+# layouts agree; empty on a missing file → callers fall back to dim ?).
+MODULE_VERSION="$(sed -n 's/^version:[[:space:]]*//p' "$(dirname "${BASH_SOURCE[0]}")/module.yaml" 2>/dev/null | head -1 || true)"
 COMPOSE_PROJECT="xiaozhi"
 SERVER_CONTAINER="aibox-xiaozhi-server"
 WEB_CONTAINER="aibox-xiaozhi-web"
@@ -286,14 +289,22 @@ stack_running() {
 }
 
 # Dashboard interface (called by `aibox dashboard xiaozhi`).
+# Deployed app version: "server <tag> / web <tag>" (two images).
+app_version() {
+  local sver hver
+  load_env
+  sver="${XIAOZHI_SERVER_IMAGE:-${DEFAULT_SERVER_IMAGE}}"
+  hver="${XIAOZHI_WEB_IMAGE:-${DEFAULT_WEB_IMAGE}}"
+  printf '%s / %s' "${sver##*:server_}" "${hver##*:web_}"
+}
+
 dashboard_info() {
-  local cport wport hver sver
+  local cport wport v
   load_env
   cport="$(effective_console_port)"
   wport="$(effective_ws_port)"
-  sver="${XIAOZHI_SERVER_IMAGE:-${DEFAULT_SERVER_IMAGE}}"
-  hver="${XIAOZHI_WEB_IMAGE:-${DEFAULT_WEB_IMAGE}}"
-  echo "version=${sver##*:server_} / ${hver##*:web_}"
+  v="$(app_version)"
+  [ -n "${v}" ] && echo "version=${v}"
   echo "endpoint=http://127.0.0.1:${cport}"
   echo "credential=console: first registered user becomes the super admin"
   echo "ws=ws://$(_lan_ip):${wport}/xiaozhi/v1/ (device websocket)"
@@ -318,34 +329,44 @@ dashboard_info() {
 # ---------- dashboard (the module's rich view) ----------
 render_dashboard() {
   load_env
-  local cport wport
+  local cport wport state
   cport="$(effective_console_port)"
   wport="$(effective_ws_port)"
-  printf '%s%sxiaozhi%s %s· module %s%s\n' "${C_BOLD:-}" "" "${C_RST:-}" "${C_DIM:-}" "${MODULE_VERSION:-1.0.1}" "${C_RST:-}"
+  if stack_running 2>/dev/null; then
+    if console_up "${cport}" && server_running && ws_listening "${wport}"; then
+      state="ok"
+    else
+      state="starting"
+    fi
+  else
+    state="stopped"
+  fi
+  dash_header "xiaozhi" "$(app_version)" "${state}"
   # server container
   local st=""
   st="$(docker ps --filter "name=${SERVER_CONTAINER}" --format '{{.Image}} {{.Status}}' 2>/dev/null | head -1)"
   if [ -n "${st}" ]; then
-    printf '  %s%-9s %s\n' "${C_DIM:-}" "server:" "${st}"
+    dash_row "server" "${st}"
   else
-    printf '  %s%-9s %snot running (aibox xiaozhi start)%s\n' "${C_DIM:-}" "server:" "${C_YEL:-}" "${C_RST:-}"
+    dash_row "server" "${C_YEL:-}not running (aibox xiaozhi start)${C_RST:-}"
   fi
   # web + mysql
   local web_st mysql_st
   web_st="$(docker ps --filter "name=${WEB_CONTAINER}" --format '{{.Status}}' 2>/dev/null | head -1)"
-  [ -n "${web_st}" ] && printf '  %s%-9s %s · %s\n' "${C_DIM:-}" "console:" "http://127.0.0.1:${cport}" "${web_st}"
+  [ -n "${web_st}" ] && dash_row "console" "http://127.0.0.1:${cport} ${C_DIM:-}·${C_RST:-} ${web_st}"
   mysql_st="$(docker ps --filter "name=${MYSQL_CONTAINER}" --format '{{.Status}}' 2>/dev/null | head -1)"
-  [ -n "${mysql_st}" ] && printf '  %s%-9s %s · %s\n' "${C_DIM:-}" "mysql:" "${MYSQL_CONTAINER}" "${mysql_st}"
+  [ -n "${mysql_st}" ] && dash_row "mysql" "${MYSQL_CONTAINER} ${C_DIM:-}·${C_RST:-} ${mysql_st}"
   # ws + device URL
   if ws_listening "${wport}"; then
-    printf '  %s%-9s :%s · %s✓ listening%s · devices: ws://%s:%s/xiaozhi/v1/\n' "${C_DIM:-}" "ws:" "${wport}" "${C_GRN:-}" "${C_RST:-}" "$(_lan_ip)" "${wport}"
+    dash_row "ws" ":${wport} ${C_DIM:-}·${C_RST:-} ${C_GRN:-}✓ listening${C_RST:-} ${C_DIM:-}·${C_RST:-} devices: ws://$(_lan_ip):${wport}/xiaozhi/v1/"
   fi
   # secret state
   local secret_set
   secret_set="$(grep -A3 '^manager-api:' "$(config_file)" 2>/dev/null | sed -n 's/.*secret:[[:space:]]*//p' | tr -d '"')"
   if [ -n "${secret_set}" ] && [ "${secret_set}" != '""' ]; then
-    printf '  %s%-9s %s✓ configured%s\n' "${C_DIM:-}" "secret:" "${C_GRN:-}" "${C_RST:-}"
+    dash_row "secret" "${C_GRN:-}✓ configured${C_RST:-}"
   else
-    printf '  %s%-9s %snot set (start auto-applies; manual: aibox xiaozhi secret <value>)%s\n' "${C_DIM:-}" "secret:" "${C_YEL:-}" "${C_RST:-}"
+    dash_row "secret" "${C_YEL:-}not set (start auto-applies; manual: aibox xiaozhi secret <value>)${C_RST:-}"
   fi
+  dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/xiaozhi/"
 }

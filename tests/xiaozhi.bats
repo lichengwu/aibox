@@ -282,6 +282,14 @@ teardown() {
   printf '%s\n' "$out" | grep -q '^health=stopped'     # fake docker ps: empty
 }
 
+@test "render_dashboard: keyline header (server/web app versions) + sunk module row" {
+  run bash -c ". '$REPO_ROOT/tools/xiaozhi/lib.sh'; render_dashboard"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" != *"· module"* ]] || false
+  [[ "$output" == *"xiaozhi 0.9.6 / 0.9.6"* ]] || false
+  [[ "$output" == *"module"*"·"*"modules/xiaozhi/"* ]] || false
+}
+
 @test "uninstall: removes compose, PRESERVES data/.config.yaml + .env + volumes by default" {
   export PATH="$FAKEBIN:$PATH"
   bash "$REPO_ROOT/tools/xiaozhi/install.sh" >/dev/null 2>&1
