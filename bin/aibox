@@ -2963,12 +2963,12 @@ cmd_module_help() {
   if [ -n "${envdecl}" ]; then
     echo
     info "config:  aibox ${name} config [get|set|unset]"
-    printf '  %-22s %-14s %s\n' "${C_DIM}KEY${C_RST}" "${C_DIM}default${C_RST}" "${C_DIM}description${C_RST}"
+    printf '  %-28s %-16s %s\n' "${C_DIM}KEY${C_RST}" "${C_DIM}default${C_RST}" "${C_DIM}description${C_RST}"
     printf '%s\n' "${envdecl}" | while IFS="$(printf '\t')" read -r ek ed ef efl; do
       [ -n "${ek}" ] || continue
       case " ${efl} " in *" knob "*) continue ;; esac
       [ -n "${efl}" ] && ef="${ef} [${efl}]"
-      printf '  %-22s %-14s %s\n' "${ek}" "${ed}" "${ef}"
+      printf '  %-28s %-16s %s\n' "${ek}" "${ed}" "${ef}"
     done
   fi
   echo

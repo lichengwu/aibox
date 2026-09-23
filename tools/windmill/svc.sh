@@ -22,9 +22,9 @@ case "${action}" in
 # CLI-type module — applies at the NEXT invocation (no restart).
 config)
   CFG_YAML="${DIR}/module.yaml" \
-  CFG_STORE="/etc/windmill/windmill.conf" \
-  CFG_APPLY="" \
-  cfg_action "$@"
+    CFG_STORE="/etc/windmill/windmill.conf" \
+    CFG_APPLY="" \
+    cfg_action "$@"
   exit $? # handled here — never falls through to the CLI dispatch
   ;;
 init | destroy)

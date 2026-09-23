@@ -58,13 +58,16 @@ config)
   case "${1:-}" in
   "" | list)
     # NOTE: case branches are not functions — no `local` here
-    k=""; def=""; cur=""; shown=""
+    k=""
+    def=""
+    cur=""
+    shown=""
     while IFS="$(printf '\t')" read -r k def desc flags; do
       [ -n "${k}" ] || continue
       case " ${flags} " in *" knob "*) continue ;; esac
       cur="$(_store_get "${k}")"
       if [ -n "${cur}" ]; then
-        if cfg_secret_p "${k}" || case " ${flags} " in *" secret "*) true ;; *) false ;; esac; then
+        if cfg_secret_p "${k}" || case " ${flags} " in *" secret "*) true ;; *) false ;; esac then
           shown="$(cfg_mask)"
         else
           shown="${cur}"

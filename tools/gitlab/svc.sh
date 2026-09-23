@@ -55,9 +55,9 @@ config)
   load_env
   ROOT="$(deploy_root)"
   CFG_YAML="${DIR}/module.yaml" \
-  CFG_STORE="${ROOT}/.env" \
-  CFG_APPLY="aibox gitlab restart" \
-  cfg_action "$@"
+    CFG_STORE="${ROOT}/.env" \
+    CFG_APPLY="aibox gitlab restart" \
+    cfg_action "$@"
   ;;
 status | dashboard)
   compose ps

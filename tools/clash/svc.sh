@@ -12,7 +12,7 @@ action="${1:-status}"
 state_load
 
 case "$action" in
-start|on)
+start | on)
   start_kernel
   echo
   log "aibox egress switched to local mihomo (socks5://127.0.0.1:${CLASH_PORT})"

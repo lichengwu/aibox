@@ -10,11 +10,14 @@
 # Colors are inherited from aibox via exported C_* env vars (single source of
 # truth); ${C_*:-} falls back to plain output standalone. Symbols: ⚠ warn / ✓ ok
 # / ✗ die, two-space gap (spec §Output conventions).
-log()  { printf '%s\n' "$*"; }
+log() { printf '%s\n' "$*"; }
 warn() { printf '%s⚠%s  %s\n' "${C_YEL:-}" "${C_RST:-}" "$*" >&2; }
-ok()   { printf '%s✓%s  %s\n' "${C_GRN:-}" "${C_RST:-}" "$*"; }
+ok() { printf '%s✓%s  %s\n' "${C_GRN:-}" "${C_RST:-}" "$*"; }
 info() { printf '%s  %s%s\n' "${C_DIM:-}" "$*" "${C_RST:-}"; }
-die()  { printf '%s✗%s  %s\n' "${C_RED:-}" "${C_RST:-}" "$*" >&2; exit 1; }
+die() {
+  printf '%s✗%s  %s\n' "${C_RED:-}" "${C_RST:-}" "$*" >&2
+  exit 1
+}
 
 # ---------- docker.io download source pool (pull-via-mirror + tag) ----------
 # Compose images are pulled by the docker DAEMON — whose egress differs from
@@ -44,7 +47,7 @@ DOCKER_POOL_MIRRORS="docker.1ms.run docker.m.daocloud.io dockerproxy.net hub.rat
 # not a port (tag-stripping first would misread localhost:5000/foo's port).
 _dk_is_dockerio() {
   case "${1}" in
-  docker.io/*) return 0 ;;   # explicit default-registry form is still docker.io
+  docker.io/*) return 0 ;; # explicit default-registry form is still docker.io
   */*)
     case "${1%%/*}" in
     *.* | *:*) return 1 ;;
@@ -73,12 +76,13 @@ _dk_pool_ref() { # $1=mirror-host $2=image-ref
 # broke when the poll was tightened — measured: 0.2s polls fired 15s timeouts
 # in ~0.6s).
 _dk_bounded() { # $1=timeout_s, rest = docker args
-  local t="${1}"; shift
+  local t="${1}"
+  shift
   local logf pid deadline
   logf="$(mktemp "${TMPDIR:-/tmp}/dkpool.XXXXXX")" || return 1
   docker "$@" >"${logf}" 2>&1 &
   pid=$!
-  deadline=$(( $(date +%s) + t ))
+  deadline=$(($(date +%s) + t))
   while kill -0 "${pid}" 2>/dev/null; do
     if [ "$(date +%s)" -ge "${deadline}" ]; then
       kill "${pid}" 2>/dev/null || true
@@ -136,7 +140,7 @@ docker_pool_prepull() { # $@ = image refs
     (
       t0=$(date +%s)
       if _dk_bounded "${AIBOX_DOCKER_MIRROR_PROBE_TIMEOUT:-30}" pull "$(_dk_pool_ref "${m}" hello-world)" >/dev/null 2>&1; then
-        printf '%s\t%s\n' "$(( $(date +%s) - t0 ))" "${m}" >"${tmpd}/r${i}.res"
+        printf '%s\t%s\n' "$(($(date +%s) - t0))" "${m}" >"${tmpd}/r${i}.res"
       fi
     ) &
     pids="${pids} $!"
@@ -160,7 +164,10 @@ docker_pool_prepull() { # $@ = image refs
       full="$(_dk_pool_ref "${m}" "${img}")"
       log "docker pull ${full} (mirror ${m}, watchdog ${AIBOX_DOCKER_PULL_TIMEOUT:-1800}s)"
       if _dk_bounded "${AIBOX_DOCKER_PULL_TIMEOUT:-1800}" pull "${full}"; then
-        docker tag "${full}" "${img}" || { warn "docker tag failed: ${full} → ${img}"; continue; }
+        docker tag "${full}" "${img}" || {
+          warn "docker tag failed: ${full} → ${img}"
+          continue
+        }
         docker rmi "${full}" >/dev/null 2>&1 || true
         ok "pulled ${img} via ${m}"
         done1=1
@@ -208,7 +215,13 @@ cfg_kv_set() { # $1=file $2=KEY $3=value
   [ -n "$k" ] || return 0
   tmp="${f}.cfgtmp.$$"
   if [ ! -f "$f" ]; then
-    (umask 077; printf '%s="%s"\n' "$k" "$v" >"$f") || { warn "cannot write $f"; return 1; }
+    (
+      umask 077
+      printf '%s="%s"\n' "$k" "$v" >"$f"
+    ) || {
+      warn "cannot write $f"
+      return 1
+    }
     return 0
   fi
   # keys are [A-Z_0-9] (validator-enforced) — no awk-regex metachars
@@ -216,7 +229,11 @@ cfg_kv_set() { # $1=file $2=KEY $3=value
     $0 ~ "^"k"=" && !done { print k "=\"" v "\""; done = 1; next }
     { print }
     END { if (!done) print k "=\"" v "\"" }
-  ' "$f" >"$tmp" || { rm -f "$tmp"; warn "cannot rewrite $f"; return 1; }
+  ' "$f" >"$tmp" || {
+    rm -f "$tmp"
+    warn "cannot rewrite $f"
+    return 1
+  }
   mode="$(stat -c %a "$f" 2>/dev/null || stat -f %Lp "$f" 2>/dev/null || echo 600)"
   mv -f "$tmp" "$f"
   chmod "${mode}" "$f" 2>/dev/null || true
@@ -239,18 +256,31 @@ cfg_kv_unset() { # $1=file $2=KEY
 # $1 = the module.yaml path. Value shape: "default — description [flags]".
 cfg_env_declare() { # $1=module.yaml → declaration lines on stdout
   [ -f "$1" ] || return 0
-  sed -n '/^env:/,/^[a-zA-Z]/p' "$1" | sed -n 's/^  \([A-Z_][A-Z0-9_]*\): *"\([^"]*\)".*/\1/p' |
-  while IFS= read -r k; do
-    v="$(sed -n "/^  ${k}: *\"/s/^  ${k}: *\"\([^\"]*\)\".*/\1/p" "$1")"
-    def="${v%% —*}"; [ "${def}" = "${v}" ] && def="${v%%—*}"
-    rest="${v#* —}";  [ "${rest}" = "${v}" ] && rest="${v}"
-    flags=""
-    case "${v}" in
-    *"["*"]"*) flags="$(printf '%s' "${v}" | sed -n 's/.*\[\([^]]*\)\].*/\1/p')" ;;
-    esac
-    desc="${rest%%\[*}"
-    printf '%s\t%s\t%s\t%s\n' "$k" "$def" "$(printf '%s' "$desc" | sed 's/^ *//; s/ *$//')" "$flags"
-  done
+  # ONE awk pass extracts KEY<TAB>value pairs (the fork-elimination win — was
+  # one sed per key). The value SPLITTING stays in bash: the " — " separator
+  # is a 3-byte em-dash, and C-locale awk's index/substr counts BYTES while
+  # UTF-8 awk counts CHARS — a portability divergence (measured: desc got cut
+  # mid-character on the dev Mac). Bash string ops handle UTF-8 uniformly.
+  awk '
+    /^env:/ { inenv = 1; next }
+    inenv && /^[a-zA-Z]/ { inenv = 0 }
+    inenv && /^  [A-Z_][A-Z0-9_]*: *"/ {
+      key = $0
+      sub(/^  /, "", key); sub(/: *"/, "\t", key); sub(/"$/, "", key)
+      print key
+    }
+  ' "$1" | while IFS="$(printf '\t')" read -r k v; do
+      def="${v%% —*}"
+      [ "${def}" = "${v}" ] && def="${v%%—*}"
+      rest="${v#* —}"
+      [ "${rest}" = "${v}" ] && rest="${v}"
+      flags=""
+      case "${v}" in
+      *"["*"]"*) flags="$(printf '%s' "${v}" | sed -n 's/.*\[\([^]]*\)\].*/\1/p')" ;;
+      esac
+      desc="${rest%%\[*}"
+      printf '%s\t%s\t%s\t%s\n' "${k}" "${def}" "$(printf '%s' "${desc}" | sed 's/^ *//; s/ *$//')" "${flags}"
+    done
 }
 
 # Generic `config` action for KEY=value-store modules (spec §Configuration).
@@ -268,7 +298,7 @@ cfg_action() { # $@ = config sub-args
       case " ${flags} " in *" knob "*) continue ;; esac
       cur="$(cfg_kv_get "${CFG_STORE}" "${key}")"
       if [ -n "${cur}" ]; then
-        if cfg_secret_p "${key}" || case " ${flags} " in *" secret "*) true ;; *) false ;; esac; then
+        if cfg_secret_p "${key}" || case " ${flags} " in *" secret "*) true ;; *) false ;; esac then
           shown="$(cfg_mask)"
         else
           shown="${cur}"
@@ -307,7 +337,8 @@ cfg_action() { # $@ = config sub-args
   unset)
     [ -n "$k" ] || die "usage: config unset <KEY>"
     cfg_kv_unset "${CFG_STORE}" "$k"
-    local def; def="$(cfg_env_declare "${CFG_YAML}" | awk -F'\t' -v k="$k" '$1==k{print $2}')"
+    local def
+    def="$(cfg_env_declare "${CFG_YAML}" | awk -F'\t' -v k="$k" '$1==k{print $2}')"
     ok "unset ${k} (back to default: ${def:-<builtin>})"
     [ -n "${CFG_APPLY}" ] && log "apply when ready: ${CFG_APPLY}"
     ;;

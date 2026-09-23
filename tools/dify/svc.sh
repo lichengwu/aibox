@@ -68,9 +68,9 @@ restart)
 config)
   ROOT="$(deploy_root)"
   CFG_YAML="${DIR}/module.yaml" \
-  CFG_STORE="${ROOT}/.env" \
-  CFG_APPLY="aibox dify restart" \
-  cfg_action "$@"
+    CFG_STORE="${ROOT}/.env" \
+    CFG_APPLY="aibox dify restart" \
+    cfg_action "$@"
   ;;
 status | dashboard)
   compose ps

@@ -624,13 +624,17 @@ render_dashboard() {
   case "$(uname -s)" in
   Darwin)
     # launchctl print (the show_status-proven query; modern launchctl list
-    # prints a JSON-ish blob whose first field is "{" — not a PID table)
+    # prints a JSON-ish blob whose first field is "{" — not a PID table).
+    # ONE call captures both pid and state (the previous shape called it
+    # twice — a race window between the two reads and a wasted fork).
     # || true: without a running service launchctl exits 1 — under set -o
     # pipefail that FAILED STATUS rides the pipeline into the assignment and
     # errexit kills the whole function (live-caught on the macOS CI runner,
     # where no pi-web service exists; the dev machine's running service masked it)
-    _pid="$(launchctl print "gui/${UID_}/${LABEL}" 2>/dev/null | awk '/^[[:space:]]*pid[[:space:]]*=/{print $3; exit}' || true)"
-    if launchctl print "gui/${UID_}/${LABEL}" 2>/dev/null | grep -qE 'state[[:space:]]*=[[:space:]]*running'; then
+    local _lcout=""
+    _lcout="$(launchctl print "gui/${UID_}/${LABEL}" 2>/dev/null || true)"
+    _pid="$(printf '%s\n' "${_lcout}" | awk '/^[[:space:]]*pid[[:space:]]*=/{print $3; exit}')"
+    if printf '%s\n' "${_lcout}" | grep -qE 'state[[:space:]]*=[[:space:]]*running'; then
       svc_state="running${_pid:+ (pid ${_pid})}"
     else
       svc_state="not running (aibox pi-web start)"

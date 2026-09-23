@@ -22,9 +22,9 @@ restart)
 # their next start).
 config)
   CFG_YAML="${DIR}/module.yaml" \
-  CFG_STORE="${ENV_FILE}" \
-  CFG_APPLY="aibox base restart" \
-  cfg_action "$@"
+    CFG_STORE="${ENV_FILE}" \
+    CFG_APPLY="aibox base restart" \
+    cfg_action "$@"
   ;;
 status | dashboard)
   cmd_status
