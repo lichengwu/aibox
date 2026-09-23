@@ -509,7 +509,7 @@ DECL
         [ -n "${rdkey}" ] || continue
         grep -qE "^  ${rdkey}:" "$f" || warn "README documents \`${rdkey}\` but module.yaml env: does not declare it (not CLI-discoverable: aibox ${m} --help)"
       done <<READM
-$(grep -oE '^\| \`+[A-Z_][A-Z0-9_]+\`+' "$d/README.md" | sed -E 's/^\| \`+//; s/\`+$//' | sort -u)
+$(grep -oE '^\| \`[A-Z_][A-Z0-9_]+\`' "$d/README.md" | grep -oE '[A-Z_][A-Z0-9_]+' | sort -u)
 READM
     fi
   fi
