@@ -263,6 +263,34 @@ bash -e -c '[[ a == b ]] || false; echo X' # → exits 1 (correct — the workar
 
 **Detection**: a test that should obviously fail passes locally — re-run it on ubuntu (`docker run --rm -v "$PWD":/repo -w /repo ubuntu:24.04` + `apt-get install bats`) before trusting it.
 
+### #11 macOS bash 3.2 (arm64-darwin26 build): `[[ == ]]` glob pattern ending in a multibyte character never matches
+
+**Symptom**: an assertion like `[[ "$output" == *"pi-web"*"· ✓" ]]` fails on the dev Mac while the output plainly contains `pi-web · ✓ running`; the same content matched on CI (ubuntu bash 5).
+
+**Root cause** (measured, minimal repro, `/bin/bash 3.2.57 arm64-apple-darwin26`):
+
+```bash
+out="pi-web · ✓ running"
+[[ "$out" == *"· ✓" ]]    # → NO  (never matches — pattern ENDS with multibyte ✓)
+[[ "$out" == *"· ✓"* ]]   # → YES (trailing * restores matching)
+case "$out" in *"· ✓") echo YES;; esac   # → YES (case is unaffected)
+[[ "$out" == *"✓ running"* ]] # → YES (multibyte followed by ASCII is fine)
+```
+
+A `[[ == ]]` glob whose LAST quoted segment ends with a multibyte character
+(✓ ⚠ ○ · — …) fails to match on this build; an ASCII tail, a trailing `*`,
+or a runtime-expanded pattern (`*"· ${seg}"`) all work. `case` and `=`
+equality are unaffected. Pairs viciously with pitfall #10 (the failure is
+silently swallowed in mid-test `[[ ]]` on the same machine).
+
+**Fix**: never let a test pattern end with a multibyte character — append a
+trailing `*`, an ASCII char, or restructure (`*"✓ running"*` instead of
+`*"· ✓"`).
+
+**Detection**: `printf '%s' "$pattern" | od -c` the test's literals when an
+assertion contradicts visible output; grep test files for patterns ending in
+multibyte: `grep -rnE '\*"[^"]*[✓✗⚠○·—…]"\]\]' tests/`.
+
 ## License
 
 MIT.

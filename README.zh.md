@@ -33,6 +33,8 @@
   每跳最新 patch、跳间就绪门）。
 - **本地优先的仪表板** —— `aibox dashboard` 从本地元数据渲染状态（✓ ok /
   ⚠ starting / ○ stopped）、端点、凭据、端口监听；异步探测永不阻塞视图。
+  每个模块块头部是部署的**应用版本**（npm 包 / 镜像 tag / 内核 tag；aibox
+  封装脚本版本沉在暗色尾行）——总览、详情、模块富视图统一同一套 keyline 模板。
 - **逐模块离线帮助** —— `aibox <module> --help` 渲染动作表（来自模块自己的
   `usage:` 映射）；`aibox <module> <action> --help` 渲染单个动作。
 - **默认安全** —— 每个破坏性动词都有交互确认（卸载先确认、再确认是否删数据；
@@ -73,7 +75,7 @@ AIBOX_VERIFY=1         curl -fsSL …/install.sh | bash   # 校验 release 的 S
 ```bash
 aibox install pi-web        # 预检门控的模块安装
 aibox pi-web start          # 服务生命周期：start / stop / restart / status / logs
-aibox dashboard             # 全部模块：状态、端点、凭据、端口
+aibox dashboard             # 全部模块：应用版本、状态、端点、凭据、端口
 ```
 
 部署共享的 PostgreSQL + Redis 基座，再装一个消费它的模块：
@@ -101,7 +103,7 @@ aibox upgrade <module> [flags]    升级部署的上游版本（dockerhub/github
                                   update ≠ upgrade：脚本版本 vs 上游应用版本
 aibox check <module>|self         预检演练；self = 环境检查
 aibox dashboard [--available]     总览（已安装模块）/ 目录
-aibox dashboard <module>          单模块详情 + 健康探测
+aibox dashboard <module>          单模块详情 + 健康探测（头部显示应用版本）
 aibox purge [<module>...|self]    残留扫描/清理（默认 dry-run；--apply 先确认、
                                   再问是否停运行中容器）
 aibox proxy {show|set|on|off|…}   静态出口代理配置（全局）
@@ -131,8 +133,8 @@ aibox <module> <action> --help    单个动作的用法（参数 + 描述）
 随时查看实际端口和端点：
 
 ```bash
-aibox dashboard            # 端口表 + 每个已安装模块的监听状态
-aibox dashboard <module>   # 单模块端点 + 健康
+aibox dashboard            # 版本 + 端口表 + 每个已安装模块的监听状态
+aibox dashboard <module>   # 单模块应用版本 + 端点 + 健康
 aibox <module> status      # 同上，来自模块本身
 ```
 

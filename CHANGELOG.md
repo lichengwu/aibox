@@ -7,6 +7,30 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [Unreleased]
+
+### Added
+
+- **Dashboard: app vs module versions, one keyline template** — every dashboard now leads
+  with the deployed **app version** (cyan header: npm package / image tag / kernel tag /
+  dispatched CLI) and sinks the **aibox module version** to a dim footer row; the old
+  ambiguous `· module <ver>` header is gone everywhere. `dashboard_info`'s `version=`
+  key now feeds the manager views' header (the `upstream:` label is retired). Shared
+  `dash_header`/`dash_row`/`dash_module_row` helpers (`_shared/common.sh`) unify the
+  module rich views, the overview and the detail view: colon-free label grid, health
+  merged into the endpoint row, dim keyline rules. New modules scaffold the template
+  and the validator WARNs on gaps (S18/S19).
+
+### Fixed
+
+- **pi-web health mis-report**: an HTTP 307 redirect (the normal authed answer) was
+  reported `⚠ starting` — now 2xx/3xx/401 count as healthy, aligned with the manager's
+  verdict table.
+- Four modules rendered stale hardcoded module versions (new-api `1.1.0`, dify `1.17.2`,
+  gitlab `1.2.1`, xiaozhi `1.0.1` — vs their module.yaml): all read module.yaml now.
+- `aibox <module> dashboard` no longer interleaves raw `launchctl`/`lsof` dumps with the
+  rich view (raw detail stays in `diagnose`).
+
 ## [0.11.0] — 2026-09-23
 
 ### Highlights

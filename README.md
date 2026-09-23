@@ -38,7 +38,9 @@ dependencies, no package manager, works on the bash 3.2 that ships with macOS.
   each hop on the latest patch, readiness-gated between hops).
 - **Local-first dashboards** — `aibox dashboard` renders state (✓ ok / ⚠ starting /
   ○ stopped), endpoints, credentials, port listeners from local metadata; async probes
-  never block the view.
+  never block the view. Every block leads with the deployed **app version** (npm
+  package / image tag / kernel tag; the aibox module packaging version is the dim
+  footer row) — one keyline template across overview, detail and module rich views.
 - **Per-module help, offline** — `aibox <module> --help` renders an action table from
   the module's own `usage:` map; `aibox <module> <action> --help` renders the single action.
 - **Safe by default** — every destructive verb confirms interactively (uninstall asks,
@@ -80,7 +82,7 @@ AIBOX_VERIFY=1         curl -fsSL …/install.sh | bash   # check the release SH
 ```bash
 aibox install pi-web        # preflight-gated module install
 aibox pi-web start          # service lifecycle: start / stop / restart / status / logs
-aibox dashboard             # all modules: state, endpoints, credentials, ports
+aibox dashboard             # all modules: app versions, state, endpoints, credentials, ports
 ```
 
 Deploy a shared PostgreSQL + Redis base, then a module that uses it:
@@ -109,7 +111,7 @@ aibox upgrade <module> [flags]    bump the deployed UPSTREAM version (dockerhub 
                                   scripts vs upstream app version
 aibox check <module>|self         preflight dry-run; self = environment check
 aibox dashboard [--available]     overview (installed modules) / catalog
-aibox dashboard <module>          single-module detail + health probe
+aibox dashboard <module>          single-module detail + health probe (app version in the header)
 aibox purge [<module>...|self]    residue scan/cleanup (dry-run by default; --apply
                                   confirms, then asks about RUNNING containers)
 aibox proxy {show|set|on|off|…}   static egress proxy config (global)
@@ -142,8 +144,8 @@ an alias of `status` at the module level.
 Find the actual ports and endpoints at any time:
 
 ```bash
-aibox dashboard            # the port table + listeners for every installed module
-aibox dashboard <module>   # the single module's endpoint + health
+aibox dashboard            # versions + the port table + listeners for every installed module
+aibox dashboard <module>   # the single module's app version + endpoint + health
 aibox <module> status      # same, from the module itself
 ```
 

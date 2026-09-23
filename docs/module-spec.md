@@ -670,7 +670,7 @@ Called by `aibox dashboard` / `aibox <module> dashboard`.
 | --- | --- | --- |
 | `endpoint` | the service URL | annotated `(stopped — aibox <module> start)` when the state is stopped |
 | `credential` | auth hint | rendered as `auth:` |
-| `version` | deployed upstream version | rendered as `upstream:`; feeds the async updates comparison |
+| `version` | deployed app version | the keyline header segment (cyan); first token feeds the async updates comparison; `version=` is REQUIRED (validator S19) |
 | `state` | **machine-readable service state** — one of `ok` / `starting` / `stopped` / `na` | the overview renders the composite icon: `✓` ok (green) · `⚠` starting (yellow) · `○` stopped (dim) · `na` = no marker (CLI-type modules — openmaic/windmill: their state is a remote deploy's, `aibox <module> status` is the real view). The probe is the module's own (pg_isready / http_up / docker health) — local-only, so the local-first rule holds. Stale caches without `state=` fall back to the declared-port listening heuristic. |
 | `health` | human detail line | free text: probe verdict, starting hint, or the copy-paste probe command |
 | `log` | log location | rendered as `log:` |
@@ -688,6 +688,49 @@ dashboard_info() {
   fi
 }
 ```
+
+### Dashboard template (keyline)
+
+Spec source: `docs/superpowers/specs/2026-09-23-dashboard-app-version-keyline-design.md`.
+
+Every dashboard surface (module rich view via `render_dashboard`, manager
+overview, manager detail view) renders the SAME keyline template, from shared
+helpers in `tools/_shared/common.sh` (`dash_header` / `dash_row` /
+`dash_module_row` / `dash_rule` / `dash_secheader`; bin/aibox inlines twins):
+
+```text
+pi-web 0.9.3 · ✓ running
+────────────────────────────────────────────
+  service    launchd · pid 38243
+  endpoint   http://127.0.0.1:30141 · HTTP 307 ✓
+  auth       pi / ai-coding
+  log        ~/Library/Logs/pi-web.log
+  module     1.3.5 · ~/.aibox/modules/pi-web/
+```
+
+Rules:
+
+- **Two versions, two places**: the **app version** (deployed software: npm
+  package / image tag / kernel tag / dispatched CLI) is the cyan header
+  segment, reported by `dashboard_info`'s `version=` and, in rich views, an
+  `app_version()` helper; the **module version** (aibox packaging,
+  module.yaml `version:`) is the SUNK last row — whole row dim. Never show
+  the module version where the app version is expected.
+- `dash_header <name> <appver> <state>`: appver `""` omits the segment;
+  states `ok|running` → `✓`, `starting` → `⚠`, `stopped` → `○`,
+  `na`/`""` → no segment. Manager overview headers show the icon only.
+- `dash_row <label> <value>`: ASCII label ≤10 chars in a `%-10s` grid, NO
+  colon; values verbatim — never byte-truncate (CJK stays ragged-right,
+  pitfall #6).
+- Rule width: TTY → `tput cols` clamped [40,72]; non-TTY → 64. `─` literals
+  are complete characters, never sliced.
+- `health=` merges into the endpoint row (`<url> · <health>`); `state=stopped`
+  appends the dim `(stopped — aibox <module> start)` hint instead.
+- `dashboard`/`status` actions render the keyline view only; raw
+  launchctl/systemctl/lsof dumps belong to `diagnose`.
+- New modules: the scaffolder emits the skeleton (app_version TODO +
+  dashboard_info with `version=` + render_dashboard via dash_header);
+  the validator WARNs on gaps (S18/S19).
 
 ### DB naming convention (shared base, spec §5.4)
 
