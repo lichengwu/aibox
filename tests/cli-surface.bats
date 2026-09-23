@@ -72,14 +72,23 @@ EOF
   run bash "$REPO_ROOT/bin/aibox" dashboard
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   # two profile sections (base + named profile), grouped separately
-  [[ "$output" == *"profile base"* ]]
-  [[ "$output" == *"profile work"* ]]
-  # per-module blocks: ✓ + name, endpoint/auth lines from dashboard_info
-  [[ "$output" == *"✓ base 1.2.1"* ]]
-  [[ "$output" == *"✓ new-api 1.0.1"* ]]
-  [[ "$output" == *"endpoint: pg://127.0.0.1:35432"* ]]
-  [[ "$output" == *"endpoint: http://127.0.0.1:30300"* ]]
-  [[ "$output" == *"upstream: v0.13.2"* ]]
+  [[ "$output" == *"profile base"* ]] || false
+  [[ "$output" == *"profile work"* ]] || false
+  # per-module keyline blocks: icon + bold name + app version (new-api mock has
+  # version=v0.13.2 → header carries it, v-stripped; base has none → dim
+  # module-version fallback 1.2.1)
+  [[ "$output" == *"── profile base"* ]] || false
+  [[ "$output" == *"✓ base 1.2.1"* ]] || false
+  [[ "$output" == *"✓ new-api 0.13.2"* ]] || false
+  # rows: colon-free grid, health merged into the endpoint row
+  [[ "$output" == *"pg://127.0.0.1:35432 · ok"* ]] || false
+  [[ "$output" == *"endpoint"*"http://127.0.0.1:30300"* ]] || false
+  [[ "$output" == *"auth"*"first login"* ]] || false
+  # version= is header-only now (upstream: label retired); sunk module row
+  [[ "$output" != *"upstream:"* ]] || false
+  [[ "$output" == *"module"*"1.0.1 · "*"modules/new-api/"* ]] || false
+  # health= is consumed by the endpoint merge — never a standalone row
+  [[ "$output" != *"health "* ]] || false
 }
 
 @test "dashboard overview: empty state + residue section for not-installed leftovers" {
@@ -93,11 +102,11 @@ EOF
   printf 'dashboard_info() { echo "endpoint=pg://x"; }\n' >"$AIBOX_HOME/modules/base/lib.sh"
   run bash "$REPO_ROOT/bin/aibox" dashboard
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [[ "$output" == *"✓ base"* ]]
-  [[ "$output" == *"residue"* ]]
-  [[ "$output" == *"gitlab"* ]]
+  [[ "$output" == *"✓ base"* ]] || false
+  [[ "$output" == *"── residue"* ]] || false
+  [[ "$output" == *"gitlab"* ]] || false
   # gitlab is NOT in a profile section (not installed)
-  [[ "$output" != *"✓ gitlab"* ]]
+  [[ "$output" != *"✓ gitlab"* ]] || false
 }
 
 @test "dashboard detail: local-first — installed module renders with a dead registry" {
@@ -286,21 +295,23 @@ EOF2
     [ "$status" -eq 0 ] || { echo "state=$st"; echo "$output"; false; }
     case "$st" in
     ok)
-      [[ "$output" == *"✓ new-api 1.1.1 · ok"* ]]
-      [[ "$output" != *"state:"* ]]  # consumed by the header, never a detail line
+      # keyline: icon-only header (the state word is gone — icon expresses it)
+      [[ "$output" == *"✓ new-api 1.1.1"* ]] || false
+      [[ "$output" != *"· ok"* ]] || false
+      [[ "$output" != *"state"* ]] || false   # consumed by the header, never a row
       ;;
     starting)
-      [[ "$output" == *"⚠ new-api 1.1.1 · starting"* ]]
+      [[ "$output" == *"⚠ new-api 1.1.1"* ]] || false
       ;;
     stopped)
-      [[ "$output" == *"○ new-api 1.1.1 · stopped"* ]]
-      # the endpoint line carries the actionable hint
-      [[ "$output" == *"endpoint: http://127.0.0.1:30300 (stopped — aibox new-api start)"* ]]
+      [[ "$output" == *"○ new-api 1.1.1"* ]] || false
+      # the endpoint row carries the actionable hint (colon-free grid)
+      [[ "$output" == *"http://127.0.0.1:30300 (stopped — aibox new-api start)"* ]] || false
       ;;
     na)
       # CLI-type module: plain header, no icon, no state word
-      [[ "$output" == *"  new-api 1.1.1"* ]]
-      [[ "$output" != *"· ok"* && "$output" != *"· stopped"* ]]
+      [[ "$output" == *"  new-api 1.1.1"* ]] || false
+      [[ "$output" != *"· ok"* && "$output" != *"· stopped"* ]] || false
       ;;
     esac
   done
@@ -316,7 +327,7 @@ EOF2
   printf 'dashboard_info() { echo "endpoint=http://127.0.0.1:30300"; }\n' \
     >"$AIBOX_HOME/modules/new-api/lib.sh"
   run bash "$REPO_ROOT/bin/aibox" dashboard
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"✓ new-api 1.1.1"* ]]
-  [[ "$output" != *"· ok"* && "$output" != *"· stopped"* ]]
+  [ "$status" -eq 0 ] || false
+  [[ "$output" == *"✓ new-api 1.1.1"* ]] || false
+  [[ "$output" != *"· ok"* && "$output" != *"· stopped"* ]] || false
 }
