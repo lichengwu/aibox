@@ -498,18 +498,25 @@ ENVLIST
     # CLI-discoverable surface; the README table is the documented one —
     # they must not drift apart (the gap the config system closed)
     if [ -f "$d/README.md" ]; then
-      local rdkey
+      local rdkey readm_keys
+      # NOTE the BARE backtick in the pattern: '\`' (backslash-backtick) is an
+      # escaped backtick on BSD grep but a LITERAL backslash+backtick on GNU —
+      # the divergence silently emptied this list on Linux (measured: the drift
+      # WARN fired on macOS, never on CI).
+      readm_keys="$(grep -oE '^\| `[A-Z_][A-Z0-9_]+' "$d/README.md" 2>/dev/null | grep -oE '[A-Z_][A-Z0-9_]+' | sort -u || true)"
       while IFS= read -r ekey; do
         [ -n "${ekey}" ] || continue
-        grep -qE "\`+${ekey}\`+" "$d/README.md" || warn "env key ${ekey} is declared but not documented in README.md"
+        grep -qF "\`${ekey}\`" "$d/README.md" || warn "env key ${ekey} is declared but not documented in README.md"
       done <<DECL
 $(sed -n '/^env:/,/^[a-zA-Z]/p' "$f" | grep -oE '^  [A-Z_][A-Z0-9_]*' | sed 's/^  //')
 DECL
       while IFS= read -r rdkey; do
         [ -n "${rdkey}" ] || continue
+        # trailing underscore = a prefix-glob row (DB_*, REDIS_*) — not a key
+        case "${rdkey}" in *_) continue ;; esac
         grep -qE "^  ${rdkey}:" "$f" || warn "README documents \`${rdkey}\` but module.yaml env: does not declare it (not CLI-discoverable: aibox ${m} --help)"
       done <<READM
-$(grep -oE '^\| \`[A-Z_][A-Z0-9_]+\`' "$d/README.md" | grep -oE '[A-Z_][A-Z0-9_]+' | sort -u)
+${readm_keys}
 READM
     fi
   fi

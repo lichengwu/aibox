@@ -183,7 +183,7 @@ upstream:
 @test "pi-web config: set writes the plist (runtime key mapping), get reads it back" {
   # write_service → resolve_node requires node >= 22 (CI runners ship 20)
   command -v node >/dev/null 2>&1 || skip "node unavailable"
-  node -e 'process.versions.node.split(".")[0] >= 22' 2>/dev/null || skip "node < 22 (write_service floor)"
+  node -e 'if (+process.versions.node.split(".")[0] < 22) process.exit(1)' 2>/dev/null || skip "node < 22 (write_service floor)"
   # PLIST lives under the sandbox HOME; write_service regenerates it with
   # resolve_node + npm prefix (both work locally). The aibox-facing key
   # PI_WEB_BIND is stored as the app's runtime name PI_WEB_HOSTNAME.
