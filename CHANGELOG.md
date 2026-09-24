@@ -7,6 +7,23 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.14.0] — 2026-09-24
+
+### Added
+
+- **Declared service dependencies auto-install first** — `aibox install xiaozhi`
+  (`services: base:postgres#xiaozhi`) previously died with "fix: aibox install base";
+  `cmd_install` now resolves the declared chain and installs missing providers BEFORE
+  the target (recursive, cycle-guarded, same profile/flags inherit; a failed provider
+  aborts the target). `AIBOX_NO_AUTO_DEPS=1` restores the manual gate.
+
+### Fixed
+
+- `cmd_install`: the install hook's exit status is now checked explicitly — in a
+  condition context (the dependency path) `set -e` is suspended for the whole body,
+  so a failing hook was swallowed and the module still marked installed (live-caught
+  by the new dep-failure test).
+
 ## [0.13.5] — 2026-09-24
 
 ### Changed
@@ -807,6 +824,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.14.0]: https://github.com/lichengwu/aibox/compare/v0.13.5...v0.14.0
 [0.13.5]: https://github.com/lichengwu/aibox/compare/v0.13.4...v0.13.5
 [0.13.4]: https://github.com/lichengwu/aibox/compare/v0.13.3...v0.13.4
 [0.13.3]: https://github.com/lichengwu/aibox/compare/v0.13.2...v0.13.3
