@@ -82,97 +82,11 @@ compose_images() {
   compose config --images 2>/dev/null || true
 }
 
-# ---------- ghcr.io download source pool (pull-via-mirror + tag) ----------
-# The server/web images live on ghcr.io — a DIFFERENT registry family than
-# docker.io (the docker.io mirrors do NOT proxy it). ghcr.io direct is often
-# slow/blocked from CN networks (measured by the windmill module: ~0.5 MB/s
-# direct vs ~62 MB/s via ghcr.nju.edu.cn — upstream's own compose ships the
-# NJU mirror). Approach (the windmill WM_GHCR_MIRROR technique): mirrors
-# transparently proxy IDENTICAL digests, so pull `<mirror>/<path>` then
-# `docker tag` it as the official ghcr.io/<path> — compose keeps official refs
-# and finds the images cached.
-# Route selection: uncached ghcr images are first pulled DIRECT with a bounded
-# watchdog (AIBOX_GHCR_DIRECT_TIMEOUT, 120s): fast links finish with zero
-# overhead; slow-but-alive links get cut (harmless — the mirror re-serves the
-# same digest) and dead links fail fast into the mirror list. Mirrors are then
-# tried in ORDER with per-source failover (sequential — the images are
-# 0.7-1.5GB; concurrent duplicate probes through every mirror would multiply
-# the traffic, and ghcr.nju.edu.cn is measured-fast).
-# Knobs: AIBOX_GHCR_POOL (mirror list override; "direct" = pool disabled),
-# AIBOX_GHCR_MIRROR (your mirror, tried first), AIBOX_GHCR_DIRECT_TIMEOUT
-# (120), AIBOX_GHCR_PULL_TIMEOUT (1800), AIBOX_DOCKER_POLL (watchdog interval).
-GHCR_POOL_MIRRORS="ghcr.nju.edu.cn ghcr.dockerproxy.net"
-
-# Mirror-prefixed ref for a ghcr.io image (empty for non-ghcr refs).
-_ghcr_mirror_ref() { # $1=mirror-host $2=image-ref
-  case "${2}" in
-  ghcr.io/*) printf '%s/%s' "${1}" "${2#ghcr.io/}" ;;
-  *) printf '%s' "" ;;
-  esac
-}
-
-# Pre-pull uncached ghcr.io images through the mirror pool.
-ghcr_pool_prepull() { # $@ = image refs
-  case "${AIBOX_GHCR_POOL:-}" in
-  direct | none | off) return 0 ;;
-  esac
-  local img uncached=""
-  # 1. filter: cached images + non-ghcr refs
-  for img in "$@"; do
-    docker image inspect "${img}" >/dev/null 2>&1 && continue
-    case "${img}" in
-    ghcr.io/*) uncached="${uncached}${uncached:+ }${img}" ;;
-    esac
-  done
-  [ -n "${uncached}" ] || return 0
-  # 2. direct attempt (bounded): fast links finish here — zero overhead.
-  #    Slow/dead links get cut/fail and fall to the mirrors.
-  # shellcheck disable=SC2086
-  for img in ${uncached}; do
-    if _dk_bounded "${AIBOX_GHCR_DIRECT_TIMEOUT:-120}" pull "${img}"; then
-      ok "pulled ${img} (direct)"
-    else
-      warn "ghcr: direct route slow/unusable for ${img} — engaging the mirror pool"
-      _ghcr_mirror_pull "${img}" || warn "ghcr: mirror pool could not pull ${img} — compose will try direct"
-    fi
-  done
-}
-
-# Pull ONE image via the ordered mirror list, per-source failover + retag.
-_ghcr_mirror_pull() { # $1 = official ghcr.io ref
-  local img="$1" m mirrors full done1
-  mirrors="${AIBOX_GHCR_MIRROR:-}"
-  mirrors="${mirrors}${mirrors:+ }${AIBOX_GHCR_POOL:-${GHCR_POOL_MIRRORS}}"
-  done1=0
-  # shellcheck disable=SC2086
-  for m in ${mirrors}; do
-    full="$(_ghcr_mirror_ref "${m}" "${img}")"
-    [ -n "${full}" ] || continue
-    log "docker pull ${full} (mirror ${m}, watchdog ${AIBOX_GHCR_PULL_TIMEOUT:-1800}s)"
-    if _dk_bounded "${AIBOX_GHCR_PULL_TIMEOUT:-1800}" pull "${full}"; then
-      docker tag "${full}" "${img}" || {
-        warn "docker tag failed: ${full} → ${img}"
-        continue
-      }
-      docker rmi "${full}" >/dev/null 2>&1 || true
-      ok "pulled ${img} via ${m}"
-      done1=1
-      break
-    fi
-    warn "ghcr: mirror ${m} failed for ${img} — trying the next"
-  done
-  [ "${done1}" = "1" ]
-}
-
-# Unified pre-pull entry: routes each image to its registry family's pool
-# (ghcr → ghcr pool; docker.io → docker.io pool; other registries → direct).
-images_pool_prepull() { # $@ = image refs
-  local imgs_all="$*"
-  # shellcheck disable=SC2086
-  ghcr_pool_prepull ${imgs_all} || true
-  # shellcheck disable=SC2086
-  docker_pool_prepull ${imgs_all} || true
-}
+# ---------- ghcr.io + docker.io source pools ----------
+# Migrated to tools/_shared/common.sh (spec §Docker source selector — one
+# selector, per-family transport, shared dockerpool.cache ranking): ghcr_pool_prepull /
+# docker_pool_prepull / images_pool_prepull now ship in _common.sh. The windmill
+# module's remote WM_GHCR_MIRROR knob (deploy-host CLI) is unaffected.
 
 # ---------- health ----------
 # Is a named container running? (docker ps + fixed names — the compose

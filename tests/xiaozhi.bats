@@ -17,7 +17,7 @@ setup() {
     AIBOX_GHCR_POOL AIBOX_GHCR_MIRROR AIBOX_GHCR_DIRECT_TIMEOUT \
     AIBOX_GHCR_PULL_TIMEOUT \
     XIAOZHI_WS_PORT XIAOZHI_CONSOLE_PORT XIAOZHI_HTTP_PORT \
-    XIAOZHI_SERVER_IMAGE XIAOZHI_WEB_IMAGE || true
+    XIAOZHI_SERVER_IMAGE XIAOZHI_WEB_IMAGE AIBOX_DOCKER_POOL_TTL || true
   export AIBOX_DOCKER_POLL=0.2
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 
@@ -198,6 +198,7 @@ teardown() {
 
 @test "ghcr pool: first mirror dead → failover to the second" {
   export FAKE_DOCKER_DIRECT_MODE=dead FAKE_DOCKER_GHCRNJU_MODE=dead
+  export AIBOX_GHCR_POOL="ghcr.nju.edu.cn ghcr.dockerproxy.net"
   export AIBOX_GHCR_DIRECT_TIMEOUT=2 AIBOX_GHCR_PULL_TIMEOUT=5
   run ghcr_pool_prepull "ghcr.io/xinnan-tech/xiaozhi-esp32-server:web_0.9.6"
   [ "$status" -eq 0 ]
@@ -342,4 +343,54 @@ teardown() {
   run bash -c "set -euo pipefail; PATH=/usr/bin:/bin; . '$REPO_ROOT/tools/xiaozhi/lib.sh'; render_dashboard"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"not running (aibox xiaozhi start)"* ]] || false
+}
+
+# ---------- GHCR family: sticky-winner cache (dockerpool.cache, GHCR family) ----------
+
+@test "GHCR cache: mirror win persists the sticky order (winner first)" {
+  export FAKE_DOCKER_DIRECT_MODE=dead
+  export AIBOX_GHCR_POOL="ghcr.nju.edu.cn ghcr.dockerproxy.net"
+  export AIBOX_GHCR_DIRECT_TIMEOUT=2 AIBOX_GHCR_PULL_TIMEOUT=5
+  run ghcr_pool_prepull "ghcr.io/xinnan-tech/xiaozhi-esp32-server:web_0.9.6"
+  [ "$status" -eq 0 ]
+  [ -f "$AIBOX_HOME/dockerpool.cache" ] || false
+  [ "$(_dkcache_read GHCR)" = "ghcr.nju.edu.cn ghcr.dockerproxy.net" ] || false
+}
+
+@test "GHCR cache: sticky entry skips the dead direct route on the next run" {
+  export FAKE_DOCKER_DIRECT_MODE=dead
+  export AIBOX_GHCR_POOL="ghcr.nju.edu.cn ghcr.dockerproxy.net"
+  export AIBOX_GHCR_DIRECT_TIMEOUT=2 AIBOX_GHCR_PULL_TIMEOUT=5
+  ghcr_pool_prepull "ghcr.io/xinnan-tech/xiaozhi-esp32-server:web_0.9.6" >/dev/null 2>&1
+  docker rmi "ghcr.io/xinnan-tech/xiaozhi-esp32-server:web_0.9.6" >/dev/null 2>&1 || true
+  : >"$FAKE_DOCKER_PULLLOG"
+  run ghcr_pool_prepull "ghcr.io/xinnan-tech/xiaozhi-esp32-server:web_0.9.6"
+  [ "$status" -eq 0 ]
+  # the direct attempt (bare ghcr.io/… ref) must be SKIPPED — known dead within TTL
+  if grep -q '^PULL ghcr\.io/' "$FAKE_DOCKER_PULLLOG"; then
+    echo "unexpected direct attempt: $(cat "$FAKE_DOCKER_PULLLOG")"
+    false
+  fi
+  grep -q '^PULL ghcr\.nju\.edu\.cn/' "$FAKE_DOCKER_PULLLOG" || false
+}
+
+@test "GHCR cache: direct healthy → recorded as direct, mirrors not engaged" {
+  export FAKE_DOCKER_DIRECT_MODE=ok
+  export AIBOX_GHCR_DIRECT_TIMEOUT=2 AIBOX_GHCR_PULL_TIMEOUT=5
+  run ghcr_pool_prepull "ghcr.io/xinnan-tech/xiaozhi-esp32-server:web_0.9.6"
+  [ "$status" -eq 0 ]
+  [ "$(_dkcache_read GHCR)" = "direct" ] || false
+  grep -q '^PULL ghcr\.io/xinnan-tech/xiaozhi-esp32-server:web_0\.9\.6$' "$FAKE_DOCKER_PULLLOG" || false
+}
+
+@test "GHCR cache: all mirrors dead → entry invalidated (self-heal → direct retried next run)" {
+  export FAKE_DOCKER_DIRECT_MODE=dead FAKE_DOCKER_GHCRNJU_MODE=dead FAKE_DOCKER_GHDPROXY_MODE=dead
+  export AIBOX_GHCR_POOL="ghcr.nju.edu.cn ghcr.dockerproxy.net"
+  export AIBOX_GHCR_DIRECT_TIMEOUT=1 AIBOX_GHCR_PULL_TIMEOUT=2
+  run ghcr_pool_prepull "ghcr.io/xinnan-tech/xiaozhi-esp32-server:web_0.9.6"
+  [ "$status" -eq 0 ]
+  if grep -q $'^GHCR\t' "$AIBOX_HOME/dockerpool.cache" 2>/dev/null; then
+    echo "cache not invalidated: $(cat "$AIBOX_HOME/dockerpool.cache")"
+    false
+  fi
 }
