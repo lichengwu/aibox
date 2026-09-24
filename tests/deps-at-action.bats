@@ -210,7 +210,7 @@ EOF
 }
 
 @test "ensure_shared_base: an already-up base is a silent no-op (no start call)" {
-  local mods="$SANDBOX/mods2"
+  local mods2="$SANDBOX/mods2"
   mkdir -p "$mods2/base"
   cat >"$mods2/base/svc.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -245,7 +245,7 @@ EOF
 }
 
 @test "ensure_shared_base: a base that cannot start dies with the logs hint" {
-  local mods="$SANDBOX/mods4"
+  local mods4="$SANDBOX/mods4"
   mkdir -p "$mods4/base"
   printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'exit 1' >"$mods4/base/svc.sh"
   chmod +x "$mods4/base/svc.sh"
