@@ -7,6 +7,91 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.15.0] — 2026-09-25
+
+A usability pass over the whole surface: unknown arguments, dependency auto-install,
+service readiness, and the messages around them. Semver: minor — new user-visible
+behaviors and knobs, no breaking changes (defaults keep the previous behavior except
+for message wording).
+
+### Added
+
+- **Typos get a suggestion** — `aibox instal base` used to die as
+  "Unknown module: instal" with no way forward. Unknown verbs AND unknown modules
+  now answer with the closest match (`did you mean: aibox install?`) plus one
+  consistent catalog hint (`aibox dashboard --available`); the hint used to appear
+  on some death paths only.
+- **`aibox check self` covers the JS toolchain** — node/npm are reported alongside
+  docker, and the docker line lost its hardcoded module list ("needed by
+  base/openmaic/windmill" was stale — it missed new-api/dify/gitlab/xiaozhi and node
+  entirely). The list is derived from the installed module metadata, or omitted when
+  nothing declares the tool.
+- **`AIBOX_PM_TIMEOUT` (default 600s)** — package-manager auto-installs are bounded
+  and keep the user informed: the exact command is announced up front, a heartbeat
+  prints every 30s, and on timeout the process tree is killed (children first) with
+  the tail of the package log plus the knob to raise. Live-caught: `install pi-web`
+  sat 10+ minutes inside a node auto-install with zero output. Set `0` to disable.
+- **`AIBOX_STRICT_SERVICES=1`** — makes `aibox install <m>` exit non-zero when a
+  declared service dependency failed to start (default stays exit 0 with the loud
+  warning described under Fixed).
+- **Profile creation reports what it derived** — "Created profile 'x'" now names the
+  derived ports/containers (base: postgres/redis ports + container names; pi-web:
+  port + service label) instead of leaving them to be discovered via `docker ps`.
+- **`require_docker` guard in the shared module library** — docker-using module
+  actions die with "docker CLI not found — this action needs it" instead of a raw
+  `tools/base/lib.sh: line 138: docker: command not found` (exit 127, live-caught on
+  `aibox base status` without docker).
+- **`require_curl` guard** — a missing curl is named as such instead of surfacing as
+  a misleading "Download … failed (check branch/path)".
+- **The catalog explains its VERSION column** — the footer states VERSION = the aibox
+  module version and points at `aibox dashboard <module>` for the deployed app
+  version (the two are easy to confuse side by side).
+
+### Changed
+
+- **Module auto-install dedupes by package set** — `docker` + `docker-compose`
+  (one `apt install docker.io docker-compose-v2`) and `node` + `npm` (one
+  `apt install nodejs npm`) are attempted once per preflight instead of twice; the
+  second entry says why it was skipped.
+- **`AIBOX_NO_AUTO_DEPS=1` covers package-manager installs too** — it used to gate
+  only service-dep installs, so `install x` still shelled out to apt.
+- **Node auto-install skips a knowably-too-old distro candidate** — Ubuntu 24.04
+  ships nodejs 18 while pi-web declares `node:22`: the old flow installed 18,
+  rechecked, failed, and offered no path forward. When `apt-cache policy nodejs`
+  shows a candidate below the requirement, the install is skipped and the exact nvm
+  command is printed.
+- **Package-install failure no longer blames the daemon** — "docker installed but the
+  daemon didn't start" is printed only once the docker CLI actually exists;
+  otherwise the message is about the install (and says so).
+- **The manager resolves `AIBOX_BIN_DIR` with the bootstrap's precedence** — explicit
+  → `~/.local/bin` when already in PATH → an in-PATH writable system dir
+  (`AIBOX_SYSTEM_BIN_DIRS`, default `/usr/local/bin /opt/homebrew/bin`) →
+  `~/.local/bin`. Module CLIs now land where the manager lives on deploy hosts,
+  instead of diverging from the bootstrap's choice indefinitely.
+- **The bootstrap tail distinguishes first install from re-install** — "Install your
+  first module" on a self-update read as nonsense on a host that has modules; a
+  re-install now reports "updated: X → Y" (or "re-installed … already up to date").
+
+### Fixed
+
+- **A service dependency that did not start is now loud** — install used to end with
+  "✓ installed" and exit 0 while the module could not work (live-caught: new-api),
+  leaving the failure buried mid-scroll. The default keeps exit 0 for compatibility
+  but ends with a ⚠ block naming the fix (`aibox base start`) and the verification
+  command; `AIBOX_STRICT_SERVICES=1` opts into a non-zero exit.
+- **Preflight no longer suggests `--skip-checks` for hard failures** — the bypass
+  hint is offered only for soft conditions (disk/domains/docker pull); missing
+  dependencies/commands/services state explicitly that they cannot be bypassed,
+  since bypassing only defers the failure to a confusing mid-install crash.
+- **Re-install says it is re-deploying** — "Installing x" with identical output read
+  as a silent no-op; it now reports `x is already installed (1.4.2) — re-deploying
+  (hooks are idempotent)`.
+- **Purge scans both bin dirs** — the residue map covers the resolved bin dir AND the
+  legacy `~/.local/bin` copy, so pre-0.15 module CLIs are never reported as "clean".
+- `aibox proxy check <url>` with no proxy configured said "Usage: aibox proxy check
+  [url]" — the fix referenced the command that had just failed; it now names
+  `aibox proxy set <url>`.
+
 ## [0.14.0] — 2026-09-24
 
 ### Added
@@ -824,6 +909,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.15.0]: https://github.com/lichengwu/aibox/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/lichengwu/aibox/compare/v0.13.5...v0.14.0
 [0.13.5]: https://github.com/lichengwu/aibox/compare/v0.13.4...v0.13.5
 [0.13.4]: https://github.com/lichengwu/aibox/compare/v0.13.3...v0.13.4

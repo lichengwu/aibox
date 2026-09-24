@@ -171,6 +171,18 @@ mkdir -p "$BIN_DIR" "$HOME_DIR"
 # of the NEW file as garbage when it next reads (observed during self-update:
 # "line 1442: ugh: command not found" — a shard of e.g. "thro*ugh*"). rename(2) leaves the
 # running process on the old inode, safely.
+# First install or re-install/self-update? The tail copy differs — an update
+# used to end with "Install your first module" (nonsense on a host that has
+# modules already; live-caught on the deploy host).
+_prev_ver=""
+if [ -x "$BIN_DIR/aibox" ]; then
+  # `|| true`: the previous binary may be un-runnable (truncated/corrupt) and
+  # install.sh runs under pipefail — a bare capture would abort the re-install
+  # with no message (caught by tests/install-sh.bats, the wrong-pin case).
+  _prev_ver="$("$BIN_DIR/aibox" version 2>/dev/null | awk '{print $2}' || true)"
+  if [ "$_prev_ver" = "unknown" ] || [ "$_prev_ver" = "aibox" ]; then _prev_ver=""; fi
+fi
+
 _TMP_BIN="$(mktemp "$BIN_DIR/.aibox.download.XXXXXX")"
 trap 'rm -f "$_TMP_BIN"' EXIT
 
@@ -273,5 +285,15 @@ else
   log "apply now:  export PATH=\"${BIN_DIR}:\$PATH\"      (or: exec \$SHELL -l)"
 fi
 
-log "Done. Now run: aibox help"
-log "Install your first module: aibox install pi-web"
+_new_ver="$("$BIN_DIR/aibox" version 2>/dev/null | awk '{print $2}' || true)"
+if [ -n "$_prev_ver" ]; then
+  if [ -n "$_new_ver" ] && [ "$_prev_ver" != "$_new_ver" ]; then
+    log "Done. aibox updated: ${_prev_ver} → ${_new_ver}"
+  else
+    log "Done. aibox re-installed (${_new_ver:-${_prev_ver}}) — already up to date"
+  fi
+  log "Next: aibox dashboard   ·   refresh modules: aibox update --all"
+else
+  log "Done. Now run: aibox help"
+  log "Install your first module: aibox install pi-web"
+fi

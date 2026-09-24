@@ -68,6 +68,7 @@ PROFILE_NAME=$name
 PROFILE_HASH=$h
 EOF
   log "Created profile '$name' (hash=$h)"
+  _PROFILE_JUST_CREATED=1
 }
 
 _profile_load() {
@@ -90,6 +91,11 @@ _profile_load() {
   else
     UNIT_FILE="${UNIT_DIR}/${LABEL}.service"
     LOG_DIR="$HOME/.local/share/${LABEL}/logs"
+  fi
+  # Say what the profile DERIVED (the old copy only said "Created profile")
+  if [ "${_PROFILE_JUST_CREATED:-0}" = "1" ]; then
+    unset _PROFILE_JUST_CREATED
+    log "Profile '${_n}' derived: port=${PORT} · service=${LABEL}"
   fi
 }
 

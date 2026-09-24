@@ -39,8 +39,24 @@ AIBOX_RAW="${AIBOX_RAW:-https://raw.githubusercontent.com/${AIBOX_REPO}/${AIBOX_
 AIBOX_HOME="${AIBOX_HOME:-$HOME/.aibox}"
 AIBOX_MOD_DIR="$AIBOX_HOME/modules"
 AIBOX_INSTALLED="$AIBOX_HOME/installed.sh"
-AIBOX_BIN_DIR="${AIBOX_BIN_DIR:-$HOME/.local/bin}"
-AIBOX_VERSION="0.14.0"
+# Bin-dir preference (mirrors install.sh): an explicit AIBOX_BIN_DIR always
+# wins; otherwise ~/.local/bin when it is ALREADY in PATH (no churn for
+# existing installs); otherwise an in-PATH writable system dir — on deploy
+# hosts the module CLIs then land next to the manager and work immediately;
+# ~/.local/bin is the last resort. AIBOX_SYSTEM_BIN_DIRS overrides the list.
+if [ -z "${AIBOX_BIN_DIR:-}" ]; then
+  case ":${PATH}:" in
+  *":$HOME/.local/bin:"*) AIBOX_BIN_DIR="$HOME/.local/bin" ;;
+  *)
+    for _bd in ${AIBOX_SYSTEM_BIN_DIRS:-/usr/local/bin /opt/homebrew/bin}; do
+      case ":${PATH}:" in *":${_bd}:"*) ;; *) continue ;; esac
+      if [ -d "${_bd}" ] && [ -w "${_bd}" ]; then AIBOX_BIN_DIR="${_bd}"; break; fi
+    done
+    [ -n "${AIBOX_BIN_DIR:-}" ] || AIBOX_BIN_DIR="$HOME/.local/bin"
+    ;;
+  esac
+fi
+AIBOX_VERSION="0.15.0"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 
@@ -87,6 +103,84 @@ fi
 # Exported so module hooks (child processes) inherit the same scheme — single source of
 # truth. Modules' log/warn/die use ${C_*:-} (empty fallback when run standalone, not via aibox).
 export C_RST C_DIM C_BOLD C_GRN C_YEL C_RED C_CYA
+
+# ---------- unknown-argument UX (suggestions + one consistent hint) ----------
+# Verbs the dispatcher understands (typo suggestions for the first arg).
+AIBOX_VERBS="install uninstall update upgrade check dashboard purge proxy clash help version self"
+
+# "Close enough to be a typo" for short ASCII words: prefix either way, one
+# substitution, or one transposition. Cheaper than a full Levenshtein and
+# covers the real typos (instal→install, upgrad→upgrade, chekc→check).
+_word_close() { # $1=typed $2=candidate
+  local a="$1" b="$2" i=0 d=0 la lb n
+  [ "$a" = "$b" ] && return 0
+  [ "${#a}" -ge 3 ] || return 1
+  case "$b" in "$a"*) return 0 ;; esac
+  case "$a" in "$b"*) return 0 ;; esac
+  la="${#a}"; lb="${#b}"
+  [ $(( la > lb ? la - lb : lb - la )) -le 1 ] || return 1
+  n=$(( la < lb ? la : lb ))
+  while [ "$i" -lt "$n" ]; do
+    [ "${a:$i:1}" != "${b:$i:1}" ] && d=$(( d + 1 ))
+    i=$(( i + 1 ))
+  done
+  [ "$d" -le 2 ]
+}
+
+_suggest_word() { # $1=typed; rest=candidates → prints the first close match
+  local w="$1"; shift
+  local c
+  for c in "$@"; do
+    _word_close "$w" "$c" && { printf '%s' "$c"; return 0; }
+  done
+  return 1
+}
+
+# ONE death for every unknown-module path: consistent hint + a typo suggestion
+# when one exists. A typo'd VERB used to die as "Unknown module: instal" with
+# no suggestion (live-caught), and the catalog hint appeared on some verbs only.
+die_unknown_module() { # $1=typed name
+  local n="$1" sug
+  sug="$(_suggest_word "$n" ${AIBOX_VERBS} || true)"
+  if [ -n "$sug" ]; then
+    die "Unknown command or module: ${n} — did you mean: aibox ${sug}?  (verbs: aibox help · modules: aibox dashboard --available)"
+  fi
+  sug="$(_suggest_word "$n" ${AIBOX_MODULES:-} || true)"
+  if [ -n "$sug" ]; then
+    die "Unknown module: ${n} — did you mean: aibox ${sug}?  (catalog: aibox dashboard --available)"
+  fi
+  die "Unknown module: ${n} (aibox dashboard --available shows available modules)"
+}
+
+# Installed-module version ("" when absent) — for the re-install note.
+_installed_version() { # $1=module
+  [ -f "$AIBOX_INSTALLED" ] || return 0
+  grep "^$(_ikey "$1")=" "$AIBOX_INSTALLED" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"'
+}
+
+# curl is the single download primitive — say so plainly instead of letting a
+# fetch fail with a misleading "Download … failed (check branch/path)" when
+# the tool simply isn't installed (live-caught on a bare host).
+require_curl() {
+  command -v curl >/dev/null 2>&1 ||
+    die "curl is required for downloads but was not found — install it (apt install curl / dnf install curl / brew install curl)"
+}
+
+# " (needed by a, b)" derived from the INSTALLED module caches' deps — local
+# metadata only. The old hardcoded list said docker was needed by
+# base/openmaic/windmill and never mentioned node at all (stale + incomplete).
+_needed_note() { # $1=dep command
+  local cmd="$1" f m deps out=""
+  for f in "$AIBOX_MOD_DIR"/*/module.yaml; do
+    [ -f "$f" ] || continue
+    m="$(awk -F': *' '/^name:/{gsub(/"/,"",$2); print $2; exit}' "$f" 2>/dev/null)"
+    [ -n "$m" ] || continue
+    deps="$(awk '/^deps:/{d=1;next} /^[a-z_]+:/{d=0} d&&/^  - /{sub(/^  - /,""); sub(/@.*/,""); sub(/:.*/,""); printf "%s ", $0}' "$f" 2>/dev/null)"
+    case " ${deps} " in *" ${cmd} "*) out="${out}${out:+, }${m}" ;; esac
+  done
+  [ -n "$out" ] && printf ' (needed by %s)' "$out"
+  return 0
+}
 
 # TUI helpers — formal, clean, consistent (design ref: gh CLI / kubectl).
 # Three visual levels: action (plain), success/warning/error (symbol prefix),
@@ -306,6 +400,7 @@ _gh_pool_cand_get() { # kind loc url
 # later fetches walk the ranking with per-fetch failover. Non-GitHub-family
 # URLs: direct, plus the user mirror if configured.
 gh_pool_fetch() { # $1 = url → content on stdout; nonzero when everything failed
+  require_curl
   local url="$1" fam order um
   fam="$(_gh_pool_family "${url}")"
 
@@ -589,7 +684,7 @@ installed_names() {
 download_module() {
   local name="$1" dir files f extra dl inc incs
   load_registry
-  module_exists "$name" || die "Unknown module: ${name} (aibox dashboard --available shows available modules)"
+  module_exists "$name" || die_unknown_module "$name"
   dir="$(module_field "$name" dir)"
   files="$(module_field "$name" files)"
   incs="$(module_field "$name" includes)"
@@ -953,7 +1048,7 @@ cmd_proxy_test() { # single-target reachability via the effective proxy route + 
   if [ -z "$url" ] && clash_active; then
     url="socks5://127.0.0.1:${CLASH_PORT}"
   fi
-  [ -n "$url" ] || die "No proxy configured (nothing to route through). Set one: aibox proxy set <url>; site matrix: aibox proxy check"
+  [ -n "$url" ] || die "No proxy configured (nothing to route through) — set one first: aibox proxy set <url>"
 
   log "Proxy check (single target)"
   info "Proxy   $(mask_url "$url")"
@@ -1213,7 +1308,7 @@ cmd_proxy_check() {
   if [ -z "$url" ] && clash_active; then
     url="socks5://127.0.0.1:${CLASH_PORT}"
   fi
-  [ -n "$url" ] || die "No proxy configured. Usage: aibox proxy check [url]"
+  [ -n "$url" ] || die "No proxy configured — set one first: aibox proxy set <url> (the site matrix compares direct vs proxy)"
 
   probe_load_sites
   [ "$P_N" -gt 0 ] || die "Site list is empty (check AIBOX_PROBE_SITES)"
@@ -1379,8 +1474,18 @@ _disk_free_gb() {
 }
 
 # deps, strict: missing after an auto-install attempt → FAIL (old check_deps only warned).
+# Which package-manager invocation satisfies a dep command — several dep
+# entries can share ONE install (docker covers docker-compose; node covers npm).
+_dep_install_unit() { # $1=dep command
+  case "$1" in
+    docker|docker-compose) printf 'docker' ;;
+    node|npm)              printf 'node' ;;
+    *)                     printf '%s' "$1" ;;
+  esac
+}
+
 _preflight_deps() {
-  local name="$1" deps plat dep cmd ptag ver fail=0 os
+  local name="$1" deps plat dep cmd ptag ver fail=0 os unit attempted=""
   os="$(uname -s | tr '[:upper:]' '[:lower:]')"
   plat="$(module_field "$name" platform)"
   if [ -n "$plat" ] && [ "$plat" != "$os" ]; then return 0; fi
@@ -1401,8 +1506,28 @@ _preflight_deps() {
     if dep_satisfied "$cmd" "$ver"; then
       info "✓ ${cmd}${ver:+ (>=${ver})}"
     else
+      # AIBOX_NO_AUTO_DEPS gates PM auto-installs too (it used to gate only
+      # service-dep installs, so `install x` with the knob set still shelled
+      # out to apt — surprising for the users who set it to stay manual)
+      if [ "${AIBOX_NO_AUTO_DEPS:-0}" = "1" ]; then
+        bad "${cmd}${ver:+ (>=${ver})} not satisfied (required by ${name}; auto-install disabled: AIBOX_NO_AUTO_DEPS=1)"
+        fail=1
+        continue
+      fi
+      # One package install can cover SEVERAL dep entries (docker.io +
+      # docker-compose-v2 covers docker AND docker-compose; nodejs+npm covers
+      # node AND npm) — a second attempt in the same run is pure waste
+      # (live-caught: the identical apt command ran twice per preflight)
+      unit="$(_dep_install_unit "$cmd")"
+      case " ${attempted} " in
+      *" ${unit} "*)
+        bad "${cmd}${ver:+ (>=${ver})} not satisfied (required by ${name}; the ${unit} install was already attempted this run)"
+        fail=1
+        continue ;;
+      esac
+      attempted="${attempted}${attempted:+ }${unit}"
       warn "${cmd} missing — attempting auto-install..."
-      install_dep "$cmd" || true
+      install_dep "$cmd" "$ver" || true
       if dep_satisfied "$cmd" "$ver"; then
         info "✓ ${cmd} (auto-installed)"
       else
@@ -1571,20 +1696,28 @@ _preflight_services() {
 
 # Full preflight for one module — the install/update gate.
 preflight_module() {
-  local name="$1" fail=0
+  local name="$1" fail=0 hard=0
   if [ "${PREFLIGHT_SKIP:-0}" = "1" ]; then
     warn "Preflight skipped for ${name} (--skip-checks)"
     return 0
   fi
   log "Preflight: ${name}"
-  _preflight_deps       "$name" || fail=1
-  _preflight_commands   "$name" || fail=1
+  # hard = not bypassable (missing deps/commands/services); soft = environment
+  # conditions (disk/network/pull) where --skip-checks is a real option. The
+  # old single hint suggested --skip-checks even for missing hard deps, which
+  # only deferred the failure to a confusing mid-install crash (live-caught).
+  _preflight_deps       "$name" || { fail=1; hard=1; }
+  _preflight_commands   "$name" || { fail=1; hard=1; }
   _preflight_disk       "$name" || fail=1
   _preflight_domains    "$name" || fail=1
   _preflight_docker_pull "$name" || fail=1
-  _preflight_services   "$name" || fail=1
+  _preflight_services   "$name" || { fail=1; hard=1; }
   if [ "$fail" != "0" ]; then
-    bad "Preflight FAILED: ${name} — fix the issues above, or re-run with --skip-checks to bypass"
+    if [ "$hard" = "1" ]; then
+      bad "Preflight FAILED: ${name} — fix the issues above (missing dependencies/services can't be bypassed; --skip-checks would only defer the failure)"
+    else
+      bad "Preflight FAILED: ${name} — fix the issues above, or re-run with --skip-checks to bypass"
+    fi
     return 1
   fi
   ok "Preflight passed: ${name}"
@@ -1596,7 +1729,7 @@ cmd_check() {
   [ -n "$target" ] || die "Usage: aibox check <module>|self   (self = environment check)"
   if [ "$target" = self ]; then cmd_self_check; return $?; fi
   load_registry
-  module_exists "$target" || die "Unknown module: $target"
+  module_exists "$target" || die_unknown_module "$target"
   preflight_module "$target"
 }
 
@@ -1630,8 +1763,17 @@ cmd_self_check() {
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     ok "docker daemon reachable"
   else
-    warn "docker not available (needed by base/openmaic/windmill)"
+    warn "docker not available$(_needed_note docker)"
   fi
+  # node/npm matter to pi-web but were never checked here (live-caught: the
+  # first hint of a missing node was a failed install 10 minutes in)
+  for _tool in node npm; do
+    if command -v "${_tool}" >/dev/null 2>&1; then
+      info "✓ ${_tool}"
+    else
+      warn "${_tool} not available$(_needed_note "${_tool}")"
+    fi
+  done
   info "disk free:    $(_disk_free_gb "$AIBOX_HOME")G at AIBOX_HOME"
   info "module preflight: aibox check <module>"
   [ -z "$failed" ]
@@ -1642,12 +1784,41 @@ cmd_self_check() {
 # throwing transient "Empty reply" (curl error 52) on individual .rpm files AND
 # repomd.xml, with flaky windows lasting minutes — a single immediate retry can
 # land in the same window. 3 attempts (0s/5s/20s backoff) rode through it live.
+# Retry-with-backoff package install, BOUNDED: the old version could hang
+# unbounded with no output (live-caught: `install pi-web` sat 10+ minutes inside
+# a node auto-install with no progress line). Output goes to a log — replayed as
+# a tail on failure — and a heartbeat every 30s shows it's still alive.
+# AIBOX_PM_TIMEOUT=0 disables the bound.
 _pm_install() {
-  local pm="$1" n=0 wait_s
+  local pm="$1" n=0 wait_s timeout_s waited timed_out pid rc logf
   shift
+  timeout_s="${AIBOX_PM_TIMEOUT:-600}"
   while :; do
-    ${pm} install -y "$@" && return 0
     n=$((n+1))
+    log "  ${pm} install -y $*  (bounded ${timeout_s}s — downloads can take minutes)"
+    logf="$(mktemp "${TMPDIR:-/tmp}/pm-install.XXXXXX")" || logf=""
+    if [ -n "$logf" ]; then ${pm} install -y "$@" >"$logf" 2>&1 & else ${pm} install -y "$@" & fi
+    pid=$!
+    waited=0; timed_out=0
+    while kill -0 "$pid" 2>/dev/null; do
+      if [ "${timeout_s}" -gt 0 ] && [ "$waited" -ge "$timeout_s" ]; then timed_out=1; break; fi
+      sleep 5; waited=$(( waited + 5 ))
+      [ $(( waited % 30 )) -eq 0 ] && log "  … still installing (${waited}s)"
+    done
+    rc=0
+    if [ "$timed_out" = "1" ]; then
+      # children FIRST, then the parent — parent-first lets untrapped child
+      # shells reparent to init and keep running (the orphan-kill lesson)
+      pkill -P "$pid" 2>/dev/null || true
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      warn "  ${pm} install timed out after ${timeout_s}s — killed (raise: AIBOX_PM_TIMEOUT=<seconds>; 0 = unlimited)"
+      if [ -n "$logf" ]; then tail -3 "$logf" >&2; rm -f "$logf"; fi
+      return 1
+    fi
+    wait "$pid" || rc=$?
+    if [ "$rc" -eq 0 ]; then if [ -n "$logf" ]; then rm -f "$logf"; fi; return 0; fi
+    if [ -n "$logf" ]; then tail -3 "$logf" >&2; rm -f "$logf"; fi
     [ "$n" -ge 3 ] && return 1
     wait_s=$((n*n*5))
     warn "  ${pm} install failed (transient mirror error?) — retry ${n}/2 in ${wait_s}s..."
@@ -1730,7 +1901,7 @@ _node_dist_pick() { # → the winning dist base URL (DIRECT = https://nodejs.org
 # Auto-install deps by platform. Lightweight / has a package manager -> install; needs sudo
 # or GUI interaction -> print the manual command.
 install_dep() {
-  local cmd="$1" os pm eng comp root
+  local cmd="$1" ver="${2:-}" os pm eng comp root
   os="$(uname -s)"
   root=0; [ "$(id -u)" = "0" ] && root=1
   info "Auto-installing ${cmd} ..."
@@ -1762,12 +1933,19 @@ install_dep() {
           || ${pm} install -y moby-engine docker-compose-plugin 2>/dev/null \
           || ${pm} install -y docker.io docker-compose-v2 2>/dev/null \
           || { warn "  package install failed (tried ${eng}+${comp}, moby-engine, docker.io variants)"; return 1; }
+        # Only claim "installed" once the CLI actually exists — the old flow
+        # announced "docker installed but the daemon didn't start" even when
+        # no binary ever appeared (live-caught on a mirror that lied).
+        if ! command -v docker >/dev/null 2>&1; then
+          warn "  the install commands returned but no docker CLI appeared — see the package manager output above"
+          return 1
+        fi
         # AL4/RHEL-family moby-engine ships WITHOUT the docker group, but
         # docker.socket has SocketGroup=docker → socket fails → service fails
         # in a dependency cascade (measured live on Alibaba Cloud Linux 4).
         getent group docker >/dev/null 2>&1 || groupadd docker 2>/dev/null || true
         if ! { systemctl --now enable docker >/dev/null 2>&1 || service docker start >/dev/null 2>&1; }; then
-          warn "  docker installed but the daemon didn't start — run: systemctl --now enable docker"
+          warn "  docker CLI installed, but the daemon isn't running — run: systemctl --now enable docker"
         fi
       else
         warn "  docker needs sudo, run: sudo ${pm} install -y docker.io docker-compose-v2 && sudo systemctl --now enable docker"
@@ -1798,6 +1976,26 @@ install_dep() {
         nvm install 22 && nvm use 22 >/dev/null
       elif [ "$pm" = "brew" ]; then brew install node@22
       elif [ "$root" = "1" ]; then
+        # A distro nodejs frequently predates the required major (measured:
+        # Ubuntu 24.04 ships 18 vs the declared node:22) — installing it and
+        # rechecking burns minutes and still fails. When the candidate is
+        # knowably too old, skip straight to the reliable path with the exact
+        # command the user needs (this was a hard dead end: "not satisfied"
+        # with no way forward).
+        local cand="" cmaj=""
+        if [ -n "$ver" ] && [ "$pm" = "apt-get" ] && command -v apt-cache >/dev/null 2>&1; then
+          cand="$(apt-cache policy nodejs 2>/dev/null | awk '/Candidate:/{print $2; exit}')"
+        fi
+        if [ -n "$cand" ]; then
+          cmaj="${cand%%.*}"
+          case "$cmaj" in ''|*[!0-9]*) cmaj="" ;; esac
+        fi
+        if [ -n "$cmaj" ] && [ "$cmaj" -lt "${ver:-0}" ]; then
+          warn "  the distro nodejs candidate is v${cmaj} (< required ${ver}) — installing it would not satisfy the check"
+          warn "  install node ${ver} via nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash && nvm install ${ver}"
+          warn "  (script host blocked? prefix a mirror, e.g. https://gh-proxy.com/)"
+          return 1
+        fi
         _pm_install "$pm" nodejs npm || ${pm} install -y nodejs \
           || warn "  distro nodejs unavailable; prefer nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash (raw blocked? prefix a mirror, e.g. https://gh-proxy.com/)"
         return 1   # preflight rechecks the version (distro nodejs may be < 22)
@@ -1905,9 +2103,14 @@ cmd_install() {
   if [ -n "$plat" ] && [ "$plat" != "$(uname -s | tr '[:upper:]' '[:lower:]')" ]; then
     warn "Module $name targets platform ${plat}, current is $(uname -s) (may error)"
   fi
-  preflight_module "$name" || die "Install aborted by preflight (fix the issues above, or re-run with --skip-checks)"
+  preflight_module "$name" || die "Install aborted by preflight (fix the issues above)"
   check_ports "$name"
   local inst; inst="$(module_field "$name" install)"
+  # Re-install is supported (hooks are idempotent) — say so, so identical
+  # output doesn't read as a silent no-op or as a fresh install.
+  if is_installed "$name"; then
+    log "${name} is already installed ($(_installed_version "$name")) — re-deploying (hooks are idempotent)"
+  fi
   log "Installing $name ..."
   if [ -n "$inst" ] && [ -f "$dest/$inst" ]; then
     # explicit status check: when cmd_install runs in a CONDITION context (the
@@ -1919,14 +2122,27 @@ cmd_install() {
     fi
   fi
   mark_installed "$name" "$(module_field "$name" version)"
-  ensure_services "$name"
+  local svc_rc=0
+  ensure_services "$name" || svc_rc=1
   log "Installed $name module $(module_field "$name" version) -> $dest"
+  # Module scripts are in place, but a declared service dependency that didn't
+  # start means the module CANNOT work yet — the old flow exited 0 with the
+  # failure buried mid-scroll (live-caught: install new-api → "✓ installed",
+  # then every action failed). Loud warning by default; opt-in strict mode for
+  # scripts that must branch on it.
+  if [ "$svc_rc" != "0" ]; then
+    warn "⚠ ${name} is installed, but its service dependency is NOT running — the module can't work yet"
+    warn "  fix: aibox base start   (then verify: aibox dashboard ${name})"
+    if [ "${AIBOX_STRICT_SERVICES:-0}" = "1" ]; then
+      die "install ${name}: service dependency not ready (AIBOX_STRICT_SERVICES=1)"
+    fi
+  fi
 }
 
 # Handle a module's services deps (module.yaml services field):
 # for base:postgres#<db> -> ensure base is running + write base.env + create db <db>. Best-effort, non-blocking.
 ensure_services() {
-  local name="$1" svc component resource
+  local name="$1" svc component resource rc=0
   local services; services="$(module_field "$name" services)"
   [ -n "$services" ] || return 0
   for svc in $services; do
@@ -1938,16 +2154,17 @@ ensure_services() {
     resource="${svc#*#}"
     if ! is_installed base; then
       warn "Module ${name} depends on base:${component}, but base isn't installed (first: aibox install base)"
+      rc=1
       continue
     fi
     # `base start` is idempotent (compose up -d no-ops if already running);
     # the container name is profile-dependent, so we don't hardcode it here.
     info "Starting shared base (${name} depends on it)…"
-    AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" start || { warn "base start failed (start manually: aibox base start)"; continue; }
+    AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" start || { warn "base start failed (start manually: aibox base start)"; rc=1; continue; }
     info "Creating ${component} resource '${resource}' (shared base)…"
-    AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" create "${component}" "${resource}" || warn "base create ${component} ${resource} failed (create manually: aibox base create ${component} ${resource})"
+    AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" create "${component}" "${resource}" || { warn "base create ${component} ${resource} failed (create manually: aibox base create ${component} ${resource})"; rc=1; }
   done
-  return 0
+  return "$rc"
 }
 
 cmd_uninstall() {
@@ -2559,7 +2776,7 @@ cmd_upgrade() {
   done
   [ -n "${name}" ] || die "Usage: aibox upgrade <module> [--check] [--to <version>] [--yes] — upstream component upgrade, independent of aibox releases (vs: aibox update = re-fetch module scripts)"
   load_registry
-  module_exists "${name}" || die "Unknown module: ${name} (aibox dashboard --available shows available modules)"
+  module_exists "${name}" || die_unknown_module "${name}"
   is_installed "${name}" || die "${name} not installed (first: aibox install ${name})"
 
   local src repo images mapping pattern
@@ -2770,6 +2987,7 @@ CATALOGFB
     fi
     printf '  %-14s  %-8s  %-30s  %s\n' "$m" "$ver" "$(_trunc "${desc:-}" 30)" "$inst"
   done
+  printf '\n%sVERSION = the aibox module version · the deployed app version: aibox dashboard <module>%s\n' "$C_DIM" "$C_RST"
 }
 
 # Dashboard: module status + endpoint + credentials, visualized.
@@ -3158,7 +3376,7 @@ cmd_dashboard_detail() {
   # unknown modules need the network (and die cleanly when it's down).
   if [ ! -f "${AIBOX_MOD_DIR}/$name/module.yaml" ] && ! _installed_any_profile "$name"; then
     load_registry
-    module_exists "$name" || die "Unknown module: $name"
+    module_exists "$name" || die_unknown_module "$name"
   fi
   ver="$(_module_version_local "$name")"
   [ -n "${ver}" ] || ver="$(module_field "$name" version)"
@@ -3293,7 +3511,7 @@ cmd_module_help() {
     # not in the local metadata → the registry (dies cleanly when unreachable);
     # also gives the authoritative "Unknown module" for typos.
     load_registry
-    module_exists "${name}" || die "Unknown module: ${name} (aibox dashboard --available shows available modules)"
+    module_exists "${name}" || die_unknown_module "${name}"
     ver="$(module_field "${name}" version)"
     desc="$(module_field "${name}" description)"
     acts="$(module_field "${name}" actions)"
@@ -3380,7 +3598,7 @@ cmd_action_help() { # $1=module $2=action
 cmd_dev_guide() {
   local name="$1"
   load_registry
-  module_exists "$name" || die "Unknown module: $name"
+  module_exists "$name" || die_unknown_module "$name"
   printf '%s%s v%s%s\n' "$C_BOLD" "$name" "$(module_field "$name" version)" "$C_RST"
   info "homepage:   $(module_field "$name" upstream_homepage)"
   info "docs:       $(module_field "$name" upstream_docs)"
@@ -3468,6 +3686,12 @@ _purge_rc_strip() { # $1=rc file: remove the marked "# aibox" + export PATH bloc
 }
 
 _purge_etc_root()     { printf '%s' "${PURGE_ETC:-/etc}"; }
+# Module CLIs may exist in the resolved bin dir AND in the legacy ~/.local/bin
+# (pre-0.15 default) — scan both so an old copy is never reported as "clean".
+_purge_bin_path() { # $1=binary name
+  printf '%s\n' "$AIBOX_BIN_DIR/$1"
+  [ "$AIBOX_BIN_DIR" = "$HOME/.local/bin" ] || printf '%s\n' "$HOME/.local/bin/$1"
+}
 _purge_systemd_dir()  { printf '%s' "${PURGE_SYSTEMD_DIR:-/etc/systemd/system}"; }
 
 _purge_docker_up() {
@@ -3487,15 +3711,18 @@ residue_paths() { # $1=module → candidate paths (scan filters by existence)
       for f in "$AIBOX_HOME"/base*.env; do
         if [ -e "$f" ]; then printf '%s\n' "$f"; fi
       done ;;
-    clash)    printf '%s\n' "$AIBOX_HOME/apps/clash" "$AIBOX_BIN_DIR/mihomo" ;;
+    clash)    printf '%s\n' "$AIBOX_HOME/apps/clash"
+              _purge_bin_path mihomo ;;
     pi-web)   printf '%s\n' "$AIBOX_HOME/apps/pi-web" \
                 "$HOME/.config/systemd/user/pi-web.service" \
                 "$HOME/.config/systemd/user/com.agegr.pi-web.service" \
                 "$HOME/.local/share/pi-web" \
                 "$HOME/Library/LaunchAgents/pi-web.plist" \
                 "$HOME/Library/LaunchAgents/com.agegr.pi-web.plist" ;;
-    openmaic) printf '%s\n' "$AIBOX_HOME/apps/openmaic" "$AIBOX_BIN_DIR/openmaic" "$(_purge_etc_root)/openmaic" ;;
-    windmill) printf '%s\n' "$AIBOX_HOME/apps/windmill" "$AIBOX_BIN_DIR/windmill" "$(_purge_etc_root)/windmill" ;;
+    openmaic) printf '%s\n' "$AIBOX_HOME/apps/openmaic" "$(_purge_etc_root)/openmaic"
+              _purge_bin_path openmaic ;;
+    windmill) printf '%s\n' "$AIBOX_HOME/apps/windmill" "$(_purge_etc_root)/windmill"
+              _purge_bin_path windmill ;;
     gitlab)   printf '%s\n' "$AIBOX_HOME/apps/gitlab" ;;
     dify)     printf '%s\n' "$AIBOX_HOME/apps/dify" ;;
     new-api)  printf '%s\n' "$AIBOX_HOME/apps/new-api" ;;
@@ -3541,6 +3768,7 @@ residue_processes()    { case "$1" in clash)   printf '%s' 'mihomo' ;;        es
 manager_paths() { # the manager's own residue ('self' scope)
   local d
   printf '%s\n' "$AIBOX_BIN_DIR/aibox"
+  [ "$AIBOX_BIN_DIR" = "$HOME/.local/bin" ] || printf '%s\n' "$HOME/.local/bin/aibox"
   if [ -d "$AIBOX_HOME" ]; then
     for d in "$AIBOX_HOME"/*; do
       [ -e "$d" ] || continue
@@ -4095,6 +4323,17 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   aibox version" ;;
     version|-v|--version) echo "aibox $AIBOX_VERSION" ;;
     help|-h|--help)   usage ;;
-    *)                cmd_module_action "$@" ;;
+    *)
+      # A typo'd VERB lands here (the dispatcher falls through to module
+      # actions) — suggest the verb instead of a bare "Unknown module".
+      # The `|| true` matters: _suggest_word returns 1 with no match and a bare
+      # assignment would trip set -e into a SILENT exit (caught by the suite:
+      # `aibox base --help` produced no output at all). An EXACT verb match is
+      # a module that happens to share a verb's name (clash) — pass through.
+      _sv="$(_suggest_word "${1:-}" ${AIBOX_VERBS} || true)"
+      if [ -n "${_sv}" ] && [ "${_sv}" != "${1:-}" ] && ! is_installed "${1:-}" 2>/dev/null; then
+        die "Unknown command or module: ${1:-} — did you mean: aibox ${_sv}?  (verbs: aibox help)"
+      fi
+      cmd_module_action "$@" ;;
   esac
 fi

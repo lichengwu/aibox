@@ -83,6 +83,23 @@ AIBOX_SHA256=<hex>     curl -fsSL …/install.sh | bash   # pin an exact binary
 AIBOX_VERIFY=1         curl -fsSL …/install.sh | bash   # check the release SHA256SUMS
 ```
 
+Knobs for the install itself (all optional, all per-run):
+
+```bash
+AIBOX_PM_TIMEOUT=1200         aibox install pi-web    # bound package-manager auto-install (default 600s; 0 = unlimited)
+AIBOX_NO_AUTO_DEPS=1          aibox install new-api   # never auto-install (service deps AND packages)
+AIBOX_STRICT_SERVICES=1       aibox install new-api   # non-zero exit when a service dependency didn't start
+AIBOX_SYSTEM_BIN_DIRS=/usr/local/bin  aibox …         # candidate in-PATH system dirs for the bin-dir pick
+```
+
+The bin dir is chosen with a fixed precedence (the manager and the bootstrap use the
+same rule): explicit `AIBOX_BIN_DIR` → `~/.local/bin` when it is already in `PATH`
+(no churn) → an in-PATH writable system dir (deploy hosts: `/usr/local/bin` — the
+command works immediately) → `~/.local/bin`.
+
+`aibox check self` reports the environment (egress route, docker, node/npm, disk)
+before you install anything.
+
 ## Quick Start
 
 ```bash

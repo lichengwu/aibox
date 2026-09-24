@@ -119,7 +119,7 @@ Field reference: this document IS the normative schema (the historical design dr
 - `install.sh` installs the module itself (paths are self-determined, e.g. pi-web writes a launchd plist).
 - `svc.sh`: `$1` = action, rest pass through.
   - **`svc.sh` is an "action entry point", NOT "must be a daemon".** Long-lived-service modules (e.g. pi-web) implement `start/stop/restart/status/logs/diagnose`. Dispatch-only modules (e.g. openmaic) can just pass through: `exec <dispatched-cmd> "$1" "$@"`, where the action set is that command's subcommands. The contract is "the file named by `hooks.svc` receives `(action, args...)`" — nothing more.
-- Start install paths from `${AIBOX_BIN_DIR:-$HOME/.local/bin}` and expose a module-specific override (deploy hosts often want `/usr/local/bin`).
+- Start install paths from `${AIBOX_BIN_DIR:-$HOME/.local/bin}` and expose a module-specific override (deploy hosts often want `/usr/local/bin`). The manager resolves `AIBOX_BIN_DIR` with the bootstrap's precedence (explicit → `~/.local/bin` when already in `PATH` → an in-PATH writable system dir from `AIBOX_SYSTEM_BIN_DIRS` → `~/.local/bin`), so module CLIs land where the manager lives.
 - Platform differences: warn, don't hard-block. Install is usually cross-platform; the real limit is reported by the script at execution time, which is less false-positive-prone than blocking at install.
 
 ### Data-purge contract (`AIBOX_PURGE_DATA`), self uninstall & residue purge
@@ -411,6 +411,7 @@ LIB_COMMON="${LIB_SELF}/_common.sh"                # cache layout (aibox install
 Rules:
 
 - The include is fetched FIRST in `download_module` (before hooks) so a failed fetch never leaves the cache half-updated.
+- **Guard missing primitives with `require_docker` (or a named check), never a raw shell error.** Any action that shells out to docker must call `require_docker` (provided by `_common.sh`) in its wrapper — it dies with `docker CLI not found — this action needs it`. A bare `docker …` in a deep lib function surfaced as `tools/base/lib.sh: line 138: docker: command not found` (exit 127) with no hint about what the action needs (live-caught on `aibox base status`). Same rule for every external the action cannot work without (the manager has `require_curl` for the same reason).
 - Dispatched CLIs that run standalone on deploy hosts (openmaic/windmill `cli/<name>`) **cannot** use includes — they keep their own copies by design (pitfall #4: env vars and sources don't cross process/host boundaries).
 - New shared libraries follow the same shape: `tools/_shared/<name>.sh` + `includes: [<name>]`; validator checks the entry resolves to an existing file.
 
@@ -601,13 +602,13 @@ section's presence and its field formats.
 
 | Check | Source | Semantics |
 | ------- | -------- | ----------- |
-| deps | `deps:` field | strict: missing after an auto-install attempt → **FAIL** (the old warn-and-continue behavior is gone) |
+| deps | `deps:` field | strict: missing after an auto-install attempt → **FAIL** (the old warn-and-continue behavior is gone). Auto-install is bounded (`AIBOX_PM_TIMEOUT`, default 600s — announce + heartbeat + kill-tree on timeout) and **deduplicated by package set** (docker/docker-compose and node/npm share one PM invocation); `AIBOX_NO_AUTO_DEPS=1` disables it entirely |
 | commands | `checks.commands` | binary must exist (`cmd@platform` supported; no auto-install — these are OS facilities like `systemctl@linux` / `launchctl@darwin`) |
 | disk | `checks.disk_gb` | free space at `$AIBOX_HOME`'s filesystem ≥ N GB → else **FAIL** |
 | domains | `checks.domains` | each probed as `https://<host>/` via the **host's** curl/egress; any HTTP response (even 401/404) = reachable, connection failure = not. All must pass |
 | docker pull | `checks.docker_pull` | **daemon-routed** probe: `docker pull <tiny image>` proves the daemon's actual registry path (its mirrors/proxy differ from the host's). Skipped when docker is absent (deps reports that) |
 | docker images | `checks.docker_images` | when **all** refs exist locally, the domain AND pull probes are skipped (offline restart/install works) |
-| services | `services:` field | recursive: missing providers are **auto-installed FIRST** (`aibox install <m>` resolves the declared chain before its own preflight — cycle-guarded, same profile/flags inherit; a failed provider aborts the target; `AIBOX_NO_AUTO_DEPS=1` restores the manual gate); provider installed but its stack not running → **base's own preflight** runs — passes → install proceeds (`ensure_services` auto-starts it); fails → **FAIL** |
+| services | `services:` field | recursive: missing providers are **auto-installed FIRST** (`aibox install <m>` resolves the declared chain before its own preflight — cycle-guarded, same profile/flags inherit; a failed provider aborts the target; `AIBOX_NO_AUTO_DEPS=1` restores the manual gate); provider installed but its stack not running → **base's own preflight** runs — passes → install proceeds (`ensure_services` auto-starts it); fails → **FAIL**. When the provider cannot be started here, install ends with a ⚠ block naming the fix (`aibox base start`) and still exits 0 by default — `AIBOX_STRICT_SERVICES=1` opts into a non-zero exit for scripting |
 | services_optional | `services_optional:` field | **NOT gated** — documentation of a deploy-time user toggle (e.g. dify `DIFY_SHARED_BASE=1`): the entry format is validated (provider form), but install/update never require the provider. Two consumption modes exist: hard (`services:` — the module cannot run without the shared component) and opt-in (`services_optional:` — standalone by default, joins the shared base only when the user flips the deploy env knob) |
 
 ### Host vs daemon probe semantics (pick the right channel)

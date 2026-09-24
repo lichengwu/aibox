@@ -205,3 +205,45 @@ YAML
   grep -q '^base-install$' "$MARKER_LOG" && { echo "dep installed despite the knob"; false; }
   :
 }
+
+@test "install app: a failed service-dep start warns LOUDLY but exits 0 by default" {
+  local repo="$SANDBOX/svc-repo"
+  _svc_repo "$repo"
+  # base installs fine, but its service never comes up (the live-caught case:
+  # install new-api exited 0 with every action then failing)
+  printf '#!/usr/bin/env bash\nset -euo pipefail\nexit 1\n' >"$repo/tools/base/svc.sh"
+  chmod +x "$repo/tools/base/svc.sh"
+  export AIBOX_RAW="file://$repo"
+  export MARKER_LOG="$SANDBOX/markers"
+  : >"$MARKER_LOG"
+  run bash "$REPO_ROOT/bin/aibox" install app
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"service dependency is NOT running"* ]] || false
+  [[ "$output" == *"aibox base start"* ]] || false
+  grep -q '^AIBOX_INSTALLED_app=' "$AIBOX_HOME/installed.sh" || false
+}
+
+@test "install app: AIBOX_STRICT_SERVICES=1 turns that warning into a non-zero exit" {
+  local repo="$SANDBOX/svc-repo"
+  _svc_repo "$repo"
+  printf '#!/usr/bin/env bash\nset -euo pipefail\nexit 1\n' >"$repo/tools/base/svc.sh"
+  chmod +x "$repo/tools/base/svc.sh"
+  export AIBOX_RAW="file://$repo"
+  export MARKER_LOG="$SANDBOX/markers"
+  : >"$MARKER_LOG"
+  run env AIBOX_STRICT_SERVICES=1 bash "$REPO_ROOT/bin/aibox" install app
+  [ "$status" -ne 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"AIBOX_STRICT_SERVICES=1"* ]] || false
+}
+
+@test "install app: re-install says it is re-deploying with the installed version" {
+  local repo="$SANDBOX/svc-repo"
+  _svc_repo "$repo"
+  export AIBOX_RAW="file://$repo"
+  export MARKER_LOG="$SANDBOX/markers"
+  : >"$MARKER_LOG"
+  bash "$REPO_ROOT/bin/aibox" install app >/dev/null 2>&1
+  run bash "$REPO_ROOT/bin/aibox" install app
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"already installed (1.0.0) — re-deploying"* ]] || false
+}

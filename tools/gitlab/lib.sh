@@ -108,6 +108,7 @@ compose() {
   local root
   root="$(deploy_root)"
   [ -f "$root/docker-compose.yml" ] || die "not installed (run: aibox install gitlab)"
+  require_docker
   (cd "$root" && docker compose "$@")
 }
 

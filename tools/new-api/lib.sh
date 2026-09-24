@@ -71,6 +71,7 @@ compose() {
     # lifecycle command needs the base — say so.
     warn "base.env missing (${base_env}) — run: aibox base start"
   fi
+  require_docker
   (cd "${root}" && docker compose "${args[@]}" "$@")
 }
 

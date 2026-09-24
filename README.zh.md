@@ -75,6 +75,21 @@ AIBOX_SHA256=<hex>     curl -fsSL …/install.sh | bash   # 钉住精确二进�
 AIBOX_VERIFY=1         curl -fsSL …/install.sh | bash   # 校验 release 的 SHA256SUMS
 ```
 
+安装相关的旋钮（全部可选，单次生效）：
+
+```bash
+AIBOX_PM_TIMEOUT=1200         aibox install pi-web    # 限制包管理器自动安装时长（默认 600s；0 = 不限）
+AIBOX_NO_AUTO_DEPS=1          aibox install new-api   # 完全禁用自动安装（服务依赖 + 软件包）
+AIBOX_STRICT_SERVICES=1       aibox install new-api   # 服务依赖未启动时以非零退出
+AIBOX_SYSTEM_BIN_DIRS=/usr/local/bin  aibox …         # 候选的「在 PATH 中」系统目录
+```
+
+bin 目录的选定顺序是固定的（管理器与引导脚本用同一套规则）：显式 `AIBOX_BIN_DIR`
+→ `~/.local/bin` 已在 `PATH` 中（不动既有部署）→ `PATH` 中可写的系统目录（部署主机：
+`/usr/local/bin`，装完即可用）→ 兜底 `~/.local/bin`。
+
+装任何东西之前，可用 `aibox check self` 查看环境（出口路由、docker、node/npm、磁盘）。
+
 ## 快速上手
 
 ```bash

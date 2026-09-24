@@ -19,6 +19,15 @@ die() {
   exit 1
 }
 
+# Guard for docker-dependent actions. Without it a missing docker binary
+# surfaced as a raw shell error from a deep lib line (live-caught:
+# `aibox base status` → "tools/base/lib.sh: line 138: docker: command not
+# found", exit 127) with no hint about what the action actually needs.
+require_docker() {
+  command -v docker >/dev/null 2>&1 && return 0
+  die "docker CLI not found — this action needs it (install docker, then: aibox check ${AIBOX_MODULE:-<module>})"
+}
+
 # ---------- dashboard keyline template (spec §Dashboard template) ----------
 # Shared render helpers for module-owned rich views (render_dashboard); the
 # manager (bin/aibox, a single-file CLI that cannot source this file) inlines

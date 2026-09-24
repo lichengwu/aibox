@@ -47,6 +47,7 @@ PROFILE_NAME=$name
 PROFILE_HASH=$h
 EOF
   log "Created profile '$name' (hash=$h)"
+  _PROFILE_JUST_CREATED=1
 }
 
 # Load (or auto-create) the profile config + derive all module-specific vars.
@@ -83,6 +84,14 @@ _profile_load() {
   export AIBOX_BASE_PG_VOLUME="aibox_pg_data_${_n}"
   export AIBOX_BASE_REDIS_VOLUME="aibox_redis_data_${_n}"
   export AIBOX_BASE_NETWORK="aibox-base-${_n}"
+
+  # Say what the profile DERIVED (the old copy only said "Created profile" —
+  # the actual ports/volumes/containers stayed a mystery until the next ps)
+  if [ "${_PROFILE_JUST_CREATED:-0}" = "1" ]; then
+    unset _PROFILE_JUST_CREATED
+    log "Profile '${_n}' derived: postgres=${PG_PORT} redis=${REDIS_PORT} · containers ${POSTGRES_CONTAINER} / ${REDIS_CONTAINER}"
+    log "  env: ${ENV_FILE} · volumes: aibox_pg_data_${_n} / aibox_redis_data_${_n}"
+  fi
 }
 
 # List all profiles + their derived ports.
@@ -135,6 +144,7 @@ COMPOSE_FILE="$(base_deploy_root)/docker-compose.yml"
 
 # docker compose wrapper (selects the compose file with -f).
 compose() {
+  require_docker
   docker compose -f "$COMPOSE_FILE" "$@"
 }
 

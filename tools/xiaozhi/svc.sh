@@ -14,6 +14,7 @@ load_env
 # service joins the EXTERNAL aibox-base network and reads base.env — a missing
 # network makes `compose up` fail with an opaque "network not found".
 _ensure_base() {
+  require_docker
   local base_env net
   base_env="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/base.env"
   net="$(grep -E '^AIBOX_BASE_NETWORK=' "${base_env}" 2>/dev/null | cut -d= -f2- || true)"

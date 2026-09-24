@@ -85,6 +85,7 @@ compose() {
       warn "DIFY_SHARED_BASE=1 but ${base_env} not found (run: aibox base start)"
     fi
   fi
+  require_docker
   (cd "${root}" && docker compose "${args[@]}" "$@")
 }
 
