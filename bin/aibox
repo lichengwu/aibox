@@ -40,7 +40,7 @@ AIBOX_HOME="${AIBOX_HOME:-$HOME/.aibox}"
 AIBOX_MOD_DIR="$AIBOX_HOME/modules"
 AIBOX_INSTALLED="$AIBOX_HOME/installed.sh"
 AIBOX_BIN_DIR="${AIBOX_BIN_DIR:-$HOME/.local/bin}"
-AIBOX_VERSION="0.13.3"
+AIBOX_VERSION="0.13.4"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 
@@ -1983,11 +1983,16 @@ cmd_uninstall() {
 # fetch of module.yaml only; any failure → 1 (fall through to the full update,
 # which dies loudly if the network is truly gone).
 _update_noop() { # $1=module $2=current(local) version
-  local f2 dir yaml remote_ver
+  local f2 dir yaml remote_ver extra
   for f2 in module.yaml lib.sh install.sh uninstall.sh update.sh svc.sh; do
     [ -s "$AIBOX_MOD_DIR/$1/$f2" ] || return 1
   done
   load_registry
+  # declared extra files (compose, vendored templates, dispatched CLIs) are
+  # consumed by the hook — a missing one must re-fetch, not skip
+  for extra in $(module_field "$1" files); do
+    [ -s "$AIBOX_MOD_DIR/$1/$extra" ] || return 1
+  done
   dir="$(module_field "$1" dir)"
   [ -n "${dir}" ] || return 1
   yaml="$(gh_pool_fetch "${AIBOX_RAW%/}/${dir}/module.yaml" 2>/dev/null)" || return 1
@@ -2011,38 +2016,46 @@ cmd_update() {
   if [ -n "$name" ]; then
     if [ "$name" = self ]; then cmd_self_update; return $?; fi
     is_installed "${name}" || die "${name} not installed"
-    # no-op gate: fetch ONLY the remote module.yaml (one pooled fetch) and
-    # compare versions — same version + an intact local standard set →
-    # nothing to do (the full re-fetch still self-heals a BROKEN cache)
-    local cur_ver
+    # The SCRIPT re-fetch is skippable (remote version unchanged + an intact
+    # local file set — one pooled module.yaml probe decides); the update HOOK
+    # always runs: it owns the module's app-level refreshes (pi-web's npm app
+    # + the pi CLI, clash's kernel, openmaic/windmill's dispatched CLI, the
+    # docker modules' compose refresh). "nothing to do" is the HOOK's verdict
+    # to make and report — the manager must not swallow it.
+    local cur_ver new_ver dest upd skip_fetch=0
     cur_ver="$(_module_version_local "${name}")"
     if [ -n "${cur_ver}" ] && _update_noop "${name}" "${cur_ver}"; then
-      log "${name} already at ${cur_ver} — no update needed (module scripts unchanged)"
-      return 0
+      skip_fetch=1
+      log "${name} scripts already at ${cur_ver} (no re-fetch) — running the update hook"
+      dest="$AIBOX_MOD_DIR/$name"
+      load_registry   # module_field lookups for the hook below (subsequent lines)
+    else
+      log "Updating ${name} (re-fetching module scripts) ..."
+      download_module "${name}"
+      dest="$AIBOX_LAST_DEST"
     fi
-    log "Updating ${name} (re-fetching module scripts) ..."
-    download_module "${name}"
     preflight_module "${name}" || die "Update aborted by preflight (fix the issues above, or re-run with --skip-checks)"
-    local dest="$AIBOX_LAST_DEST" upd
     upd="$(module_field "${name}" update)"
     if [ -n "$upd" ] && [ -f "$dest/$upd" ]; then
       # The hook's own output shows above; wrap its failure with module context
       # (previously set -e killed the command here with no wrapper message).
       # shellcheck disable=SC2086
       if ! AIBOX_MODULE="${name}" bash "$dest/$upd" ${restart_arg:+"$restart_arg"}; then
-        die "update ${name} FAILED: the module's update hook did not complete (script cache WAS refreshed — apply manually: aibox ${name} restart)"
+        die "update ${name} FAILED: the module's update hook did not complete (apply manually: aibox ${name} restart)"
       fi
     else
-      warn "No update hook; refreshed script cache"
+      warn "No update hook; script cache left as-is"
     fi
     mark_installed "${name}" "$(module_field "${name}" version)"
-    # version transition report (the ask: "from what TO what; same version →
-    # no update"). TWO version namespaces still apply: the aibox MODULE version
-    # (module.yaml packaging — what changed here) vs the upstream APP version
-    # (pinned floor / the module's own upstream check / `aibox upgrade`).
-    local new_ver
+    # script-part transition report (the ask: "from what TO what"). TWO version
+    # namespaces: the aibox MODULE version (module.yaml packaging — this line)
+    # vs the upstream APP version (the update hook's / `aibox upgrade`'s output
+    # above). The manager reports ONLY the script half; the app half is the
+    # hook's own reporting — that split is what keeps this unambiguous.
     new_ver="$(module_field "${name}" version)"
-    if [ -n "${cur_ver}" ] && [ "${new_ver}" != "${cur_ver}" ]; then
+    if [ "${skip_fetch}" = "1" ]; then
+      log "${name} module scripts unchanged at ${cur_ver} · update hook ran above"
+    elif [ -n "${cur_ver}" ] && [ "${new_ver}" != "${cur_ver}" ]; then
       log "${name} module scripts updated: ${cur_ver} → ${new_ver}"
     else
       log "${name} module scripts refreshed at ${new_ver} (no version change)"

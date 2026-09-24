@@ -113,7 +113,7 @@ _fake_repo() { # $1=dest — a self-contained fake registry (openmaic + its incl
   grep -q 'AIBOX_INSTALLED_openmaic="9.9.9"' "$AIBOX_HOME/installed.sh" || false
 }
 
-@test "update <module>: same version → no-op (no re-fetch, no hook, clear message)" {
+@test "update <module>: same version → scripts NOT re-fetched, update hook STILL runs" {
   local repo="$SANDBOX/repo"
   _fake_repo "$repo"
   export AIBOX_RAW="file://$repo"
@@ -122,8 +122,14 @@ _fake_repo() { # $1=dest — a self-contained fake registry (openmaic + its incl
   cur="$(sed -n 's/^version: *//p' "$repo/tools/openmaic/module.yaml" | head -1)"
   run bash "$REPO_ROOT/bin/aibox" update openmaic --skip-checks
   [ "$status" -eq 0 ]
-  [[ "$output" == *"openmaic already at ${cur} — no update needed"* ]] || false
+  # the script half is skipped (no per-file fetches, no "re-fetching" banner)
+  [[ "$output" == *"openmaic scripts already at ${cur} (no re-fetch) — running the update hook"* ]] || false
   [[ "$output" != *"re-fetching"* ]] || false
+  [[ "$output" != *"fetch tools/openmaic"* ]] || false
+  # the HOOK still ran — its own verdict (the app half) is reported by it:
+  # openmaic's hook self-reports "up to date (…), no update needed"
+  [[ "$output" == *"openmaic is up to date"* ]] || false
+  [[ "$output" == *"openmaic module scripts unchanged at ${cur} · update hook ran above"* ]] || false
 }
 
 @test "update <module>: same version but BROKEN cache → self-heal re-fetch at the same version" {
@@ -138,4 +144,18 @@ _fake_repo() { # $1=dest — a self-contained fake registry (openmaic + its incl
   [ "$status" -eq 0 ]
   [[ "$output" == *"openmaic module scripts refreshed at ${cur} (no version change)"* ]] || false
   [ -f "$AIBOX_HOME/modules/openmaic/svc.sh" ] || false
+}
+
+@test "update <module>: missing DECLARED extra file (cli/) forces a re-fetch too" {
+  local repo="$SANDBOX/repo"
+  _fake_repo "$repo"
+  export AIBOX_RAW="file://$repo"
+  bash "$REPO_ROOT/bin/aibox" install openmaic --skip-checks >/dev/null 2>&1
+  local cur
+  cur="$(sed -n 's/^version: *//p' "$repo/tools/openmaic/module.yaml" | head -1)"
+  rm -f "$AIBOX_HOME/modules/openmaic/cli/openmaic"   # a declared files: entry
+  run bash "$REPO_ROOT/bin/aibox" update openmaic --skip-checks
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"openmaic module scripts refreshed at ${cur} (no version change)"* ]] || false
+  [ -s "$AIBOX_HOME/modules/openmaic/cli/openmaic" ] || false
 }

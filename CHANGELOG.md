@@ -7,6 +7,25 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.13.4] — 2026-09-24
+
+### Fixed
+
+- **`aibox update <module>`: the update HOOK always runs** — v0.13.2's no-op gate
+  short-circuited BEFORE the hook, silently dropping every module's app-level
+  refresh when the script version was unchanged (pi-web's `@agegr/pi-web` npm
+  upgrade + the pi CLI refresh, clash's kernel upgrade, openmaic/windmill's
+  dispatched CLI install, the docker modules' compose refresh). Now only the
+  SCRIPT re-fetch is skippable (same remote version + intact standard set +
+  intact declared `files:`); the hook runs either way and the two layers report
+  separately — the manager owns the script line, the hook owns the app line:
+
+  ```text
+  openmaic scripts already at 1.3.1 (no re-fetch) — running the update hook
+  openmaic is up to date (1.0.1), no update needed              ← hook (app)
+  openmaic module scripts unchanged at 1.3.1 · update hook ran above
+  ```
+
 ## [0.13.3] — 2026-09-24
 
 ### Added
@@ -765,6 +784,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.13.4]: https://github.com/lichengwu/aibox/compare/v0.13.3...v0.13.4
 [0.13.3]: https://github.com/lichengwu/aibox/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/lichengwu/aibox/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/lichengwu/aibox/compare/v0.13.0...v0.13.1
