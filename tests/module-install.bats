@@ -85,3 +85,123 @@ teardown() {
   run bash -c "cd '$REPO_ROOT' && env AIBOX_MODULE=openmaic bash tools/openmaic/svc.sh status 2>&1 | head -1"
   [ "$status" -eq 0 ]
 }
+
+# ---------- dependency auto-install (module.yaml services:) ----------
+
+_svc_repo() { # $1=repo — trivial registry: base + app (app services: base:postgres#app)
+  local r="$1"
+  mkdir -p "$r/tools/base" "$r/tools/app"
+  cat >"$r/tools/base/module.yaml" <<'YAML'
+name: base
+version: 1.0.0
+description: "trivial base"
+dir: tools/base
+actions:
+  - start
+  - stop
+  - restart
+  - status
+  - logs
+hooks:
+  install: install.sh
+  svc: svc.sh
+YAML
+  printf '#!/usr/bin/env bash\nset -euo pipefail\nprintf "base-install\\n" >>"${MARKER_LOG:?}"\n' >"$r/tools/base/install.sh"
+  printf '#!/usr/bin/env bash\nset -euo pipefail\naction="${1:-}"; printf "base-svc-%%s\\n" "$action" >>"${MARKER_LOG:?}"\n' >"$r/tools/base/svc.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$r/tools/base/lib.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$r/tools/base/uninstall.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$r/tools/base/update.sh"
+  cat >"$r/tools/app/module.yaml" <<'YAML'
+name: app
+version: 1.0.0
+description: "trivial consumer"
+dir: tools/app
+services:
+  - base:postgres#app
+hooks:
+  install: install.sh
+  svc: svc.sh
+YAML
+  printf '#!/usr/bin/env bash\nset -euo pipefail\nprintf "app-install\\n" >>"${MARKER_LOG:?}"\n' >"$r/tools/app/install.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$r/tools/app/lib.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$r/tools/app/uninstall.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$r/tools/app/update.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$r/tools/app/svc.sh"
+  chmod +x "$r"/tools/*/*.sh
+}
+
+@test "install app: missing service provider is auto-installed FIRST (deps analyzed + ordered)" {
+  local repo="$SANDBOX/svc-repo"
+  _svc_repo "$repo"
+  export AIBOX_RAW="file://$repo"
+  export MARKER_LOG="$SANDBOX/markers"
+  : >"$MARKER_LOG"
+  run bash "$REPO_ROOT/bin/aibox" install app
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"requires 'base:postgres#app'"*"installing base first"* ]] || false
+  # base installed BEFORE app (marker order), and both marked installed
+  [ "$(head -1 "$MARKER_LOG")" = "base-install" ] || false
+  grep -q '^app-install$' "$MARKER_LOG" || false
+  grep -q '^AIBOX_INSTALLED_base=' "$AIBOX_HOME/installed.sh" || false
+  grep -q '^AIBOX_INSTALLED_app=' "$AIBOX_HOME/installed.sh" || false
+  # the post-install ensure_services still starts base + creates the DB resource
+  grep -q '^base-svc-start$' "$MARKER_LOG" || false
+  grep -q '^base-svc-create$' "$MARKER_LOG" || false
+}
+
+@test "install app: provider already installed → not reinstalled (hook runs once)" {
+  local repo="$SANDBOX/svc-repo"
+  _svc_repo "$repo"
+  export AIBOX_RAW="file://$repo"
+  export MARKER_LOG="$SANDBOX/markers"
+  : >"$MARKER_LOG"
+  bash "$REPO_ROOT/bin/aibox" install base >/dev/null 2>&1
+  run bash "$REPO_ROOT/bin/aibox" install app
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(grep -c '^base-install$' "$MARKER_LOG")" = "1" ] || false
+  [[ "$output" != *"installing base first"* ]] || false
+}
+
+@test "install app: provider install failure aborts the target" {
+  local repo="$SANDBOX/svc-repo"
+  _svc_repo "$repo"
+  printf '#!/usr/bin/env bash\nset -euo pipefail\nexit 1\n' >"$repo/tools/base/install.sh"
+  chmod +x "$repo/tools/base/install.sh"
+  export AIBOX_RAW="file://$repo"
+  export MARKER_LOG="$SANDBOX/markers"
+  : >"$MARKER_LOG"
+  run bash "$REPO_ROOT/bin/aibox" install app
+  [ "$status" -ne 0 ] || false
+  grep -q '^app-install$' "$MARKER_LOG" && { echo "app ran despite the failed dep"; false; }
+  grep -q '^AIBOX_INSTALLED_app=' "$AIBOX_HOME/installed.sh" 2>/dev/null && { echo "app marked installed"; false; }
+  :
+}
+
+@test "install app: dependency cycle dies cleanly (no infinite recursion)" {
+  local repo="$SANDBOX/svc-repo"
+  _svc_repo "$repo"
+  # base now (wrongly) depends back on app → cycle
+  cat >>"$repo/tools/base/module.yaml" <<'YAML'
+services:
+  - app:thing#base
+YAML
+  export AIBOX_RAW="file://$repo"
+  export MARKER_LOG="$SANDBOX/markers"
+  : >"$MARKER_LOG"
+  run bash "$REPO_ROOT/bin/aibox" install app
+  [ "$status" -ne 0 ] || false
+  [[ "$output" == *"cycle"* ]] || false
+}
+
+@test "install app: AIBOX_NO_AUTO_DEPS=1 restores the manual gate (preflight hint)" {
+  local repo="$SANDBOX/svc-repo"
+  _svc_repo "$repo"
+  export AIBOX_RAW="file://$repo"
+  export MARKER_LOG="$SANDBOX/markers"
+  : >"$MARKER_LOG"
+  run env AIBOX_NO_AUTO_DEPS=1 bash "$REPO_ROOT/bin/aibox" install app
+  [ "$status" -ne 0 ] || false
+  [[ "$output" == *"service dep base not installed"* ]] || false
+  grep -q '^base-install$' "$MARKER_LOG" && { echo "dep installed despite the knob"; false; }
+  :
+}

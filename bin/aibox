@@ -1853,6 +1853,41 @@ check_ports() {
   done
 }
 
+# Recursively install MISSING service providers (module.yaml `services:`)
+# BEFORE the target. The preflight services gate requires the provider to be
+# installed; failing a user's `aibox install xiaozhi` with "fix: aibox install
+# base" when the dependency is DECLARED and deterministic is pure friction
+# (live-caught on a deploy host). Providers install with the same process
+# state (PREFLIGHT_SKIP / AIBOX_PROFILE inherit); a failed provider aborts the
+# target; cycles and self-references die cleanly. AIBOX_NO_AUTO_DEPS=1 restores
+# the manual gate (preflight then reports the install hint as before).
+_INSTALL_CHAIN=""   # ancestors currently being installed (cycle guard)
+_install_ensure_deps() { # $1=module
+  [ "${AIBOX_NO_AUTO_DEPS:-0}" = "1" ] && return 0
+  local m="$1" svc prov saved depth=0
+  load_registry
+  for svc in $(module_field "${m}" services); do
+    prov="${svc%%:*}"
+    [ -n "${prov}" ] || continue
+    [ "${prov}" = "${m}" ] && continue
+    case " ${_INSTALL_CHAIN} " in
+    *" ${prov} "*) die "dependency cycle: ${_INSTALL_CHAIN} ${m} -> ${prov} (fix the services: declarations)" ;;
+    esac
+    is_installed "${prov}" && continue
+    saved="${_INSTALL_CHAIN}"
+    _INSTALL_CHAIN="${_INSTALL_CHAIN}${_INSTALL_CHAIN:+ }${m}"
+    depth=0
+    for _c in ${_INSTALL_CHAIN}; do depth=$(( depth + 1 )); done
+    [ "${depth}" -ge 10 ] && die "dependency chain too deep (>=10): ${_INSTALL_CHAIN} — cycle?"
+    log "${m} requires '${svc}' — installing ${prov} first ..."
+    if ! cmd_install "${prov}"; then
+      _INSTALL_CHAIN="${saved}"
+      die "dependency ${prov} failed to install — cannot continue with ${m}"
+    fi
+    _INSTALL_CHAIN="${saved}"
+  done
+}
+
 cmd_install() {
   local name="" a
   for a in "$@"; do
@@ -1862,6 +1897,8 @@ cmd_install() {
     esac
   done
   [ -n "$name" ] || die "Usage: aibox install <module> [--skip-checks]"
+  # analyze + install declared service deps FIRST (recursive, cycle-guarded)
+  _install_ensure_deps "$name"
   download_module "$name"
   local dest="$AIBOX_LAST_DEST"
   local plat; plat="$(module_field "$name" platform)"
@@ -1873,7 +1910,13 @@ cmd_install() {
   local inst; inst="$(module_field "$name" install)"
   log "Installing $name ..."
   if [ -n "$inst" ] && [ -f "$dest/$inst" ]; then
-    AIBOX_MODULE="$name" bash "$dest/$inst"
+    # explicit status check: when cmd_install runs in a CONDITION context (the
+    # dependency path: `if ! cmd_install <dep>`), set -e is suspended for the
+    # whole body — a failing hook would otherwise be swallowed and the module
+    # still marked installed (live-caught by the dep-failure test)
+    if ! AIBOX_MODULE="$name" bash "$dest/$inst"; then
+      die "install ${name} FAILED: the module's install hook did not complete (state: partially deployed — inspect the output above)"
+    fi
   fi
   mark_installed "$name" "$(module_field "$name" version)"
   ensure_services "$name"

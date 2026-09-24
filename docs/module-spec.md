@@ -76,7 +76,8 @@ usage:                             # per-action help text — `aibox <module> --
 upstream:                          # optional. dev-guide links (see the upstream stanza below)
   homepage: https://...
   docs: https://...
-services:                          # optional. shared-component deps (CI validates provider/component)
+services:                          # optional. shared-component deps (CI validates provider/component;
+                                   # `aibox install` auto-installs missing providers first)
   - base:postgres#<your-db>
 checks:                            # REQUIRED. preflight contract (enforced by install/update; see below)
   disk_gb: 5                       #   min free disk (GB) at $AIBOX_HOME's filesystem
@@ -606,7 +607,7 @@ section's presence and its field formats.
 | domains | `checks.domains` | each probed as `https://<host>/` via the **host's** curl/egress; any HTTP response (even 401/404) = reachable, connection failure = not. All must pass |
 | docker pull | `checks.docker_pull` | **daemon-routed** probe: `docker pull <tiny image>` proves the daemon's actual registry path (its mirrors/proxy differ from the host's). Skipped when docker is absent (deps reports that) |
 | docker images | `checks.docker_images` | when **all** refs exist locally, the domain AND pull probes are skipped (offline restart/install works) |
-| services | `services:` field | recursive: provider `base` must be installed (profile-scoped); if its stack isn't running, **base's own preflight** runs — passes → install proceeds (`ensure_services` auto-starts it); fails → **FAIL** |
+| services | `services:` field | recursive: missing providers are **auto-installed FIRST** (`aibox install <m>` resolves the declared chain before its own preflight — cycle-guarded, same profile/flags inherit; a failed provider aborts the target; `AIBOX_NO_AUTO_DEPS=1` restores the manual gate); provider installed but its stack not running → **base's own preflight** runs — passes → install proceeds (`ensure_services` auto-starts it); fails → **FAIL** |
 | services_optional | `services_optional:` field | **NOT gated** — documentation of a deploy-time user toggle (e.g. dify `DIFY_SHARED_BASE=1`): the entry format is validated (provider form), but install/update never require the provider. Two consumption modes exist: hard (`services:` — the module cannot run without the shared component) and opt-in (`services_optional:` — standalone by default, joins the shared base only when the user flips the deploy env knob) |
 
 ### Host vs daemon probe semantics (pick the right channel)

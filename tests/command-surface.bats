@@ -95,7 +95,7 @@ _fake_repo() { # $1=dest — a self-contained fake registry (openmaic + its incl
   local repo="$SANDBOX/repo"
   _fake_repo "$repo"
   export AIBOX_RAW="file://$repo"
-  bash "$REPO_ROOT/bin/aibox" install openmaic --skip-checks >/dev/null 2>&1
+  AIBOX_NO_AUTO_DEPS=1 bash "$REPO_ROOT/bin/aibox" install openmaic --skip-checks >/dev/null 2>&1
   # bump the fake registry's module version (the "remote" moved); cur is read
   # from the fake yaml so the test survives real-version drift
   local cur
@@ -117,7 +117,7 @@ _fake_repo() { # $1=dest — a self-contained fake registry (openmaic + its incl
   local repo="$SANDBOX/repo"
   _fake_repo "$repo"
   export AIBOX_RAW="file://$repo"
-  bash "$REPO_ROOT/bin/aibox" install openmaic --skip-checks >/dev/null 2>&1
+  AIBOX_NO_AUTO_DEPS=1 bash "$REPO_ROOT/bin/aibox" install openmaic --skip-checks >/dev/null 2>&1
   local cur
   cur="$(sed -n 's/^version: *//p' "$repo/tools/openmaic/module.yaml" | head -1)"
   run bash "$REPO_ROOT/bin/aibox" update openmaic --skip-checks
@@ -136,7 +136,7 @@ _fake_repo() { # $1=dest — a self-contained fake registry (openmaic + its incl
   local repo="$SANDBOX/repo"
   _fake_repo "$repo"
   export AIBOX_RAW="file://$repo"
-  bash "$REPO_ROOT/bin/aibox" install openmaic --skip-checks >/dev/null 2>&1
+  AIBOX_NO_AUTO_DEPS=1 bash "$REPO_ROOT/bin/aibox" install openmaic --skip-checks >/dev/null 2>&1
   rm -f "$AIBOX_HOME/modules/openmaic/svc.sh"   # a broken cache must re-fetch even at the same version
   local cur
   cur="$(sed -n 's/^version: *//p' "$repo/tools/openmaic/module.yaml" | head -1)"
@@ -150,7 +150,7 @@ _fake_repo() { # $1=dest — a self-contained fake registry (openmaic + its incl
   local repo="$SANDBOX/repo"
   _fake_repo "$repo"
   export AIBOX_RAW="file://$repo"
-  bash "$REPO_ROOT/bin/aibox" install openmaic --skip-checks >/dev/null 2>&1
+  AIBOX_NO_AUTO_DEPS=1 bash "$REPO_ROOT/bin/aibox" install openmaic --skip-checks >/dev/null 2>&1
   local cur
   cur="$(sed -n 's/^version: *//p' "$repo/tools/openmaic/module.yaml" | head -1)"
   rm -f "$AIBOX_HOME/modules/openmaic/cli/openmaic"   # a declared files: entry
