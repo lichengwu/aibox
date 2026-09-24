@@ -7,6 +7,19 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.13.1] — 2026-09-24
+
+### Fixed
+
+- **gitlab: "the displayed password doesn't look like the generated one"** — it isn't, and
+  that's correct: with the seeded `GITLAB_ROOT_PASSWORD` in effect, GitLab BYPASSES its own
+  random generation entirely (measured: the 24h `initial_root_password` file is not even
+  created). `aibox gitlab credentials` now labels the source ("seeded in the deploy .env —
+  GitLab's own random + 24h file is bypassed") so the display is unambiguous; the live
+  verification remains the ground truth. Hardened: an EMPTY seed value (which would seed a
+  blank root password — Ruby treats `""` as truthy in `ENV[...] || random`) is now
+  regenerated in place; `credentials` never displays a blank. (module 1.5.2)
+
 ## [0.13.0] — 2026-09-23
 
 ### Added
@@ -718,6 +731,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.13.1]: https://github.com/lichengwu/aibox/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/lichengwu/aibox/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/lichengwu/aibox/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/lichengwu/aibox/compare/v0.11.0...v0.12.0

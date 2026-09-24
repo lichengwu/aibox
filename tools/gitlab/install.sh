@@ -41,4 +41,4 @@ ensure_root_password
 
 log "installed → $ROOT"
 log "Start     : aibox gitlab start   (first boot takes 3-5 min; needs >= 4GB RAM)"
-log "Login     : root — password: aibox gitlab credentials (verified live)"
+log "Login     : root — password: aibox gitlab credentials (the .env seed, verified live)"

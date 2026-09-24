@@ -29,7 +29,7 @@ start)
     if http_up_readiness "$port"; then
       ok "GitLab is up: http://127.0.0.1:${port}"
       log "SSH clone  : $(ssh_clone_url)/<group>/<project>.git"
-      log "Login      : root — password: aibox gitlab credentials (verified live)"
+      log "Login      : root — password: aibox gitlab credentials (the .env seed, verified live)"
       exit 0
     fi
     sleep 10
@@ -94,6 +94,7 @@ credentials)
   if [ -n "$pw" ]; then
     ok "user    : root"
     ok "password: ${pw}"
+    log "source    : seeded in the deploy .env (applies at first boot with fresh volumes; GitLab's own random + 24h initial_root_password file is bypassed — the env seed wins)"
     case "$(root_password_verify "${pw}")" in
     true)
       ok "verified: password works on the live root account"

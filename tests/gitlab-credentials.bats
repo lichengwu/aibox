@@ -123,3 +123,32 @@ _fake_docker() {
   GITLAB_START_TIMEOUT=1 run bash "$GITLAB_SVC" start
   grep -q '^GITLAB_ROOT_PASSWORD=' "$(_envf)" || false
 }
+
+# ---------- v0.13.1 hardening: the empty-seed edge ----------
+
+@test "ensure_root_password: an EMPTY value in .env is regenerated in place (never a blank password)" {
+  _write_env "GITLAB_ROOT_PASSWORD="
+  run bash -c ". '$GITLAB_LIB'; ensure_root_password"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  local v
+  v="$(sed -n 's/^GITLAB_ROOT_PASSWORD=//p' "$(_envf)")"
+  [ -n "$v" ] || false
+  printf '%s' "$v" | grep -qE '^[0-9a-f]{32}$' || false
+  # exactly ONE key line after regeneration (no duplicate appends)
+  [ "$(grep -c '^GITLAB_ROOT_PASSWORD=' "$(_envf)")" = "1" ] || false
+}
+
+@test "credentials: empty .env value → regenerated seed shown (no blank display), source labeled" {
+  _write_env "GITLAB_ROOT_PASSWORD="
+  FAKE_VERIFY=true
+  export FAKE_VERIFY
+  docker() { _fake_docker "$@"; }
+  export -f docker _fake_docker
+  run bash "$GITLAB_SVC" credentials
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  # no blank password line: the seed was regenerated before display
+  printf '%s\n' "$output" | grep -q 'password: [0-9a-f]' || false
+  # the source is labeled — the user knows WHY it differs from GitLab's own
+  # random (which is bypassed entirely when the env seed applies)
+  [[ "$output" == *"seeded in"*".env"* ]] || false
+}

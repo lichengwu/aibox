@@ -50,11 +50,22 @@ load_env() {
 # source: initial_root_password = ENV['GITLAB_ROOT_PASSWORD'] || random).
 # It APPLIES at first boot with fresh volumes; volumes seeded earlier ignore
 # it — `credentials` verifies against the live account and says so.
-ensure_root_password() { # appends GITLAB_ROOT_PASSWORD to the .env if missing (never rotates)
-  local envf pw
+ensure_root_password() { # seeds GITLAB_ROOT_PASSWORD into the .env when missing OR empty (never rotates a real value)
+  local envf pw cur tmp
   envf="$(deploy_root)/.env"
   [ -f "${envf}" ] || return 0
-  grep -q '^GITLAB_ROOT_PASSWORD=' "${envf}" 2>/dev/null && return 0
+  cur="$(sed -n 's/^GITLAB_ROOT_PASSWORD=//p' "${envf}" | head -1)"
+  [ -n "${cur}" ] && return 0
+  # missing OR EMPTY: an empty value would seed a BLANK root password (Ruby
+  # treats "" as truthy in ENV['GITLAB_ROOT_PASSWORD'] || random — the env
+  # still wins, with nothing in it). Strip the blank line, then (re)seed so
+  # exactly ONE key line remains.
+  if grep -q '^GITLAB_ROOT_PASSWORD=$' "${envf}" 2>/dev/null; then
+    tmp="$(mktemp "${envf}.tmp.XXXXXX")" || return 0
+    grep -v '^GITLAB_ROOT_PASSWORD=$' "${envf}" >"${tmp}" 2>/dev/null || true
+    cat "${tmp}" >"${envf}"   # write into the original inode: the 600 mode survives
+    rm -f "${tmp}"
+  fi
   pw="$(openssl rand -hex 16 2>/dev/null || true)"
   if [ -z "${pw}" ]; then
     pw="$(od -An -tx1 -N16 /dev/urandom 2>/dev/null | tr -d ' \n' || true)"
