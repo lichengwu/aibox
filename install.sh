@@ -4,7 +4,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main/install.sh | bash
 # Env vars:
 #   AIBOX_BRANCH  (default main)        branch to install from
-#   AIBOX_BIN_DIR (default ~/.local/bin) main CLI install dir
+#   AIBOX_BIN_DIR                   main CLI install dir (default: ~/.local/bin
+#                                   when it is in PATH, else an in-PATH writable
+#                                   system dir like /usr/local/bin, else ~/.local/bin)
 #   AIBOX_SHA256  (optional)           verify the downloaded bin/aibox against this checksum
 #   AIBOX_VERIFY  (default 0)          if 1, fetch+check the release SHA256SUMS sidecar (graceful if absent)
 #   AIBOX_GH_POOL (default shipped)     GitHub-family download pool override ("direct" = no pool)
@@ -15,7 +17,32 @@ set -euo pipefail
 REPO="lichengwu/aibox"
 BRANCH="${AIBOX_BRANCH:-main}"
 RAW="${AIBOX_RAW:-https://raw.githubusercontent.com/${REPO}/${BRANCH}}"
-BIN_DIR="${AIBOX_BIN_DIR:-$HOME/.local/bin}"
+# ---------- bin-dir selection ----------
+# Precedence (spec §Install paths):
+#   1. explicit AIBOX_BIN_DIR — always wins
+#   2. `~/.local/bin` when it is ALREADY in PATH — no churn for existing setups
+#   3. an in-PATH writable system dir (the deploy-host/root case: `~/.local/bin`
+#      is not in root's PATH — installing to /usr/local/bin makes the command
+#      work IMMEDIATELY, zero shell setup; live-caught annoyance: "<dir> is not
+#      in your PATH" right after the one-line install)
+#   4. `~/.local/bin` — last resort; the PATH block further down then persists
+#      it to the shell rc files and prints the apply-now line
+# AIBOX_SYSTEM_BIN_DIRS overrides the system-dir candidates (space-separated).
+_in_path() { case ":${PATH}:" in *":$1:"*) return 0 ;; esac; return 1; }
+if [ -n "${AIBOX_BIN_DIR:-}" ]; then
+  BIN_DIR="$AIBOX_BIN_DIR"
+elif _in_path "$HOME/.local/bin"; then
+  BIN_DIR="$HOME/.local/bin"
+else
+  BIN_DIR=""
+  for _bd in ${AIBOX_SYSTEM_BIN_DIRS:-/usr/local/bin /opt/homebrew/bin}; do
+    if _in_path "${_bd}" && [ -d "${_bd}" ] && [ -w "${_bd}" ]; then
+      BIN_DIR="${_bd}"
+      break
+    fi
+  done
+  [ -n "${BIN_DIR}" ] || BIN_DIR="$HOME/.local/bin"
+fi
 HOME_DIR="${AIBOX_HOME:-$HOME/.aibox}"
 
 # Output helpers aligned with the manager's symbol system (bin/aibox):
@@ -214,20 +241,36 @@ mv -f "$_TMP_BIN" "$BIN_DIR/aibox"
 trap - EXIT
 
 # PATH check & auto-write
-if ! echo ":$PATH:" | grep -q ":$BIN_DIR:"; then
+if _in_path "$BIN_DIR"; then
+  log "$BIN_DIR already in PATH — aibox is immediately available"
+else
   warn "$BIN_DIR is not in your PATH"
-  shell_rc=
+  # Persist to the shell rc files (the same marked "# aibox" block that
+  # `aibox purge self` strips). bash users need BOTH: ~/.bashrc is read by
+  # interactive shells, ~/.profile by LOGIN shells (the root/deploy-host case —
+  # Debian's root login never reads ~/.bashrc). One block per file, idempotent.
+  shell_rc=""
   case "${SHELL##*/}" in
   zsh) shell_rc="$HOME/.zshrc" ;;
-  bash) shell_rc="$HOME/.bashrc" ;;
+  bash) shell_rc="$HOME/.bashrc $HOME/.profile" ;;
   *) shell_rc="$HOME/.profile" ;;
   esac
-  if [ -f "$shell_rc" ] && grep -qF "$BIN_DIR" "$shell_rc"; then
-    log "$shell_rc already contains ${BIN_DIR}; reopen the shell or source it"
-  else
-    printf '\n# aibox\nexport PATH="%s:$PATH"\n' "$BIN_DIR" >>"$shell_rc"
-    log "Appended PATH to ${shell_rc}; run: source $shell_rc or reopen the terminal"
-  fi
+  written=""
+  already=""
+  for rc in ${shell_rc}; do
+    if [ -f "$rc" ] && grep -qF "$BIN_DIR" "$rc"; then
+      already="${already}${already:+ }${rc}"
+    else
+      printf '\n# aibox\nexport PATH="%s:$PATH"\n' "$BIN_DIR" >>"$rc"
+      written="${written}${written:+ }${rc}"
+    fi
+  done
+  [ -n "${written}" ] && log "Appended PATH to: ${written} (new shells pick it up)"
+  [ -n "${already}" ] && log "Already in: ${already}"
+  # Immediate effect can't cross the process boundary (the one-liner runs this
+  # script in a CHILD shell — the parent's PATH is untouchable); print the
+  # one-line apply for THIS shell instead.
+  log "apply now:  export PATH=\"${BIN_DIR}:\$PATH\"      (or: exec \$SHELL -l)"
 fi
 
 log "Done. Now run: aibox help"

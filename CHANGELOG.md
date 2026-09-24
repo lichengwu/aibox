@@ -7,6 +7,29 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.13.5] — 2026-09-24
+
+### Changed
+
+- **`curl … | bash` PATH handling: install where the command works immediately** —
+  bin-dir precedence is now: explicit `AIBOX_BIN_DIR` → `~/.local/bin` when already in
+  PATH (no churn for existing setups) → an **in-PATH writable system dir**
+  (`/usr/local/bin`, `/opt/homebrew/bin`; `AIBOX_SYSTEM_BIN_DIRS` overrides) →
+  `~/.local/bin` with the rc block as the last resort. The root/deploy-host case that
+  printed "`/root/.local/bin` is not in your PATH" right after the one-liner now
+  installs to `/usr/local/bin` and just works — zero shell setup. When the last resort
+  is used the block goes into BOTH `~/.bashrc` and `~/.profile` for bash users
+  (interactive + LOGIN shells — Debian root's login reads only the latter),
+  idempotently, and an apply-now line is printed for the current shell (the parent
+  shell's PATH cannot be modified from the piped child — process boundary).
+
+### Fixed
+
+- `gitlab-upgrade-path` test mocked the pre-0.13.0 `upgrade_fetch` seam while the
+  resolver had moved to `dockerhub_tags_fetch` — the case silently became
+  NETWORK-dependent (green only while the runner's egress reached hub.docker.com and
+  the real data matched the expectation; live-caught in the container).
+
 ## [0.13.4] — 2026-09-24
 
 ### Fixed
@@ -784,6 +807,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.13.5]: https://github.com/lichengwu/aibox/compare/v0.13.4...v0.13.5
 [0.13.4]: https://github.com/lichengwu/aibox/compare/v0.13.3...v0.13.4
 [0.13.3]: https://github.com/lichengwu/aibox/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/lichengwu/aibox/compare/v0.13.1...v0.13.2

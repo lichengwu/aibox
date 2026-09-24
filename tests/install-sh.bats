@@ -66,3 +66,59 @@ _sha256() {
   [ -x "$AIBOX_BIN_DIR/aibox" ]
   [ "$(ls -a "$AIBOX_BIN_DIR" | grep -c '^\.aibox\.download\.' || true)" = "0" ]
 }
+
+# ---------- PATH handling: in-PATH system dir preference + rc persistence ----------
+
+@test "PATH: an in-PATH writable system dir is preferred (immediate effect, no rc write)" {
+  # the deploy-host case: ~/.local/bin not in PATH, /usr/local/bin is → install
+  # there and the command works right away (the reported annoyance)
+  unset AIBOX_BIN_DIR
+  local sysbin="$SANDBOX/sysbin"
+  mkdir -p "$sysbin"
+  export AIBOX_SYSTEM_BIN_DIRS="$sysbin"
+  export PATH="$sysbin:/usr/bin:/bin"   # .local/bin deliberately absent
+  run bash "$REPO_ROOT/install.sh"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -x "$sysbin/aibox" ] || false
+  # no rc files touched (nothing left for the user to source)
+  [ ! -f "$HOME/.bashrc" ] || ! grep -q "aibox" "$HOME/.bashrc"
+  [[ "$output" == *"already in PATH"* ]] || false
+}
+
+@test "PATH: no in-PATH writable dir → ~/.local/bin + rc block in BOTH .bashrc and .profile" {
+  unset AIBOX_BIN_DIR
+  export AIBOX_SYSTEM_BIN_DIRS="$SANDBOX/nonexistent-sysbin"
+  export PATH="/usr/bin:/bin"            # neither .local/bin nor the sysbin
+  run bash "$REPO_ROOT/install.sh"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -x "$HOME/.local/bin/aibox" ] || false
+  # bash users get the block in both the interactive AND the login rc
+  grep -q '^# aibox$' "$HOME/.bashrc" || false
+  grep -qF "export PATH=\"$HOME/.local/bin:\$PATH\"" "$HOME/.bashrc" || false
+  grep -q '^# aibox$' "$HOME/.profile" || false
+  # an immediate-apply line is printed for THIS shell
+  [[ "$output" == *"apply now"* ]] || false
+  [[ "$output" == *'export PATH="'* ]] || false
+}
+
+@test "PATH: rc write is idempotent (re-run adds no duplicate blocks)" {
+  unset AIBOX_BIN_DIR
+  export AIBOX_SYSTEM_BIN_DIRS="$SANDBOX/nonexistent-sysbin"
+  export PATH="/usr/bin:/bin"
+  bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+  bash "$REPO_ROOT/install.sh" >/dev/null 2>&1
+  [ "$(grep -c '^# aibox$' "$HOME/.bashrc")" = "1" ] || false
+  [ "$(grep -c '^# aibox$' "$HOME/.profile")" = "1" ] || false
+}
+
+@test "PATH: explicit AIBOX_BIN_DIR still wins over system-dir preference" {
+  export AIBOX_BIN_DIR="$SANDBOX/explicit-bin"
+  local sysbin="$SANDBOX/sysbin"
+  mkdir -p "$sysbin"
+  export AIBOX_SYSTEM_BIN_DIRS="$sysbin"
+  export PATH="$sysbin:/usr/bin:/bin"
+  run bash "$REPO_ROOT/install.sh"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -x "$SANDBOX/explicit-bin/aibox" ] || false
+  [ ! -e "$sysbin/aibox" ] || false
+}

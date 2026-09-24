@@ -62,9 +62,16 @@ STOPS_ALL="15.0 15.4 15.11 16.0 16.1 16.2 16.3 16.7 16.11 17.1 17.3 17.5 17.8 17
 }
 
 @test "_upgrade_hop_latest_patch: highest patch, anchored to the minor (no 17.80/8.17.8)" {
-  # mock upgrade_fetch: substring-ish noise + real candidates
-  upgrade_fetch() { cat <<'MOCK'
-{"results":[{"name":"17.8.6-ce.0"},{"name":"8.17.8-ce.0"},{"name":"17.8.7-ce.0"},{"name":"17.80.1-ce.0"}]}
+  # mock the CURRENT fetch seam (dockerhub_tags_fetch — the resolver's input
+  # since the docker source selector landed): tag names, one per line. Mocking
+  # the old upgrade_fetch silently made this test NETWORK-dependent (it kept
+  # passing only while the runner's egress happened to reach hub.docker.com
+  # AND the real data matched the expectation — live-caught in the container).
+  dockerhub_tags_fetch() { cat <<'MOCK'
+17.8.6-ce.0
+8.17.8-ce.0
+17.8.7-ce.0
+17.80.1-ce.0
 MOCK
   }
   out="$(_upgrade_hop_latest_patch "gitlab/gitlab-ce" '^[0-9]+\.[0-9]+\.[0-9]+-ce\.0$' "17.8")"
