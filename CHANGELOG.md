@@ -7,6 +7,37 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.13.0] — 2026-09-23
+
+### Added
+
+- **Docker source selector — one selector, three families, shared state** — all
+docker.io / ghcr.io traffic now follows one strict, user-pinned priority:
+  ① the official/default route (direct), ② the LOCAL addresses the host already
+  has (the docker daemon's own registry-mirrors, auto-discovered from `docker info`,
+  + the `AIBOX_DOCKER_MIRROR` / `AIBOX_GHCR_MIRROR` knobs), ③ only on
+  timeout/failure a **live-verified acceleration pool** (10 docker.io mirrors
+  measured direct, multi-source authoritative; 2 ghcr mirrors), speed-ranked,
+  fastest-first with per-source failover. Covers image pulls (PULL family,
+  `docker_pool_prepull`) AND upgrade **version resolution** (TAGS family,
+  `dockerhub_tags_fetch` — the exact call path that made `aibox upgrade gitlab`
+  die with "cannot resolve the latest version" on hub.docker.com-blocked
+  networks), plus ghcr (family migrated into `_shared/common.sh` with a sticky
+  winner). Rankings persist in `$AIBOX_HOME/dockerpool.cache` (TTL 600s,
+  mode 600): a known-dead official route is skipped (no repeated timeout tax)
+  until the TTL re-probes; total failure invalidates and re-resolves
+  (self-healing — mirrors die AND revive; dockerproxy.net measured swinging
+  within one day and is documented, not shipped).
+
+### Fixed
+
+- `aibox upgrade <dockerhub module>` / the dashboard's update probes only ever
+  hit `hub.docker.com` directly — dead on CN-class networks; now they resolve
+  through the docker source selector (verified live: `__dash-probe gitlab`
+  went from empty to `19.4.1-ce.0` with hub.docker.com unreachable).
+- `docker_pool_prepull` re-probed (direct + all mirrors) on EVERY start; the
+  ranking is now cached per TTL.
+
 ## [0.12.1] — 2026-09-23
 
 ### Fixed
@@ -687,6 +718,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.13.0]: https://github.com/lichengwu/aibox/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/lichengwu/aibox/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/lichengwu/aibox/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/lichengwu/aibox/compare/v0.10.2...v0.11.0

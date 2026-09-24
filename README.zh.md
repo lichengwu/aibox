@@ -26,6 +26,11 @@
   全部在动手前探测；坏网络自动尝试备选路由（直连 / clash / 镜像）。
 - **下载源池** —— 每个下载族（GitHub raw/releases/API、docker.io、npm、ghcr、
   node-dist）并发竞速、按实测吞吐排序、逐源故障转移。健康网络零开销。
+- **Docker 源选择器** —— docker.io / ghcr.io 的流量（镜像拉取和升级版本解析）
+  走统一严格优先级：官方/默认地址优先，其次本地已有地址（daemon 自己配置的
+  registry-mirrors + 用户 knob），超时/不可用才启用实测验证过的加速池
+  （docker.io 十家 + ghcr 两家），测速排序。排名带 TTL 缓存且自愈 —— 死源跳过、
+  复活重新参选，`dockerpool.cache` 跨运行共享。
 - **内置镜像加速** —— GitHub / docker.io / npm 镜像按你机器上的真实下载排序，
   不是拍脑袋。校验门控：镜像返回坏包体会被丢弃并换下一个源。
 - **阶梯升级** —— `aibox upgrade <module>` 无需 aibox 发版即可升级部署的上游版本：
@@ -173,6 +178,17 @@ aibox <module> status      # 同上，来自模块本身
 按实测 bytes/sec 排序、失败逐源转移。完成的包体先校验再接受（gzip 完整性 +
 可执行 + 版本钉住）；坏镜像被丢弃而非致命。实战案例见
 [tools/clash/README](tools/clash/README.md)。
+
+**Docker 源选择器**（规范 §Docker source selector）是 docker 专属实例，
+镜像拉取与 dockerhub 版本解析共用同一状态（`$AIBOX_HOME/dockerpool.cache`，
+TTL 600s）。优先级严格：官方路由 → 本地已有地址（daemon 自身 registry-mirrors
+自动发现 + `AIBOX_DOCKER_MIRROR` 用户 knob）→ 实测验证加速池（`docker.1ms.run
+hub.rat.dev docker.1panel.live hub.1panel.dev proxy.vvvv.ee
+docker.m.daocloud.io hub3.nat.tf hub4.nat.tf docker.367231.xyz docker.apiba.cn`；
+ghcr：`ghcr.nju.edu.cn ghcr.1ms.run`）。已判定死亡的官方路由在 TTL 内跳过
+（不重复付超时税）；全部失败则失效重解析（自愈）。`AIBOX_DOCKER_POOL="m1 m2"`
+可覆盖（`direct` 关闭）。这就是让 `aibox upgrade <dockerhub 模块>` 在
+hub.docker.com 被墙的网络下依然可用的机制。
 </details>
 
 <details>

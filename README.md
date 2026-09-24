@@ -29,6 +29,12 @@ dependencies, no package manager, works on the bash 3.2 that ships with macOS.
 - **Download source pools** — every download family (GitHub raw/releases/API, docker.io,
   npm, ghcr, node-dist) races candidates concurrently, ranks by measured throughput,
   and fails over per source. On a healthy network this costs nothing.
+- **Docker source selector** — docker.io / ghcr.io traffic (image pulls AND upgrade version
+  resolution) follows one strict priority: the official/default route first, then the
+  local addresses you already have (the daemon's own registry-mirrors + your knobs), and
+  only on timeout/failure a live-verified acceleration pool (10 docker.io + 2 ghcr
+  mirrors) ranked by measured speed. Rankings are cached with TTL and self-heal — dead
+  mirrors are skipped, revived ones re-join, `dockerpool.cache` is shared across runs.
 - **Mirror acceleration built in** — GitHub / docker.io / npm mirrors are pre-ranked by
   real downloads on your machine, not guessed. Verification-gated: a mirror serving a
   corrupt body is discarded and the next source is tried.
@@ -191,6 +197,19 @@ acceptance (gzip integrity + execution + version pin where applicable); a bad
 mirror is discarded, not fatal. See
 [tools/clash/README](tools/clash/README.md#download-source-pool-the-mihomo-binary)
 for a worked example.
+
+**Docker source selector** (spec §Docker source selector) is the docker-specific
+instance, covering image pulls AND dockerhub version resolution with the same
+state (`$AIBOX_HOME/dockerpool.cache`, TTL 600s): priority is strict — the
+official route → local addresses (the daemon's own registry-mirrors,
+auto-discovered; your `AIBOX_DOCKER_MIRROR` knob) → the live-verified pool
+(`docker.1ms.run hub.rat.dev docker.1panel.live hub.1panel.dev proxy.vvvv.ee
+docker.m.daocloud.io hub3.nat.tf hub4.nat.tf docker.367231.xyz docker.apiba.cn`;
+ghcr: `ghcr.nju.edu.cn ghcr.1ms.run`). A known-dead official route is
+death-cached within the TTL (no repeated timeout tax); everything failing
+invalidates and re-resolves. Override with `AIBOX_DOCKER_POOL="m1 m2"`
+(`direct` disables). This is what makes `aibox upgrade <dockerhub module>` work
+on networks where hub.docker.com is blocked.
 </details>
 
 <details>

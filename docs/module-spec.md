@@ -498,6 +498,55 @@ Rules:
 - `aibox upgrade dify --to 1.18.0` works WITHOUT any resolution network (direct pin) — the
   escape hatch when registries are unreachable from the host.
 
+### Docker source selector (docker.io / ghcr.io acceleration)
+
+One selector concept, per-family transports, shared state. Applies to every
+Docker-touching download: **image pulls** (compose `up`/`update`, family PULL
++ family GHCR in `tools/_shared/common.sh`) and **version resolution**
+(`aibox upgrade`'s dockerhub-tags + the dashboard's async update probes,
+family TAGS in `bin/aibox`, the single-file manager's inline twin).
+
+Strict priority (user-pinned):
+
+1. **① the default address** — the official route: `docker pull` direct
+   (PULL/GHCR: bounded probe; the daemon inherently tries its own
+   `registry-mirrors` first — those LOCAL addresses come free) /
+   `hub.docker.com` API direct (TAGS, bounded).
+2. **② local addresses** — the user knobs (`AIBOX_DOCKER_MIRROR`,
+   `AIBOX_GHCR_MIRROR`) and, for TAGS, the daemon's configured
+   registry-mirrors (auto-discovered via `docker info`).
+3. **③ the acceleration pool** — engaged ONLY when ①② time out or die.
+   PULL: concurrent bounded hello-world pulls rank by speed, fastest-first
+   per-source failover; TAGS: same race on the ACTUAL repo; GHCR: the images
+   are big (0.7-1.5GB) — no racing, the winning mirror is STICKY (recorded,
+   leads until it fails).
+
+Ranking state: `$AIBOX_HOME/dockerpool.cache` (lines `FAMILY<TAB>token…`,
+mode 600, TTL `AIBOX_DOCKER_POOL_TTL` 600s). Token `direct` = the official
+route is known good; its ABSENCE = known dead within the TTL (skip the
+timeout tax — mirrors die AND revive, networks change; dockerproxy.net
+measured swinging within one day). All-fail → invalidate → re-resolve
+(self-heal). The manager and common.sh use the SAME file/grammar (the manager
+never sources the include — inline twins, kept in sync via this section).
+
+Default pool (live-verified DIRECT, no proxy, 2026-09-23; multi-source
+authoritative: 1panel status monitor / juejin measured / DaoCloud docs;
+per-CHANNEL capability diverges — probes prune, nothing hardcoded):
+
+```text
+PULL+TAGS  docker.1ms.run hub.rat.dev docker.1panel.live hub.1panel.dev
+           proxy.vvvv.ee docker.m.daocloud.io hub3.nat.tf hub4.nat.tf
+           docker.367231.xyz docker.apiba.cn
+GHCR       ghcr.nju.edu.cn ghcr.1ms.run
+```
+
+Knobs: `AIBOX_DOCKER_POOL` (list override; `direct|none|off` disables both
+channels), `AIBOX_DOCKER_MIRROR` (user mirror, priority),
+`AIBOX_DOCKER_TAGS_TIMEOUT` (8), `AIBOX_DOCKER_POOL_TTL` (600),
+`AIBOX_GHCR_POOL` / `AIBOX_GHCR_MIRROR` (ghcr family), the per-family probe
+timeouts. Examples of known-but-swinging mirrors (dockerproxy.net) are
+documented, NOT shipped.
+
 ## Exit code convention
 
 Hooks and dispatched CLIs should follow unified exit codes so automation (`aibox <module> <action>; echo $?`) can depend on them stably. `aibox` itself uses `die` → exit `1`.
