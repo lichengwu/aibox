@@ -81,16 +81,61 @@ teardown() {
   [[ "$output" == *"dev guide:  tools/clash/docs/DEVELOPMENT.md"* ]]
 }
 
-@test "update <module>: re-fetches scripts, reports the module-scripts version" {
-  export AIBOX_RAW="file://$REPO_ROOT"
+_fake_repo() { # $1=dest — a self-contained fake registry (openmaic + its include)
+  mkdir -p "$1/tools/_shared" "$1/tools/openmaic"
+  cp "$REPO_ROOT/tools/openmaic/module.yaml" "$REPO_ROOT/tools/openmaic/lib.sh" \
+    "$REPO_ROOT/tools/openmaic/install.sh" "$REPO_ROOT/tools/openmaic/uninstall.sh" \
+    "$REPO_ROOT/tools/openmaic/update.sh" "$REPO_ROOT/tools/openmaic/svc.sh" "$1/tools/openmaic/"
+  mkdir -p "$1/tools/openmaic/cli"
+  cp "$REPO_ROOT/tools/openmaic/cli/openmaic" "$1/tools/openmaic/cli/openmaic"
+  cp "$REPO_ROOT/tools/_shared/common.sh" "$1/tools/_shared/common.sh"
+}
+
+@test "update <module>: version bump → the transition is reported (old → new), hook runs" {
+  local repo="$SANDBOX/repo"
+  _fake_repo "$repo"
+  export AIBOX_RAW="file://$repo"
   bash "$REPO_ROOT/bin/aibox" install openmaic --skip-checks >/dev/null 2>&1
-  [ -f "$AIBOX_HOME/modules/openmaic/svc.sh" ]
+  # bump the fake registry's module version (the "remote" moved); cur is read
+  # from the fake yaml so the test survives real-version drift
+  local cur
+  cur="$(sed -n 's/^version: *//p' "$repo/tools/openmaic/module.yaml" | head -1)"
+  sed -i.bak "s/^version: .*/version: 9.9.9/" "$repo/tools/openmaic/module.yaml" && rm -f "$repo/tools/openmaic/module.yaml.bak"
   # openmaic declares a hard services: dep on base — the sandbox has no base,
   # so this update exercises the documented --skip-checks bypass (the download +
   # marker + include-ship path is what's under test, not the preflight gate)
   run bash "$REPO_ROOT/bin/aibox" update openmaic --skip-checks
   [ "$status" -eq 0 ]
-  [[ "$output" == *"openmaic module scripts updated"* ]]
+  [[ "$output" == *"openmaic module scripts updated: ${cur} → 9.9.9"* ]] || false
   # the shared include rides along on update too
-  [ -f "$AIBOX_HOME/modules/openmaic/_common.sh" ]
+  [ -f "$AIBOX_HOME/modules/openmaic/_common.sh" ] || false
+  # the installed marker carries the NEW version
+  grep -q 'AIBOX_INSTALLED_openmaic="9.9.9"' "$AIBOX_HOME/installed.sh" || false
+}
+
+@test "update <module>: same version → no-op (no re-fetch, no hook, clear message)" {
+  local repo="$SANDBOX/repo"
+  _fake_repo "$repo"
+  export AIBOX_RAW="file://$repo"
+  bash "$REPO_ROOT/bin/aibox" install openmaic --skip-checks >/dev/null 2>&1
+  local cur
+  cur="$(sed -n 's/^version: *//p' "$repo/tools/openmaic/module.yaml" | head -1)"
+  run bash "$REPO_ROOT/bin/aibox" update openmaic --skip-checks
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"openmaic already at ${cur} — no update needed"* ]] || false
+  [[ "$output" != *"re-fetching"* ]] || false
+}
+
+@test "update <module>: same version but BROKEN cache → self-heal re-fetch at the same version" {
+  local repo="$SANDBOX/repo"
+  _fake_repo "$repo"
+  export AIBOX_RAW="file://$repo"
+  bash "$REPO_ROOT/bin/aibox" install openmaic --skip-checks >/dev/null 2>&1
+  rm -f "$AIBOX_HOME/modules/openmaic/svc.sh"   # a broken cache must re-fetch even at the same version
+  local cur
+  cur="$(sed -n 's/^version: *//p' "$repo/tools/openmaic/module.yaml" | head -1)"
+  run bash "$REPO_ROOT/bin/aibox" update openmaic --skip-checks
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"openmaic module scripts refreshed at ${cur} (no version change)"* ]] || false
+  [ -f "$AIBOX_HOME/modules/openmaic/svc.sh" ] || false
 }

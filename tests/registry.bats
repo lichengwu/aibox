@@ -88,3 +88,61 @@ EOF
   touch -t "$(date -v-2H +%Y%m%d%H%M 2>/dev/null || date -d '2 hours ago' +%Y%m%d%H%M)" "$AIBOX_REGISTRY_CACHE" 2>/dev/null || true
   ! _cache_fresh "$AIBOX_REGISTRY_CACHE" || fail "backdated cache should be stale"
 }
+
+@test "load_registry remote: _-prefixed dirs (tools/_shared) are skipped — no wasted module.yaml fetch" {
+  # GitHub contents API lists tools/ including _shared (the include home — no
+  # module.yaml there). Previously each refresh tried to fetch it: a 4-candidate
+  # pool miss + a noisy warn (live-caught in the user's update output).
+  AIBOX_RAW="https://raw.githubusercontent.com/lichengwu/aibox/main"
+  # fake curl: the tools/ listing + exactly ONE module.yaml fetch (gitlab)
+  FAKEBIN="$AIBOX_HOME/bin"
+  mkdir -p "$FAKEBIN"
+  cat >"$FAKEBIN/curl" <<'SHIM'
+#!/usr/bin/env bash
+out="" fmt="" url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    -w) fmt="$2"; shift 2 ;;
+    --max-time) shift 2 ;;
+    -[fsSL]*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+printf '%s\n' "$url" >>"${FAKE_CURL_LOG:-/dev/null}"
+emit() { # $1 = body
+  if [ -n "$out" ]; then printf '%s' "$1" >"$out"; else printf '%s' "$1"; fi
+  case "$fmt" in *time_total*) printf '%s' "0.1" ;; esac
+  exit 0
+}
+case "$url" in
+*"/contents/tools")
+  emit '{"name":"_shared"}
+{"name":"gitlab"}'
+  ;;
+*/tools/gitlab/module.yaml)
+  emit 'name: gitlab
+version: 1.5.2
+dir: tools/gitlab
+'
+  ;;
+*/tools/_shared/module.yaml)
+  echo "BUG: _shared module.yaml fetched" >&2
+  exit 1
+  ;;
+*)
+  exit 6
+  ;;
+esac
+SHIM
+  chmod +x "$FAKEBIN/curl"
+  export FAKE_CURL_LOG="$AIBOX_HOME/curl.log"
+  : >"$FAKE_CURL_LOG"
+  export PATH="$FAKEBIN:$PATH"
+  load_registry
+  [ "$AIBOX_MODULES" = "gitlab" ] || false
+  if grep -q "_shared/module.yaml" "$FAKE_CURL_LOG"; then
+    echo "wasted fetch: $(cat "$FAKE_CURL_LOG")"
+    false
+  fi
+}

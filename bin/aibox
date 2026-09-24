@@ -40,7 +40,7 @@ AIBOX_HOME="${AIBOX_HOME:-$HOME/.aibox}"
 AIBOX_MOD_DIR="$AIBOX_HOME/modules"
 AIBOX_INSTALLED="$AIBOX_HOME/installed.sh"
 AIBOX_BIN_DIR="${AIBOX_BIN_DIR:-$HOME/.local/bin}"
-AIBOX_VERSION="0.13.1"
+AIBOX_VERSION="0.13.2"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 
@@ -497,6 +497,10 @@ _load_registry_remote() {
   local _old_umask; _old_umask=$(umask); umask 077
   : > "$_body_tmp"
   for d in $(printf '%s\n' "$api_json" | awk -F'"' '/"name":/{print $4}'); do
+    # _-prefixed dirs are the shared include home (tools/_shared) — NOT
+    # modules; no module.yaml there. Fetching it cost a 4-candidate pool
+    # miss + a noisy warn on every registry refresh (live-caught).
+    case "${d}" in _*) continue ;; esac
     yaml="$(gh_pool_fetch "$AIBOX_RAW/tools/$d/module.yaml")" || continue
     m="$(printf '%s\n' "$yaml" | awk -F': *' '/^name:/{gsub(/"/,"",$2); print $2; exit}')"
     [ -n "$m" ] || continue
@@ -1973,6 +1977,24 @@ cmd_uninstall() {
   fi
 }
 
+# No-op gate for `aibox update <module>`: 0 when the REMOTE module.yaml's
+# version equals the local cache's AND the local standard-6 is intact (a
+# broken cache always re-fetches — the re-fetch is the self-heal). One pooled
+# fetch of module.yaml only; any failure → 1 (fall through to the full update,
+# which dies loudly if the network is truly gone).
+_update_noop() { # $1=module $2=current(local) version
+  local f2 dir yaml remote_ver
+  for f2 in module.yaml lib.sh install.sh uninstall.sh update.sh svc.sh; do
+    [ -s "$AIBOX_MOD_DIR/$1/$f2" ] || return 1
+  done
+  load_registry
+  dir="$(module_field "$1" dir)"
+  [ -n "${dir}" ] || return 1
+  yaml="$(gh_pool_fetch "${AIBOX_RAW%/}/${dir}/module.yaml" 2>/dev/null)" || return 1
+  remote_ver="$(printf '%s\n' "${yaml}" | sed -n 's/^version:[[:space:]]*//p' | head -1)"
+  [ -n "${remote_ver}" ] && [ "${remote_ver}" = "$2" ]
+}
+
 cmd_update() {
   local name="" self_flag=0 restart_arg="" a
   for a in "$@"; do
@@ -1989,6 +2011,15 @@ cmd_update() {
   if [ -n "$name" ]; then
     if [ "$name" = self ]; then cmd_self_update; return $?; fi
     is_installed "${name}" || die "${name} not installed"
+    # no-op gate: fetch ONLY the remote module.yaml (one pooled fetch) and
+    # compare versions — same version + an intact local standard set →
+    # nothing to do (the full re-fetch still self-heals a BROKEN cache)
+    local cur_ver
+    cur_ver="$(_module_version_local "${name}")"
+    if [ -n "${cur_ver}" ] && _update_noop "${name}" "${cur_ver}"; then
+      log "${name} already at ${cur_ver} — no update needed (module scripts unchanged)"
+      return 0
+    fi
     log "Updating ${name} (re-fetching module scripts) ..."
     download_module "${name}"
     preflight_module "${name}" || die "Update aborted by preflight (fix the issues above, or re-run with --skip-checks)"
@@ -2005,12 +2036,17 @@ cmd_update() {
       warn "No update hook; refreshed script cache"
     fi
     mark_installed "${name}" "$(module_field "${name}" version)"
-    # TWO version namespaces: the aibox MODULE version (module.yaml packaging —
-    # what changed here) vs the upstream APP version (pinned floor / the module's
-    # own upstream check / `aibox upgrade`). Label it explicitly — a bare
-    # "updated to 1.2.1" right after the module's "already latest (0.9.1)"
-    # read as a contradiction (measured user confusion).
-    log "${name} module scripts updated to $(module_field "${name}" version)"
+    # version transition report (the ask: "from what TO what; same version →
+    # no update"). TWO version namespaces still apply: the aibox MODULE version
+    # (module.yaml packaging — what changed here) vs the upstream APP version
+    # (pinned floor / the module's own upstream check / `aibox upgrade`).
+    local new_ver
+    new_ver="$(module_field "${name}" version)"
+    if [ -n "${cur_ver}" ] && [ "${new_ver}" != "${cur_ver}" ]; then
+      log "${name} module scripts updated: ${cur_ver} → ${new_ver}"
+    else
+      log "${name} module scripts refreshed at ${new_ver} (no version change)"
+    fi
     local _usrc; _usrc="$(module_field "${name}" upgrade_source)"
     [ -n "${_usrc}" ] && info "upstream app version floats separately: aibox upgrade ${name} [--check]"
   elif [ "$self_flag" = "1" ]; then

@@ -7,6 +7,22 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.13.2] — 2026-09-24
+
+### Fixed
+
+- **`aibox update <module>`: the version transition is now visible** — the final line
+  reports `updated: 1.3.3 → 1.4.1` instead of a bare "updated to 1.4.1" (measured user
+  confusion: no way to tell whether anything actually changed); same version → the
+  no-op gate skips the whole re-fetch (one pooled module.yaml probe + intact-cache
+  check): `already at 1.4.1 — no update needed`. A BROKEN cache at the same version
+  still self-heals (`refreshed at X (no version change)`); `update --all` short-circuits
+  per module.
+- **registry refresh noise**: `_load_registry_remote` fetched `tools/_shared/module.yaml`
+  on every remote registry refresh — a file that does not exist (the include home is
+  not a module): a 4-candidate pool miss + a warn line in every update's output
+  (live-caught in the user's paste). `_*`-prefixed dirs are now skipped.
+
 ## [0.13.1] — 2026-09-24
 
 ### Fixed
@@ -731,6 +747,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.13.2]: https://github.com/lichengwu/aibox/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/lichengwu/aibox/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/lichengwu/aibox/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/lichengwu/aibox/compare/v0.12.0...v0.12.1
