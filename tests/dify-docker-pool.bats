@@ -14,7 +14,7 @@ setup() {
   export AIBOX_HOME="$SANDBOX/aiboxhome"
   unset AIBOX_DOCKER_POOL AIBOX_DOCKER_MIRROR AIBOX_DOCKER_FORCE_POOL \
     AIBOX_DOCKER_PROBE_TIMEOUT AIBOX_DOCKER_MIRROR_PROBE_TIMEOUT \
-    AIBOX_DOCKER_PULL_TIMEOUT AIBOX_DOCKER_POLL \
+    AIBOX_DOCKER_PULL_TIMEOUT AIBOX_DOCKER_POLL AIBOX_DOCKER_POOL_TTL \
     FAKE_DOCKER_1MS_MODE FAKE_DOCKER_1MS_DELAY \
     FAKE_DOCKER_DAOCLOUD_MODE FAKE_DOCKER_DAOCLOUD_DELAY \
     FAKE_DOCKER_DOCKERPROXY_MODE FAKE_DOCKER_DOCKERPROXY_DELAY \
@@ -218,4 +218,92 @@ EOF
   imgs="$(compose_images)"
   printf '%s\n' "$imgs" | grep -q "^langgenius/dify-api:1.17.1$"
   printf '%s\n' "$imgs" | grep -q "^cr.weaviate.io/semitechnologies/weaviate:1.39.2$"
+}
+
+
+# ---------- docker source selector: PULL family ranking cache (dockerpool.cache) ----------
+
+@test "PULL cache: pool engagement persists the ranked order (mode 600, PULL family)" {
+  export FAKE_DOCKER_DIRECT_MODE=dead
+  export AIBOX_DOCKER_POOL="docker.1ms.run docker.m.daocloud.io"
+  export FAKE_DOCKER_1MS_MODE=ok FAKE_DOCKER_DAOCLOUD_MODE=ok
+  docker rmi langgenius/dify-api:1.17.1 >/dev/null 2>&1 || true
+  run docker_pool_prepull langgenius/dify-api:1.17.1
+  [ "$status" -eq 0 ]
+  [ -f "$AIBOX_HOME/dockerpool.cache" ] || false
+  grep -q $'^PULL\tdocker.1ms.run' "$AIBOX_HOME/dockerpool.cache" || false
+  [ "$(stat -f %Lp "$AIBOX_HOME/dockerpool.cache" 2>/dev/null || stat -c %a "$AIBOX_HOME/dockerpool.cache")" = "600" ] || false
+}
+
+@test "PULL cache: fresh entry skips BOTH the direct probe and the ranking probes" {
+  export FAKE_DOCKER_DIRECT_MODE=dead
+  export AIBOX_DOCKER_POOL="docker.1ms.run docker.m.daocloud.io"
+  export FAKE_DOCKER_1MS_MODE=ok FAKE_DOCKER_DAOCLOUD_MODE=ok
+  docker rmi langgenius/dify-api:1.17.1 >/dev/null 2>&1 || true
+  docker_pool_prepull langgenius/dify-api:1.17.1 >/dev/null 2>&1
+  : >"$FAKE_DOCKER_PULLLOG"
+  docker rmi langgenius/dify-api:1.17.1 >/dev/null 2>&1 || true
+  # second call within TTL: NO direct hello-world probe, NO mirror hello-world
+  # ranking probes — only the real image pull via the cached winner
+  run docker_pool_prepull langgenius/dify-api:1.17.1
+  [ "$status" -eq 0 ]
+  grep -q "^PULL docker.1ms.run/langgenius/dify-api:1.17.1$" "$FAKE_DOCKER_PULLLOG" || false
+  if grep -q "PULL hello-world" "$FAKE_DOCKER_PULLLOG"; then
+    echo "unexpected probe: $(cat "$FAKE_DOCKER_PULLLOG")"
+    false
+  fi
+}
+
+@test "PULL cache: TTL expiry → full re-resolve (direct re-probed)" {
+  export FAKE_DOCKER_DIRECT_MODE=dead
+  export AIBOX_DOCKER_POOL="docker.1ms.run"
+  docker rmi langgenius/dify-api:1.17.1 >/dev/null 2>&1 || true
+  docker_pool_prepull langgenius/dify-api:1.17.1 >/dev/null 2>&1
+  : >"$FAKE_DOCKER_PULLLOG"
+  docker rmi langgenius/dify-api:1.17.1 >/dev/null 2>&1 || true
+  # age the cache past the TTL (BSD date -v vs GNU date -d)
+  touch -t "$(date -v-2H +%Y%m%d%H%M.%S 2>/dev/null || date -d "2 hours ago" +%Y%m%d%H%M.%S)" "$AIBOX_HOME/dockerpool.cache"
+  run docker_pool_prepull langgenius/dify-api:1.17.1
+  [ "$status" -eq 0 ]
+  # expired → the direct probe ran again
+  grep -q "^PULL hello-world$" "$FAKE_DOCKER_PULLLOG" || false
+}
+
+@test "PULL cache: direct healthy → cached as direct, second call still probes direct honestly" {
+  export FAKE_DOCKER_DIRECT_MODE=ok
+  docker rmi langgenius/dify-api:1.17.1 >/dev/null 2>&1 || true
+  docker_pool_prepull langgenius/dify-api:1.17.1 >/dev/null 2>&1
+  grep -q $'^PULL\tdirect$' "$AIBOX_HOME/dockerpool.cache" || false
+  : >"$FAKE_DOCKER_PULLLOG"
+  docker rmi langgenius/dify-api:1.17.1 >/dev/null 2>&1 || true
+  run docker_pool_prepull langgenius/dify-api:1.17.1
+  [ "$status" -eq 0 ]
+  grep -q "^PULL hello-world$" "$FAKE_DOCKER_PULLLOG" || false   # honest re-probe
+  [ "$(_mirror_pulls)" -eq 0 ] || false                          # no mirror engagement
+}
+
+@test "PULL cache: every mirror fails the real image → entry invalidated (self-heal)" {
+  export FAKE_DOCKER_DIRECT_MODE=dead
+  # ranking probes succeed (hello-world ok) but REAL image pulls fail
+  export AIBOX_DOCKER_POOL="docker.1ms.run"
+  export FAKE_DOCKER_REAL="$FAKEBIN/docker.real"
+  W="$FAKEBIN/wrap2"
+  mkdir -p "${W}"
+  cat >"${W}/docker" <<'WRAP'
+#!/usr/bin/env bash
+if [ "${1:-}" = "pull" ] && [ "${2:-}" != "${2%%*dify-api*}" ]; then
+  exit 1
+fi
+exec "${FAKE_DOCKER_REAL}" "$@"
+WRAP
+  chmod +x "${W}/docker"
+  mv "$FAKEBIN/docker" "$FAKE_DOCKER_REAL"
+  export PATH="${W}:$PATH"
+  run docker_pool_prepull langgenius/dify-api:1.17.1
+  [ "$status" -eq 1 ]
+  # the failed ranking must not be trusted for the next round
+  if grep -q $'^PULL\t' "$AIBOX_HOME/dockerpool.cache" 2>/dev/null; then
+    echo "cache not invalidated: $(cat "$AIBOX_HOME/dockerpool.cache")"
+    false
+  fi
 }
