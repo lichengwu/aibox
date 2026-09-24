@@ -2179,6 +2179,178 @@ _gh_api_fetch() { # $1 = https://raw.githubusercontent.com/<owner>/<repo>/<ref>/
   printf '%s' "${b}" | base64 -d 2>/dev/null || printf '%s' "${b}" | base64 -D 2>/dev/null
 }
 
+# ---------- docker source selector: TAGS family (dockerhub version resolution) ----------
+# Manager-side twin of common.sh's PULL/GHCR families (the manager never
+# sources the shared include — SAME cache file $AIBOX_HOME/dockerpool.cache,
+# SAME grammar "TAGS<TAB>token…", TTL AIBOX_DOCKER_POOL_TTL). Resolves the tag
+# list of a dockerhub repo with STRICT priority (spec §Docker source selector,
+# user-pinned):
+#   ① hub.docker.com direct — the default address (bounded)
+#   ② local addresses — the user knob (AIBOX_DOCKER_MIRROR) + the daemon's
+#      own registry-mirrors (docker info; the mirrors the host already has)
+#   ③ the acceleration pool below — engaged ONLY when ①② time out or die:
+#      concurrent race on the ACTUAL repo, speed-ranked, fastest-first
+#      failover; ①② ③  failures are death-cached (a cache line without a
+#      "direct" token skips the official route's timeout tax until the TTL
+#      re-probes it — mirrors die AND revive, networks change).
+# Output: tag names, one per line (both JSON shapes normalized: hub v2
+# "results" and registry v2 "tags"); rc 1 when unresolvable.
+# Live-verified DIRECT (no proxy) 2026-09-23 — keep in sync with common.sh's
+# DOCKER_POOL_MIRRORS (the families probe-prune per channel: daocloud 401s
+# the tags API but pulls fine; hub3/hub4/367231 serve tags but not pulls).
+# Knobs: AIBOX_DOCKER_POOL (mirror list override; "direct|none|off" = pool
+# off), AIBOX_DOCKER_MIRROR (user mirror, priority),
+# AIBOX_DOCKER_TAGS_TIMEOUT (8s per candidate), AIBOX_DOCKER_POOL_TTL (600).
+DK_TAGS_POOL_DEFAULT="docker.1ms.run hub.rat.dev docker.1panel.live hub.1panel.dev proxy.vvvv.ee docker.m.daocloud.io hub3.nat.tf hub4.nat.tf docker.367231.xyz docker.apiba.cn"
+
+# (cache twins of common.sh's _dkcache_* — same file, same semantics)
+_dkcache_path() { printf '%s/dockerpool.cache' "${AIBOX_HOME:-${HOME:+$HOME/.aibox}}"; }
+_dkcache_fresh() {
+  local now mtime age
+  [ -f "$1" ] || return 1
+  now="$(date +%s)"
+  mtime="$(date -r "$1" +%s 2>/dev/null || stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0)"
+  age=$(( now - ${mtime:-0} ))
+  [ "${age}" -lt "${AIBOX_DOCKER_POOL_TTL:-600}" ]
+}
+_dkcache_read() { # $1=family → the candidate line ("" when missing/stale)
+  local f line
+  f="$(_dkcache_path)"
+  [ -n "${f}" ] || return 0
+  _dkcache_fresh "${f}" || return 0
+  line="$(awk -v fam="$1" -F'\t' '$1==fam {print $2; exit}' "${f}" 2>/dev/null || true)"
+  printf '%s' "${line}"
+}
+_dkcache_write() { # $1=family $2=candidates ("" = invalidate the entry)
+  local f tmp others line
+  f="$(_dkcache_path)"
+  [ -n "${f}" ] || return 0
+  mkdir -p "$(dirname "${f}")" 2>/dev/null || true
+  tmp="$(mktemp "${f}.tmp.XXXXXX")" || return 0
+  line="$(printf '%s' "${2}" | tr -s ' ' | sed 's/^ //; s/ $//')"
+  others=""
+  if [ -f "${f}" ]; then
+    others="$(awk -v fam="$1" -F'\t' '$1!=fam {print}' "${f}" 2>/dev/null || true)"
+  fi
+  {
+    if [ -n "${line}" ]; then printf '%s\t%s\n' "$1" "${line}"; fi
+    if [ -n "${others}" ]; then printf '%s\n' "${others}"; fi
+  } >"${tmp}"
+  mv "${tmp}" "${f}"
+  chmod 600 "${f}" 2>/dev/null || true
+  return 0
+}
+
+# Tags from the official hub v2 API (the default address).
+_dk_tags_direct() { # $1=repo → tags on stdout; rc 1 when dead/empty
+  local body
+  body="$(curl -fsSL --max-time "${AIBOX_DOCKER_TAGS_TIMEOUT:-8}" \
+    "https://hub.docker.com/v2/repositories/${1}/tags?page_size=100&ordering=last_updated" 2>/dev/null)" || return 1
+  printf '%s' "${body}" | grep -oE '"name": *"[^"]+"' | cut -d'"' -f4 | grep -v '^$' || return 1
+}
+
+# Tags from a registry-v2 mirror (the acceleration form).
+_dk_tags_mirror() { # $1=mirror-host $2=repo → tags on stdout; rc 1 when dead/empty
+  local body
+  body="$(curl -fsSL --max-time "${AIBOX_DOCKER_TAGS_TIMEOUT:-8}" \
+    "https://${1}/v2/${2}/tags/list" 2>/dev/null)" || return 1
+  printf '%s' "${body}" | sed -e 's/.*"tags": *\[//' -e 's/\].*//' \
+    | tr ',' '\n' | tr -d ' "[]' | grep -v '^$' || return 1
+}
+
+# The daemon's own registry-mirrors — LOCAL addresses the host already has
+# (e.g. a NAS mirror configured in daemon.json). "[https://a.b:5443/]" → hosts.
+_dk_tags_local_mirrors() {
+  local out
+  command -v docker >/dev/null 2>&1 || return 0
+  out="$(docker info --format '{{.RegistryConfig.Mirrors}}' 2>/dev/null || true)"
+  printf '%s\n' "${out}" | tr ' ' '\n' | tr -d '[]' \
+    | sed -E 's#^https?://##; s#/$##' | grep -v '^$' || true
+}
+
+# Resolve a dockerhub repo's tag list (priority: direct → local → ranked
+# pool). rc 1 when nothing answers.
+dockerhub_tags_fetch() { # $1=repo (e.g. gitlab/gitlab-ce) → tag names, one per line
+  local repo="$1" cached order m tags seen_direct=0 pool
+  local tmo="${AIBOX_DOCKER_TAGS_TIMEOUT:-8}"
+  pool=""
+  case "${AIBOX_DOCKER_POOL:-}" in
+  direct | none | off) ;;
+  *) pool="${AIBOX_DOCKER_POOL:-${DK_TAGS_POOL_DEFAULT}}" ;;
+  esac
+  # 1. walk the cached order (failover; demote a dead official route)
+  cached="$(_dkcache_read TAGS)"
+  if [ -n "${cached}" ]; then
+    for m in ${cached}; do
+      if [ "${m}" = "direct" ]; then
+        seen_direct=1
+        if tags="$(_dk_tags_direct "${repo}")"; then
+          _dkcache_write TAGS "direct"
+          printf '%s\n' "${tags}"
+          return 0
+        fi
+        continue
+      fi
+      if tags="$(_dk_tags_mirror "${m}" "${repo}")"; then
+        # death-cache: an official route that failed in front of the winner is
+        # dropped from the order until the TTL re-probes it
+        if [ "${seen_direct}" = "1" ]; then
+          _dkcache_write TAGS "$(printf '%s\n' ${cached} | awk -v m="${m}" '$0==m {f=1; print; next} f {print}' | tr '\n' ' ')"
+        fi
+        printf '%s\n' "${tags}"
+        return 0
+      fi
+    done
+    _dkcache_write TAGS ""   # everything failed → self-heal: re-resolve now
+  fi
+  # 2. ① the default address (hub.docker.com direct)
+  if tags="$(_dk_tags_direct "${repo}")"; then
+    _dkcache_write TAGS "direct"
+    printf '%s\n' "${tags}"
+    return 0
+  fi
+  # 3. ② local addresses: the user knob + the daemon's registry-mirrors
+  local locals=""
+  [ -n "${AIBOX_DOCKER_MIRROR:-}" ] && locals="${AIBOX_DOCKER_MIRROR}"
+  locals="${locals}${locals:+ }$(_dk_tags_local_mirrors)"
+  # shellcheck disable=SC2086
+  for m in ${locals}; do
+    if tags="$(_dk_tags_mirror "${m}" "${repo}")"; then
+      _dkcache_write TAGS "${m}"
+      printf '%s\n' "${tags}"
+      return 0
+    fi
+  done
+  # 4. ③ the acceleration pool: concurrent race on the ACTUAL repo (the same
+  #    t bounds each candidate), rank by measured response time
+  [ -n "${pool}" ] || return 1
+  local tmpd pid pids="" i=0
+  tmpd="$(mktemp -d "${TMPDIR:-/tmp}/dktags.XXXXXX")" || return 1
+  # shellcheck disable=SC2086
+  for m in ${pool}; do
+    i=$(( i + 1 ))
+    (
+      t="$(curl -fsSL --max-time "${tmo}" -o /dev/null -w '%{time_total}' \
+        "https://${m}/v2/${repo}/tags/list" 2>/dev/null)" || exit 0
+      printf '%s %s\n' "${t}" "${m}" >"${tmpd}/r${i}.res"
+    ) &
+    pids="${pids} $!"
+  done
+  # shellcheck disable=SC2086
+  for pid in ${pids}; do wait "${pid}" 2>/dev/null || true; done
+  order="$(cat "${tmpd}"/r*.res 2>/dev/null | sort -n | awk '{print $2}' | tr '\n' ' ' || true)"
+  rm -rf "${tmpd}" 2>/dev/null || true
+  [ -n "${order}" ] || return 1
+  _dkcache_write TAGS "${order}"
+  # the winner serves this fetch (one bounded re-fetch — simpler than wiring
+  # the race bodies through; ~0.3s on the measured mirrors)
+  if tags="$(_dk_tags_mirror "${order%% *}" "${repo}")"; then
+    printf '%s\n' "${tags}"
+    return 0
+  fi
+  return 1
+}
+
 # Fetch a URL for the component-upgrade engine: routed through the source pool
 # (gh_pool_fetch) — the pool's ghapi pseudo-candidate and mirror candidates
 # subsume the old chain (direct → raw→api rewrite → CLASH_MIRROR); dockerhub and
@@ -2200,9 +2372,11 @@ upgrade_fetch() {
 _upgrade_hop_latest_patch() { # $1=repo $2=pattern $3=stop(major.minor)
   local repo="$1" pat="$2" stop="$3" anchor cand
   anchor="^${stop//./\.}\.[0-9]"
-  cand="$(upgrade_fetch "https://hub.docker.com/v2/repositories/${repo}/tags?name=${stop}&page_size=100" \
-    | grep -oE '"name": *"[^"]+"' | cut -d'"' -f4 \
-    | upgrade_pick_tag "${anchor}" || true)"
+  # dockerhub_tags_fetch: direct → local → ranked pool (spec §Docker source
+  # selector); the full tag list + the stop-anchored pattern below subsume the
+  # old ?name=<stop> substring filter (the ^<stop>. prefix weeds out the cross
+  # matches like 8.17.8 vs 17.8).
+  cand="$(dockerhub_tags_fetch "${repo}" | upgrade_pick_tag "${anchor}" || true)"
   if [ -n "${cand}" ] && [ -n "${pat}" ] && ! printf '%s' "${cand}" | grep -qE "${pat}"; then
     cand=""
   fi
@@ -2333,9 +2507,7 @@ cmd_upgrade() {
           | grep -m1 -oE '"tag_name": *"[^"]+"' | sed -e 's/.*"tag_name": *"//' -e 's/"$//' || true)"
         ;;
       dockerhub-tags)
-        target="$(upgrade_fetch "https://hub.docker.com/v2/repositories/${repo}/tags?page_size=100&ordering=last_updated" \
-          | grep -oE '"name": *"[^"]+"' | cut -d'"' -f4 \
-          | upgrade_pick_tag "${pattern}" || true)"
+        target="$(dockerhub_tags_fetch "${repo}" | upgrade_pick_tag "${pattern}" || true)"
         ;;
       *)
         die "${name}: unknown upgrade source '${src}' (github-release | dockerhub-tags)"
@@ -2343,7 +2515,7 @@ cmd_upgrade() {
     esac
     target="${target#v}"
   fi
-  [ -n "${target}" ] || die "cannot resolve the latest version for ${name} (network? try: aibox clash on / aibox proxy on; or pin explicitly: aibox upgrade ${name} --to <version>)"
+  [ -n "${target}" ] || die "cannot resolve the latest version for ${name} — the official registry, the local registry-mirrors and the acceleration pool all timed out (dockerpool.cache invalidated; try: aibox clash on / aibox proxy on; or pin explicitly: aibox upgrade ${name} --to <version>)"
 
   if [ "$(upgrade_ver_cmp "${target}" "${cur_ver}")" = "0" ]; then
     log "${name} is already at ${cur_ver}"
@@ -2607,8 +2779,7 @@ _dash_probe_latest() { # $1=module → prints the latest version
       | grep -m1 -oE '"tag_name": *"[^"]+"' | sed -e 's/.*"tag_name": *"//' -e 's/"$//' || true)" 
     ;;
   dockerhub-tags)
-    out="$(upgrade_fetch "https://hub.docker.com/v2/repositories/${repo}/tags?page_size=100&ordering=last_updated" 2>/dev/null \
-      | grep -oE '"name": *"[^"]+"' | cut -d'"' -f4 | upgrade_pick_tag "${pattern}" || true)"
+    out="$(dockerhub_tags_fetch "${repo}" | upgrade_pick_tag "${pattern}" || true)"
     ;;
   *) return 0 ;;
   esac
