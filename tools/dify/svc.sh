@@ -12,8 +12,12 @@ load_env
 
 case "${action}" in
 start)
-  if shared_base_enabled && [ ! -f "${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/base.env" ]; then
-    die "DIFY_SHARED_BASE=1 but base.env is missing — run: aibox base start"
+  # DIFY_SHARED_BASE=1 joins the shared base: ensure it is UP before the compose
+  # renders the shared override + --env-file (down → auto-start; the old flow
+  # died with "base.env is missing — run: aibox base start", two commands for
+  # one intent).
+  if shared_base_enabled; then
+    ensure_shared_base
   fi
   # docker.io source pool: bounded direct probe (healthy → compose pulls direct,
   # zero overhead); direct dead → ranked mirror pre-pull + tag (see lib.sh).

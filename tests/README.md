@@ -52,6 +52,8 @@ Every regression test below was born from a real bug found in review or live tes
 | `install-sh.bats` — temp+mv, checksum pin | live bug: self-update overwrote the RUNNING binary in place → garbage execution ("ugh: command not found"); wrong pin must leave the old binary untouched |
 | `proxy-fallback.bats` — clash fallback + precedence | live bug: `proxy check/test` died "No proxy configured" while clash provided a working proxy |
 | `base-svc.bats` — create dispatch/alias/usage | `createdb`→`create <component>` refactor must keep the deprecated alias + clear errors |
+| `ux-hardening.bats` — suggestions/preflight hints/bounded PM/profile output | the 0.15.0 UX pass: typos must suggest, hard deps must not advertise `--skip-checks`, package auto-install must be bounded (`AIBOX_PM_TIMEOUT`) + deduped, bin-dir precedence must match the bootstrap |
+| `deps-at-action.bats` — start/restart ensure declared services | live bug: `aibox xiaozhi start` died with "shared base not running — first: aibox base start" (two commands for one intent); the redis-only entry form was skipped entirely, and `base create` died with "PG not running?" instead of starting the stack |
 | `registry.bats` — cache hit/stale, YAML escaping | GitHub-API rate-limit cache + no command injection through module.yaml values |
 | `integration/base-profiles.bats` | live scenario: two stacks coexisting, DB/network isolation, per-profile env files |
 | `integration/pi-web-profiles.bats` | live scenario: 37173+`pi-web-prod.service`, password reuse (no rotation), per-profile uninstall |

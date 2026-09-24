@@ -28,6 +28,52 @@ require_docker() {
   die "docker CLI not found — this action needs it (install docker, then: aibox check ${AIBOX_MODULE:-<module>})"
 }
 
+# Path to the sibling base module's svc.sh. In the dispatched cache layout the
+# manager injects AIBOX_MOD_DIR, which is authoritative — its absence means base
+# is NOT installed. Direct repo execution (bats / dev) falls back to the sibling
+# dir: _common.sh sits next to lib.sh in the cache and in tools/_shared in the
+# repo, both exactly one level below the sibling module dir.
+shared_base_svc_path() {
+  if [ -n "${AIBOX_MOD_DIR:-}" ]; then
+    printf '%s/base/svc.sh' "${AIBOX_MOD_DIR}"
+    return 0
+  fi
+  local d
+  d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  printf '%s/../base/svc.sh' "${d}"
+}
+
+# Idempotent "the shared base must be UP for this action" — the action-time
+# twin of the manager's ensure_services. Live-caught: `aibox xiaozhi start`
+# died with "shared base not running … first: aibox base start" — two commands
+# for one intent. base already up → silent no-op; installed but down → start it
+# (compose up -d is idempotent) and wait for the network; not installed or not
+# startable → die (without the provider the module cannot run at all).
+ensure_shared_base() {
+  require_docker
+  local svc base_env net waited=0 timeout_s
+  svc="$(shared_base_svc_path)"
+  [ -f "$svc" ] || die "the shared base module is not installed — first: aibox install base"
+  base_env="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/base.env"
+  net="$(grep -E '^AIBOX_BASE_NETWORK=' "$base_env" 2>/dev/null | cut -d= -f2- || true)"
+  [ -n "${net}" ] || net="aibox-base"
+  # both are written by `base start` and are what the consumer's compose needs
+  if [ -f "$base_env" ] && docker network inspect "${net}" >/dev/null 2>&1; then
+    return 0
+  fi
+  info "shared base is not running — starting it (this action needs the ${net} network)…"
+  AIBOX_MODULE=base bash "$svc" start || die "shared base failed to start — check: aibox base logs"
+  timeout_s="${AIBOX_BASE_WAIT_TIMEOUT:-120}"
+  while [ "${waited}" -lt "${timeout_s}" ]; do
+    if [ -f "$base_env" ] && docker network inspect "${net}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+    waited=$(( waited + 2 ))
+  done
+  die "the shared base did not become ready within ${timeout_s}s — check: aibox base status"
+}
+
 # ---------- dashboard keyline template (spec §Dashboard template) ----------
 # Shared render helpers for module-owned rich views (render_dashboard); the
 # manager (bin/aibox, a single-file CLI that cannot source this file) inlines

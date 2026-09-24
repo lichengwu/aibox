@@ -56,7 +56,7 @@ if [ -z "${AIBOX_BIN_DIR:-}" ]; then
     ;;
   esac
 fi
-AIBOX_VERSION="0.15.0"
+AIBOX_VERSION="0.15.1"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 
@@ -2140,31 +2140,89 @@ cmd_install() {
 }
 
 # Handle a module's services deps (module.yaml services field):
-# for base:postgres#<db> -> ensure base is running + write base.env + create db <db>. Best-effort, non-blocking.
-ensure_services() {
-  local name="$1" svc component resource rc=0
-  local services; services="$(module_field "$name" services)"
+#   base:postgres#<db> → ensure base is up + create database <db>
+#   base:redis         → ensure base is up (no resource to create)
+# The resource-less form used to be skipped entirely, so `install xiaozhi`
+# (services: base:redis) never started its provider (live-caught).
+# Modes: install (default — always ensures the resources) and --action, a quiet
+# fast path when the shared base is already up (the install path created the
+# resources; re-printing them on every `aibox <m> start` is pure noise).
+# Best-effort: failures warn and set rc (the module's own action-time guard is
+# authoritative and dies with a clear message).
+ensure_services() { # $1=module [$2=--action]
+  local name="$1" mode="${2:-}"
+  # local cache metadata first: the action path does not load_registry (and must
+  # not — it can be offline), while an installed module ALWAYS has module.yaml
+  local services; services="$(_module_meta_local "${name}" services)"
+  [ -n "$services" ] || services="$(module_field "$name" services 2>/dev/null || true)"
   [ -n "$services" ] || return 0
+  local svc component resource rc=0 started=0
   for svc in $services; do
     case "$svc" in
-      base:*#*) ;;
+      base:*) ;;
       *) continue ;;
     esac
-    component="${svc#base:}"; component="${component%%#*}"
-    resource="${svc#*#}"
+    component="${svc#base:}"
+    case "$component" in
+    *'#'*) resource="${component#*#}"; component="${component%%#*}" ;;
+    *)     resource="" ;;
+    esac
     if ! is_installed base; then
       warn "Module ${name} depends on base:${component}, but base isn't installed (first: aibox install base)"
       rc=1
       continue
     fi
-    # `base start` is idempotent (compose up -d no-ops if already running);
-    # the container name is profile-dependent, so we don't hardcode it here.
-    info "Starting shared base (${name} depends on it)…"
-    AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" start || { warn "base start failed (start manually: aibox base start)"; rc=1; continue; }
+    # --action and the base is already up → nothing to do (quiet)
+    if [ "${mode}" = "--action" ] && [ "${started}" = "0" ] && _base_stack_up; then
+      continue
+    fi
+    if [ "${started}" = "0" ]; then
+      info "Starting shared base (${name} needs it)…"
+      AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" start || { warn "base start failed (start manually: aibox base start)"; rc=1; continue; }
+      started=1
+    fi
+    [ -n "${resource}" ] || continue
     info "Creating ${component} resource '${resource}' (shared base)…"
     AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" create "${component}" "${resource}" || { warn "base create ${component} ${resource} failed (create manually: aibox base create ${component} ${resource})"; rc=1; }
   done
   return "$rc"
+}
+
+# Cheap "is the shared base up?" probe for the action-time fast path: base.env
+# exists AND its docker network is present (both are written by `base start`).
+# No docker → not up, so the caller's ensure runs and fails LOUDLY instead of
+# silently skipping.
+_base_stack_up() {
+  local env="${AIBOX_HOME:-$HOME/.aibox}/base.env" net
+  [ -f "$env" ] || return 1
+  command -v docker >/dev/null 2>&1 || return 1
+  net="$(grep -E '^AIBOX_BASE_NETWORK=' "$env" 2>/dev/null | cut -d= -f2- || true)"
+  [ -n "${net}" ] || net="aibox-base"
+  docker network inspect "${net}" >/dev/null 2>&1
+}
+
+# Action-time declared-deps guard: existence only — no auto-install, no
+# network, so it is cheap enough for every start. A missing node for pi-web
+# used to surface only as "the service did not come up" after a silent crash;
+# name the dep and the fix instead. Warn-only: a module may still work in some
+# setups, and the real verdict belongs to the action itself.
+_runtime_dep_guard() { # $1=module
+  local name="$1" deps dep cmd ptag os missing=""
+  deps="$(_module_meta_local "${name}" deps)"
+  [ -n "$deps" ] || return 0
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  for dep in $deps; do
+    cmd="$dep"; ptag=""
+    cmd="${cmd%\"}"; cmd="${cmd#\"}"   # quoted list entries ("node:22") — strip here too
+    case "$cmd" in *@*) ptag="${cmd##*@}"; cmd="${cmd%@*}" ;; esac
+    if [ -n "$ptag" ] && [ "$ptag" != "$os" ]; then continue; fi
+    case "$cmd" in *:*) cmd="${cmd%%:*}" ;; esac
+    command -v "$cmd" >/dev/null 2>&1 || missing="${missing}${missing:+ }${cmd}"
+  done
+  [ -n "$missing" ] || return 0
+  warn "${name}: missing ${missing} — without it the service will not come up"
+  warn "  fix: aibox check ${name} (preflight shows the required version) · the install/update preflight auto-installs deps"
+  return 0
 }
 
 cmd_uninstall() {
@@ -3042,7 +3100,7 @@ _module_meta_local() { # $1=module $2=field (scalar OR flat list like actions)
     # flat list (field: followed by "  - item" lines): join space-separated
     v="$(awk -v f="${field}" '
       $0 == f ":" { inl=1; next }
-      inl && /^[ ]+- / { sub(/^[ ]+- /, ""); printf "%s%s", sep, $0; sep=" "; next }
+      inl && /^[ ]+- / { sub(/^[ ]+- /, ""); gsub(/^"|"$/, ""); printf "%s%s", sep, $0; sep=" "; next }
       inl { inl=0 }
     ' "$AIBOX_MOD_DIR/$m/module.yaml" 2>/dev/null)"
     [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
@@ -3658,6 +3716,15 @@ cmd_module_action() {
     esac
   fi
   is_installed "$name" || die "$name not installed (first: aibox install ${name})"
+  # Bringing a module UP ensures its declared service deps first — live-caught:
+  # `aibox xiaozhi start` died with "shared base not running — first: aibox base
+  # start" (two commands for one intent). stop/logs/status never start anything.
+  case " ${action} " in
+  *" start "* | *" restart "*)
+    ensure_services "${name}" --action || true
+    _runtime_dep_guard "${name}"
+    ;;
+  esac
   local svc="$AIBOX_MOD_DIR/$name/svc.sh"
   [ -f "$svc" ] || die "Missing ${svc} (try aibox update ${name})"
   AIBOX_MODULE="$name" bash "$svc" "$action" "$@"

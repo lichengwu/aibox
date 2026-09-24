@@ -1,5 +1,5 @@
 name: new-api
-version: 1.2.2
+version: 1.2.3
 description: "New API self-hosted (docker compose): LLM API gateway (OpenAI-compatible relay, key/quota management, usage analytics)"
 platform: ""
 dir: tools/new-api

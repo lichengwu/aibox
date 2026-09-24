@@ -157,6 +157,24 @@ ensure_compose() {
   [ -f "$COMPOSE_FILE" ] || die "No compose file (first: aibox install base)"
 }
 
+# Is the shared stack up? Cheap docker ps probe (no PG round-trip) — used by the
+# idempotent guards below and by cmd_start's quiet no-op path.
+stack_running() {
+  require_docker
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${POSTGRES_CONTAINER}" || return 1
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${REDIS_CONTAINER}" || return 1
+}
+
+# Idempotent "this action needs the stack UP": start it when down, silent when
+# already running. `aibox base create <db>` used to die with "PG not running?
+# aibox base start" — two commands for one intent (live-caught while wiring the
+# consumer modules' start-time ensure).
+ensure_stack_running() {
+  stack_running && return 0
+  info "shared base is not running — starting it…"
+  cmd_start
+}
+
 # ---------- lifecycle ----------
 # Writes $ENV_FILE — consuming modules inject it via compose --env-file (single source).
 # Holds only instance-level shared info (host/port/user/password, from the container's perspective:
@@ -178,6 +196,14 @@ EOF
 
 cmd_start() {
   ensure_compose
+  # Idempotent AND quiet when there is nothing to do: consumer actions ensure the
+  # base before starting, and re-running compose up + printing the container
+  # table on every one of them was pure noise. base.env is re-checked here — a
+  # deleted base.env must be rewritten even while the containers run.
+  if stack_running && [ -f "$ENV_FILE" ]; then
+    log "Shared PG/Redis already running (PG ${PG_HOST}:${PG_PORT} / Redis ${REDIS_HOST}:${REDIS_PORT})"
+    return 0
+  fi
   log "Starting shared PG/Redis ..."
   # docker.io source pool: bounded direct probe (healthy → compose pulls direct,
   # zero overhead); direct dead → ranked mirror pre-pull + tag (see this lib).
@@ -222,6 +248,9 @@ cmd_createdb() {
     dbname="$module"
   fi
   ensure_compose
+  # The stack must be UP for this: auto-start when down (idempotent, silent when
+  # already running) instead of dying with "PG not running? aibox base start".
+  ensure_stack_running
   # Wait for PG readiness (a fresh `base start` needs a few seconds; createdb right after
   # start used to fail on live hosts — observed on the Debian test machine, needed sleep 5).
   local _i=0

@@ -11,17 +11,12 @@ action="${1:-status}"
 load_env
 
 # The shared base is a hard prerequisite (module.yaml services:): the compose
-# joins the EXTERNAL aibox-base network and reads base.env — a missing network
-# makes `compose up` fail with an opaque "network not found".
+# joins the EXTERNAL aibox-base network and reads base.env. Started HERE when
+# it is down — a start must ensure its own deps (live-caught: this used to die
+# with "first: aibox base start", two commands for one intent).
 _ensure_base() {
   require_docker
-  local base_env net
-  base_env="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/base.env"
-  net="$(grep -E '^AIBOX_BASE_NETWORK=' "${base_env}" 2>/dev/null | cut -d= -f2- || true)"
-  [ -n "${net}" ] || net="aibox-base"
-  if [ ! -f "${base_env}" ] || ! docker network inspect "${net}" >/dev/null 2>&1; then
-    die "shared base not running (compose needs the external network ${net}) — first: aibox base start"
-  fi
+  ensure_shared_base
 }
 
 case "${action}" in

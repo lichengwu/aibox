@@ -1,5 +1,5 @@
 name: base
-version: 1.4.2
+version: 1.4.3
 description: "Shared base components (PostgreSQL 18 + Redis 7); each module gets its own DB"
 platform: ""
 dir: tools/base

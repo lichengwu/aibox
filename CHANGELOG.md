@@ -7,6 +7,39 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.15.1] — 2026-09-25
+
+### Fixed
+
+- **A module start now ensures its declared service deps instead of demanding a
+  second command** — `aibox xiaozhi start` died with "shared base not running
+  (compose needs the external network aibox-base) — first: aibox base start"
+  (live-caught); the same pattern existed for new-api and for dify in
+  `DIFY_SHARED_BASE=1` mode, and `aibox base create <db>` died with "PG not
+  running? aibox base start" whenever the stack was down. `start`/`restart` now
+  ensure the provider first: the manager runs the ensure before dispatching
+  (quiet when the base is already up) and the module hooks carry
+  `ensure_shared_base` for direct invocation — down → started and awaited,
+  already up → a silent no-op, unstartable → a clear failure naming
+  `aibox base logs` / `aibox base status`. `stop`/`logs`/`status` never start
+  anything.
+- **The resource-less service entry form (`base:redis`) is honored** — it was
+  skipped entirely, so a provider was started only by accident of a sibling
+  entry; the manager now starts the shared base for it too (no resource to
+  create).
+- **`aibox <module> start` warns when a declared dep binary is missing** — a
+  vanished node (pi-web) surfaced only as "the service did not come up" after a
+  silent crash; the action now names the dep and points at `aibox check <module>`
+  (existence-only probe: no network, no auto-install).
+
+### Changed
+
+- **`aibox base start` is quiet when there is nothing to do** — the idempotent
+  path now reports "Shared PG/Redis already running (PG …:… / Redis …:…)"
+  instead of re-running `compose up -d` and printing the container table on every
+  consumer start. `base.env` is still rewritten when it went missing (a deleted
+  file must come back even with the containers up).
+
 ## [0.15.0] — 2026-09-25
 
 A usability pass over the whole surface: unknown arguments, dependency auto-install,
@@ -909,6 +942,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.15.1]: https://github.com/lichengwu/aibox/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/lichengwu/aibox/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/lichengwu/aibox/compare/v0.13.5...v0.14.0
 [0.13.5]: https://github.com/lichengwu/aibox/compare/v0.13.4...v0.13.5
