@@ -251,3 +251,136 @@ teardown() {
   # (AGENTS.md pitfall #11: a suffix miss is pattern semantics, not a bash bug)
   [[ "$output" == *"· ✓"* || "$output" == *"⚠"* ]] || false
 }
+
+# ---------- v0.13.3: `aibox update pi-web` also refreshes the pi CLI itself ----------
+
+_piweb_upd_setup() { # writes fake node + pi shims into $FAKEBIN + the shared log
+  # fake node: resolve_node needs a >=22 node in the CONTROLLED path (the real
+  # nvm bin dir also contains the REAL pi — excluded on purpose: the tests must
+  # never invoke it)
+  export FAKE_PI_LOG="$SANDBOX/pi.log"
+  cat >"$FAKEBIN/node" <<'NODESHIM'
+#!/usr/bin/env bash
+case "$1" in
+-p) printf '%s\n' 24 ;;
+-v) printf '%s\n' v24.13.0 ;;
+*) exit 0 ;;
+esac
+NODESHIM
+  chmod +x "$FAKEBIN/node"
+  # fake pi-web binary: the upgrade path's write_service resolves the binary
+  # (npm prefix -g → NODE_DIR → PATH); NODE_DIR = $FAKEBIN here
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$FAKEBIN/pi-web"
+  chmod +x "$FAKEBIN/pi-web"
+  # systemctl/loginctl no-ops: the Linux branch of write_service calls them;
+  # the test container has no systemd bus (Failed to connect to bus)
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$FAKEBIN/systemctl"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$FAKEBIN/loginctl"
+  chmod +x "$FAKEBIN/systemctl" "$FAKEBIN/loginctl"
+  cat >"$FAKEBIN/pi" <<'SHIM'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${FAKE_PI_LOG:?}"
+case "${FAKE_PI_MODE:-ok}" in
+ok) exit 0 ;;
+fail) echo "simulated pi failure" >&2; exit 1 ;;
+stall) sleep 300 ;;
+esac
+SHIM
+  chmod +x "$FAKEBIN/pi"
+  : >"${FAKE_PI_LOG:?}"
+  export FAKE_CURL_TABLE="registry.npmjs.org=9.9.9:100"
+}
+
+@test "update.sh (pi-web already latest): still runs pi update --all" {
+  _piweb_upd_setup
+  # fake npm: ls -g reports the SAME version as the probe's latest (9.9.9)
+  cat >"$FAKEBIN/npm" <<'SHIM'
+#!/usr/bin/env bash
+case "$1" in
+ls) printf 'pi-web@9.9.9\n/usr/lib\n└── @agegr/pi-web@9.9.9\n'; exit 0 ;;
+config) exit 0 ;;
+*) exit 0 ;;
+esac
+SHIM
+  chmod +x "$FAKEBIN/npm"
+  run bash -c "PATH='$FAKEBIN:/usr/bin:/bin' HOME='$SANDBOX' AIBOX_NPM_PROBE_TIMEOUT=3 \
+    bash '$REPO_ROOT/tools/pi-web/update.sh' --no-restart"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"already latest"* ]] || false
+  grep -q '^update --all$' "$FAKE_PI_LOG" || false
+}
+
+@test "update.sh (pi-web upgrade): pi update --all rides along AFTER the npm upgrade" {
+  _piweb_upd_setup
+  # ls reports an OLD version → the upgrade path engages (fake npm install: ok)
+  cat >"$FAKEBIN/npm" <<'SHIM'
+#!/usr/bin/env bash
+case "$1" in
+ls) printf '/usr/lib\n└── @agegr/pi-web@1.0.0\n'; exit 0 ;;
+config) exit 0 ;;
+install) printf 'npm install called\n' >>"${FAKE_PI_LOG:?}.npm"; exit 0 ;;
+*) exit 0 ;;
+esac
+SHIM
+  chmod +x "$FAKEBIN/npm"
+  run bash -c "PATH='$FAKEBIN:/usr/bin:/bin' HOME='$SANDBOX' AIBOX_NPM_PROBE_TIMEOUT=3 \
+    bash '$REPO_ROOT/tools/pi-web/update.sh' --no-restart"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"Upgrading @agegr/pi-web"* ]] || false
+  [[ "$output" == *"pi update --all"* ]] || false
+  grep -q '^update --all$' "$FAKE_PI_LOG" || false
+}
+
+@test "update.sh: pi update failure is non-fatal (pi-web update still succeeds)" {
+  _piweb_upd_setup
+  export FAKE_PI_MODE=fail
+  cat >"$FAKEBIN/npm" <<'SHIM'
+#!/usr/bin/env bash
+case "$1" in
+ls) printf '/usr/lib\n└── @agegr/pi-web@9.9.9\n'; exit 0 ;;
+config) exit 0 ;;
+*) exit 0 ;;
+esac
+SHIM
+  chmod +x "$FAKEBIN/npm"
+  run bash -c "PATH='$FAKEBIN:/usr/bin:/bin' HOME='$SANDBOX' AIBOX_NPM_PROBE_TIMEOUT=3 \
+    bash '$REPO_ROOT/tools/pi-web/update.sh' --no-restart"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"pi update --all failed"* ]] || false
+}
+
+@test "update.sh: pi CLI absent → skipped with a warn, update succeeds" {
+  _piweb_upd_setup
+  rm -f "$FAKEBIN/pi"   # not in the controlled PATH (real pi lives in nvm's dir — excluded)
+  cat >"$FAKEBIN/npm" <<'SHIM'
+#!/usr/bin/env bash
+case "$1" in
+ls) printf '/usr/lib\n└── @agegr/pi-web@9.9.9\n'; exit 0 ;;
+config) exit 0 ;;
+*) exit 0 ;;
+esac
+SHIM
+  chmod +x "$FAKEBIN/npm"
+  run bash -c "PATH='$FAKEBIN:/usr/bin:/bin' HOME='$SANDBOX' AIBOX_NPM_PROBE_TIMEOUT=3 \
+    bash '$REPO_ROOT/tools/pi-web/update.sh' --no-restart"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"pi CLI not found"* ]] || false
+}
+
+@test "update.sh: stalling pi update is watchdog-killed, update continues" {
+  _piweb_upd_setup
+  export FAKE_PI_MODE=stall
+  cat >"$FAKEBIN/npm" <<'SHIM'
+#!/usr/bin/env bash
+case "$1" in
+ls) printf '/usr/lib\n└── @agegr/pi-web@9.9.9\n'; exit 0 ;;
+config) exit 0 ;;
+*) exit 0 ;;
+esac
+SHIM
+  chmod +x "$FAKEBIN/npm"
+  run bash -c "PATH='$FAKEBIN:/usr/bin:/bin' HOME='$SANDBOX' AIBOX_NPM_PROBE_TIMEOUT=3 \
+    PI_WEB_PI_UPDATE_TIMEOUT=1 bash '$REPO_ROOT/tools/pi-web/update.sh' --no-restart"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"stalled"* ]] || false
+}

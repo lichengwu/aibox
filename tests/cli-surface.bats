@@ -92,6 +92,9 @@ EOF
 }
 
 @test "dashboard overview: empty state + residue section for not-installed leftovers" {
+  # the residue scan is gated on the docker CLI (manager-side docker probes);
+  # skip where docker is absent (minimal containers) — CI runners carry it
+  command -v docker >/dev/null 2>&1 || skip "no docker CLI (residue scan needs it)"
   export AIBOX_RAW="https://dead.invalid/aibox"
   export AIBOX_DASH_UPDATE_TIMEOUT=1
   # base installed; gitlab NOT installed but with a residue dir → residue section

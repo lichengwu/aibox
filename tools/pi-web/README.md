@@ -58,6 +58,7 @@ configure by default:
 | `AIBOX_NPM_REGISTRIES` | shipped list | override the candidate list |
 | `AIBOX_NPM_TIMEOUT` | `240` | install watchdog seconds |
 | `AIBOX_NPM_PROBE_TIMEOUT` | `6` | per-probe curl timeout seconds |
+| `PI_WEB_PI_UPDATE_TIMEOUT` | `240` | `pi update --all` watchdog seconds (`aibox update pi-web` also refreshes the pi CLI) |
 
 Just export them before `aibox install pi-web`, for example:
 

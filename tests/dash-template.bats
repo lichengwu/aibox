@@ -64,17 +64,21 @@ setup() {
   # [ -t 1 ] ran inside $(…) — always a pipe — so the width was dead-fixed 64.
   # expect's spawn has no TERM by default — export one or tput dies; the
   # command travels via $env() so Tcl never eats the shell's [ ].)
-  local cmd chars
+  local cmd line chars
   cmd="cd '$REPO_ROOT'; export TERM=xterm; . tools/_shared/common.sh; stty cols 50; dash_rule"
-  chars="$(EXPECT_CMD="$cmd" expect -c '
+  line="$(EXPECT_CMD="$cmd" expect -c '
     log_user 0
     spawn /bin/bash -c $env(EXPECT_CMD)
     expect {
-      -re "(.+)\r" { puts [string length $expect_out(1,string)] }
-      timeout { puts TIMEOUT; exit 3 }
+      -re "(.+)\r" { puts $expect_out(1,string) }
+      timeout { exit 3 }
     }
-  ' | tail -1 | tr -d '[:space:]')"
-  [ "$chars" = "50" ] || { echo "rule chars: [$chars]"; false; }
+  ' | tr -d "\r" | tail -1)"
+  # count CHARS locale-independently: Tcl string length counts BYTES under the
+  # C locale (─×50 → 150 in a minimal container), and bash ${#line}/wc -m do
+  # too — map each ─ to one ASCII byte, then count bytes
+  chars="$(printf '%s' "$line" | sed 's/─/x/g' | wc -c | tr -d '[:space:]')"
+  [ "$chars" = "50" ] || { echo "rule chars: [$chars] line=[$line]"; false; }
 }
 
 @test "bash glob semantics pin: multibyte suffix patterns match fine (the misdiagnosed #11)" {

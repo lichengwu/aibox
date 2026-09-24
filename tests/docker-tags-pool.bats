@@ -104,7 +104,7 @@ _direct_hits() { grep -c "hub.docker.com" "$FAKE_CURL_LOG" || true; }
   out="$(dockerhub_tags_fetch "gitlab/gitlab-ce")" || false
   printf '%s\n' "$out" | grep -q '^19.4.1-ce.0$' || false
   [ "$(_dkcache_read TAGS)" = "docker.1ms.run hub.rat.dev" ] || false   # daocloud pruned
-  [ "$(stat -f %Lp "$AIBOX_HOME/dockerpool.cache" 2>/dev/null || stat -c %a "$AIBOX_HOME/dockerpool.cache")" = "600" ] || false
+  [ "$(stat -c %a "$AIBOX_HOME/dockerpool.cache" 2>/dev/null || stat -f %Lp "$AIBOX_HOME/dockerpool.cache" 2>/dev/null)" = "600" ] || false
 }
 
 @test "dockerhub_tags_fetch: cached order (no direct token) → direct NOT retried within TTL" {

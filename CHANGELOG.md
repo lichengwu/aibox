@@ -7,6 +7,24 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.13.3] — 2026-09-24
+
+### Added
+
+- **`aibox update pi-web` also refreshes the pi CLI itself** — `pi update --all`
+  (pi + all its extensions) rides along on both the upgrade and the
+  already-latest path, best-effort and never fatal (watchdog-bounded,
+  `PI_WEB_PI_UPDATE_TIMEOUT` 240s; a missing/slow/failing pi degrades to a warn).
+  (module 1.4.2)
+
+### Fixed
+
+- Test-suite portability (found by moving the suite into a clean Linux
+  container): GNU `stat -f` semantics in two pool-cache tests (GNU-first order,
+  as the other tests already do); the expect pty width test now counts
+  characters locale-independently (Tcl `string length` counts BYTES under the
+  C locale); the residue-section test skips without a docker CLI.
+
 ## [0.13.2] — 2026-09-24
 
 ### Fixed
@@ -747,6 +765,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.13.3]: https://github.com/lichengwu/aibox/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/lichengwu/aibox/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/lichengwu/aibox/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/lichengwu/aibox/compare/v0.12.1...v0.13.0

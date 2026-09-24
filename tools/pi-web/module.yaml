@@ -1,5 +1,5 @@
 name: pi-web
-version: 1.4.1
+version: 1.4.2
 description: "Deploy @agegr/pi-web as a launchd/systemd service (HTTP Basic auth, auto-restart)"
 platform: ""
 dir: tools/pi-web
@@ -53,6 +53,7 @@ env:
   AIBOX_NPM_REGISTRIES: "shipped list — candidate registries override [knob]"
   AIBOX_NPM_TIMEOUT: "240 — npm install watchdog seconds [knob]"
   AIBOX_NPM_PROBE_TIMEOUT: "6 — registry probe timeout [knob]"
+  PI_WEB_PI_UPDATE_TIMEOUT: "240 — pi update --all watchdog seconds (aibox update pi-web also refreshes the pi CLI) [knob]"
 
 usage:
   start: "Start the launchd/systemd service"

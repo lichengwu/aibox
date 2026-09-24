@@ -44,6 +44,21 @@
   runs in a subshell — global-setting functions must be called directly to assert
   their side effects).
 
+## pi CLI refresh + watchdog kill order (design)
+
+`aibox update pi-web` also refreshes the pi CLI itself (`pi update --all`,
+best-effort, never fatal): pi-web serves the same agent runtime, so the module
+update is the natural moment. Watchdog-bounded (`PI_WEB_PI_UPDATE_TIMEOUT`,
+240s; pi's updater shells out to npm — the same silent-stall class).
+
+Kill order in that watchdog: **children FIRST, then the parent**. A generic
+untrapped child shell dies instantly on TERM, and bash reaps the zombie before
+a follow-up `pkill -P` can run — so the orphaned `sleep` reparents to init and
+survives (live-caught: a 300s pipe-holding orphan made a bats run hang for 5
+extra minutes). `npm_install_global`'s parent-first order only works because
+its npm shim traps TERM and lingers long enough for `pkill -P` to find the
+children.
+
 ## Testing
 
 - Service status: `aibox pi-web status`

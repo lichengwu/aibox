@@ -232,7 +232,7 @@ EOF
   [ "$status" -eq 0 ]
   [ -f "$AIBOX_HOME/dockerpool.cache" ] || false
   grep -q $'^PULL\tdocker.1ms.run' "$AIBOX_HOME/dockerpool.cache" || false
-  [ "$(stat -f %Lp "$AIBOX_HOME/dockerpool.cache" 2>/dev/null || stat -c %a "$AIBOX_HOME/dockerpool.cache")" = "600" ] || false
+  [ "$(stat -c %a "$AIBOX_HOME/dockerpool.cache" 2>/dev/null || stat -f %Lp "$AIBOX_HOME/dockerpool.cache" 2>/dev/null)" = "600" ] || false
 }
 
 @test "PULL cache: fresh entry skips BOTH the direct probe and the ranking probes" {
