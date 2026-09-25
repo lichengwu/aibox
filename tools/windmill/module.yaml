@@ -1,5 +1,5 @@
 name: windmill
-version: 1.4.2
+version: 1.5.0
 description: "Windmill self-host ops CLI (init/upgrade/backup/drill/doctor)"
 platform: ""
 dir: tools/windmill
@@ -10,8 +10,8 @@ deps:
   - python3
 
 ports:
-  # windmill CLI default HTTP_PORT=80 (env-overridable at init)
-  - 80/tcp:http
+  # entry port, default 8080 (host conf HTTP_PORT overrides at init/up)
+  - 8080/tcp:http
 
 files:
   - cli/windmill
@@ -69,6 +69,18 @@ env:
   WM_GHCR_MIRROR: "(unset) — ghcr.io mirror for image pulls"
   WM_HUB_MIRROR: "(unset) — docker.io mirror for image pulls"
   HTTP_PORT: "8080 — the stack's HTTP port"
+  BASE_URL: "(unset) — external URL, scheme+host only (no port, no path). https + a domain = automatic HTTPS and publishes 443; https + a bare IP = self-signed; empty = http on the detected IP + HTTP_PORT"
+  WM_WORKER_REPLICAS: "3 — default-group worker replicas"
+  WM_WORKER_MEMORY: "1536M — default-group worker memory cap"
+  WM_NATIVE_REPLICAS: "1 — native worker replicas"
+  WM_NATIVE_MEMORY: "1024M — native worker memory cap"
+  WM_INDEXER_REPLICAS: "0 — 1 enables full-text job/log search (EE)"
+  LOG_MAX_SIZE: "20m — docker json-file rotate size"
+  LOG_MAX_FILE: "10 — docker json-file files kept"
+  KEEP: "7 — daily backups kept by the systemd timer (re-run `windmill systemd install` after a change)"
+  ENABLE_LSP: "true — windmill_extra code intelligence"
+  ENABLE_MULTIPLAYER: "false — real-time collaboration (EE)"
+  ENABLE_DEBUGGER: "true — DAP debugger (keep REQUIRE_SIGNED_DEBUG_REQUESTS=true on any reachable host)"
 
 usage:
   start: "Start the stack (docker compose up -d)"
@@ -89,8 +101,8 @@ usage:
   restore: "Restore volumes from a backup"
   drill: "Practice the disaster-recovery path (no-op run)"
   snapshots: "List / manage volume snapshots"
-  init: "First-time init (secrets + config generation)"
-  config: "Show/set config keys (store: /etc/windmill/windmill.conf; applies at next invocation)"
+  init: "First-time init (secrets + config generation + --base-url/--port)"
+  config: "Show/set config keys (store: /etc/windmill/windmill.conf; stack knobs apply at the next up/deploy)"
 
 upstream:
   homepage: https://github.com/windmill-labs/windmill

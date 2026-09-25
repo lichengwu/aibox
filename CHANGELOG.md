@@ -7,6 +7,67 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.16.0] — 2026-09-25
+
+The windmill module becomes configurable where it previously required hand-editing
+GENERATED files (docker-compose.yml / Caddyfile / .env — all of which the next
+render overwrites, so those edits never survived an upgrade).
+Semver: minor — new knobs and new behavior; the entry-port default also changes
+(80 → 8080, see Changed for the migration note).
+
+### Added
+
+- **`BASE_URL` — domain / HTTPS for the Windmill stack.** The generated Caddyfile
+  now takes its site address from `BASE_URL`, so a real domain gets automatic
+  HTTPS (ACME) and the compose publishes `443:443`; `https://` + a bare IP gets
+  `tls internal` (self-signed — ACME cannot certify an IP, the old flow would have
+  retried forever); empty keeps the previous plain-HTTP-behind-your-own-proxy
+  behaviour. Hardening then sets Windmill's Base URL from it instead of the
+  auto-detected LAN IP (wrong behind a domain). A port or path inside `BASE_URL`
+  is rejected with guidance, because that would make Caddy listen on a container
+  port the published mapping does not cover.
+- **Worker / indexer sizing knobs** — `WM_WORKER_REPLICAS` (3), `WM_WORKER_MEMORY`
+  (1536M), `WM_NATIVE_REPLICAS` (1), `WM_NATIVE_MEMORY` (1024M),
+  `WM_INDEXER_REPLICAS` (0; `1` enables full-text job/log search). They are
+  `.env`-interpolated into the compose, so scaling no longer means hand-editing a
+  generated file.
+- **`LOG_MAX_SIZE` (20m) / `LOG_MAX_FILE` (10) / `KEEP` (7)** — log-rotation and
+  backup-retention knobs that already existed in the templates but had no way to
+  be set; `KEEP` is baked into `windmill-backup.service` so the timer honours it.
+- **`ENABLE_LSP` / `ENABLE_MULTIPLAYER` / `ENABLE_DEBUGGER`** — the compose comment
+  advertised these as environment-switchable while they were hardcoded; they are
+  real knobs now (boolean-validated).
+- **`windmill init --base-url <url>`** — set the advertised URL at deploy time
+  (host-wide default: `aibox windmill config set BASE_URL <url>`).
+- **`windmill deploy --recreate` re-renders `docker-compose.yml` + `Caddyfile`** —
+  the rendered artifacts are regenerated from the current knobs before the stack
+  restarts, which is also the only path that can pick up a `BASE_URL` scheme change
+  (compose cannot conditionally publish a port). `.env` is never re-rendered
+  (version pins and the DB password must survive).
+- **The seeded `/etc/windmill/windmill.conf` now documents every supported key**
+  (commented, with defaults), so the knobs are discoverable without reading the
+  docs; the CLI itself is now sourceable (source guard) for offline tests.
+
+### Changed
+
+- **Default entry port is 8080** (was 80 in code while three docs said 8080).
+  *Migration:* existing deployments keep the value pinned in their `.env`/conf —
+  nothing changes for them; only fresh installs get 8080.
+- **Conf values flow into `.env` at every `up`/`deploy`** (`sync_env_knobs`), which
+  is what makes `aibox windmill config set` effective without touching generated
+  files. An explicit non-default conf value wins; otherwise an existing `.env`
+  line is preserved, so a hand edit on the deploy instance still wins over the
+  built-in default.
+- windmill CLI `1.1.0` → `1.2.0`; module `1.4.2` → `1.5.0`.
+
+### Fixed
+
+- `aibox windmill config list` advertised `HTTP_PORT (default: 8080)` while the
+  code default was 80 — the three-way drift (module.yaml / docs / code) is gone.
+- The `.env` renderer executed backticks inside its own comments (the heredoc is
+  intentionally unquoted so values expand): `` `tls internal` `` and
+  `` `windmill systemd install` `` were run as commands while writing the file.
+
 ## [0.15.1] — 2026-09-25
 
 ### Fixed
@@ -942,6 +1003,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.16.0]: https://github.com/lichengwu/aibox/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/lichengwu/aibox/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/lichengwu/aibox/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/lichengwu/aibox/compare/v0.13.5...v0.14.0

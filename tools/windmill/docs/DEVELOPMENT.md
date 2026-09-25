@@ -20,12 +20,35 @@
 
 ## Module Configuration
 
-- Port: 8080/tcp:http (overridable via `WM_HTTP_PORT` / `init --port`)
+- Port: **8080/tcp:http** — built-in default and the `module.yaml` declaration agree (it was `80` in code but documented as `8080` before 0.16; existing deploys keep the port pinned in their `.env`). Overridable via the host conf `HTTP_PORT`, the env var, or `init --port`.
 - Credentials: `CREDENTIALS.txt` + `.env` (POSTGRES_PASSWORD, admin password)
 - Deployment target: app root `$AIBOX_HOME/apps/windmill`; config `/etc/windmill/windmill.conf`
 - Autostart: mac launchd (backup/update-check timer, `cmd_launchd`) / linux systemd (`cmd_systemd`)
 - Dependencies: docker + docker-compose + python3
 - Customization points: the CLI is the in-repo `tools/windmill/cli/windmill` (single-file bash, 3.2-compatible); has a Darwin platform branch (hostname/flock fallback)
+
+### Knob plumbing (how a conf change reaches the running stack)
+
+The conf is host-level and read-only to the CLI; the generated `docker-compose.yml`/
+`Caddyfile`/`.env` are render artifacts and any hand edit is lost at the next render.
+So the flow is deliberate:
+
+1. `wm_conf_load` whitelists the key (unknown keys are ignored on purpose).
+2. `render_env` (init) writes the resolved value into `.env` — the file compose
+   interpolates from (`_compose ... --env-file`).
+3. `sync_env_knobs` (called by `up` and `deploy`) refreshes **only the knob lines**,
+   never `WM_IMAGE`/`WM_EXTRA_IMAGE`/`POSTGRES_PASSWORD` (re-rendering `.env` would
+   rotate the DB password).
+4. The compose heredoc stays a QUOTED heredoc so `${...:-default}` reaches compose
+   verbatim — turning it into an expanding heredoc would freeze the values and break
+   the “edit `.env` then `up`” workflow.
+5. Things compose cannot express conditionally (the `443:443` publish, `tls internal`)
+   are decided at render time via a marker line (`##__TLS_PORTS__` / `##__TLS_INTERNAL__`)
+   replaced or dropped by `awk` — hence `sync_env_knobs` warns when only the scheme
+   changed and a `deploy --recreate` is needed.
+6. `KEEP` is baked into `windmill-backup.service` at `systemd install` time (systemd
+   has no HOME-derived config, so the value must be literal); re-run
+   `windmill systemd install` after changing it.
 
 ## Upgrade Procedure
 

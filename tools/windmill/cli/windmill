@@ -18,7 +18,7 @@
 set -Eeuo pipefail
 
 CLI_NAME="windmill"
-WINDMILL_CLI_VERSION="1.1.0"
+WINDMILL_CLI_VERSION="1.2.0"
 CLI_UPDATED="2026-09-15"
 # Absolute path of this script (written into the systemd unit ExecStart; resolved when $0 is relative)
 CLI_BIN="$0"
@@ -55,6 +55,33 @@ wm_conf_load() {
       PROXY_URL)      : "${PROXY_URL:=$v}" ;;
       WM_GHCR_MIRROR) : "${WM_GHCR_MIRROR:=$v}" ;;
       WM_HUB_MIRROR)  : "${WM_HUB_MIRROR:=$v}" ;;
+      BASE_URL)       : "${BASE_URL:=$v}" ;;
+      LOG_MAX_SIZE)   : "${LOG_MAX_SIZE:=$v}" ;;
+      LOG_MAX_FILE)
+        case "$v" in ''|*[!0-9]*) ;; *) : "${LOG_MAX_FILE:=$v}" ;; esac
+        ;;
+      KEEP)
+        case "$v" in ''|*[!0-9]*) ;; *) : "${KEEP:=$v}" ;; esac
+        ;;
+      WM_WORKER_REPLICAS)
+        case "$v" in ''|*[!0-9]*) ;; *) : "${WM_WORKER_REPLICAS:=$v}" ;; esac
+        ;;
+      WM_WORKER_MEMORY) : "${WM_WORKER_MEMORY:=$v}" ;;
+      WM_NATIVE_REPLICAS)
+        case "$v" in ''|*[!0-9]*) ;; *) : "${WM_NATIVE_REPLICAS:=$v}" ;; esac
+        ;;
+      WM_NATIVE_MEMORY) : "${WM_NATIVE_MEMORY:=$v}" ;;
+      WM_INDEXER_REPLICAS)
+        case "$v" in ''|*[!0-9]*) ;; *) : "${WM_INDEXER_REPLICAS:=$v}" ;; esac
+        ;;
+      ENABLE_LSP|ENABLE_MULTIPLAYER|ENABLE_DEBUGGER)
+        case "$v" in true|false) ;; *) continue ;; esac
+        case "$k" in
+          ENABLE_LSP)        : "${ENABLE_LSP:=$v}" ;;
+          ENABLE_MULTIPLAYER) : "${ENABLE_MULTIPLAYER:=$v}" ;;
+          ENABLE_DEBUGGER)   : "${ENABLE_DEBUGGER:=$v}" ;;
+        esac
+        ;;
       HTTP_PORT)
         case "$v" in ''|*[!0-9]*) ;; *) : "${HTTP_PORT:=$v}" ;; esac
         ;;
@@ -65,9 +92,29 @@ wm_conf_load() {
 wm_conf_load
 
 # --- Defaults ----------------------------------------------------------------
-HTTP_PORT="${HTTP_PORT:-80}"
+# Entry port. 8080 is the documented value everywhere now — 80 is privileged and
+# collides with any web server already on the host. Existing deploys keep their
+# pinned HTTP_PORT (.env/conf always carry one): only fresh installs see 8080.
+HTTP_PORT="${HTTP_PORT:-8080}"
 MIN_FREE_GB="${MIN_FREE_GB:-12}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-180}"
+
+# --- Stack knobs (conf / env / .env override these defaults) -----------------
+# Rendered into .env at init and refreshed by sync_env_knobs at every up/deploy,
+# so a conf change takes effect at the next invocation without hand-editing the
+# generated compose/.env (which would be overwritten on the next render).
+BASE_URL="${BASE_URL:-}"                            # external URL: http[s]://host (no port, no path)
+LOG_MAX_SIZE="${LOG_MAX_SIZE:-20m}"                  # docker json-file rotation
+LOG_MAX_FILE="${LOG_MAX_FILE:-10}"
+KEEP="${KEEP:-7}"                                    # daily backup retention (systemd timer)
+WM_WORKER_REPLICAS="${WM_WORKER_REPLICAS:-3}"
+WM_WORKER_MEMORY="${WM_WORKER_MEMORY:-1536M}"
+WM_NATIVE_REPLICAS="${WM_NATIVE_REPLICAS:-1}"
+WM_NATIVE_MEMORY="${WM_NATIVE_MEMORY:-1024M}"
+WM_INDEXER_REPLICAS="${WM_INDEXER_REPLICAS:-0}"      # 1 = full-text job/log search (EE)
+ENABLE_LSP="${ENABLE_LSP:-true}"                      # windmill_extra: code intelligence
+ENABLE_MULTIPLAYER="${ENABLE_MULTIPLAYER:-false}"     # windmill_extra: real-time collab (EE)
+ENABLE_DEBUGGER="${ENABLE_DEBUGGER:-true}"           # windmill_extra: DAP debugger (requires signed requests)
 # Egress proxy: no built-in address anymore. Source chain = --proxy arg > PROXY_URL env var
 # (with HTTPS_PROXY/HTTP_PROXY fallback, where the aibox global proxy is injected) > conf > .env WM_PROXY.
 PROXY_URL="${PROXY_URL:-${HTTPS_PROXY:-${HTTP_PROXY:-}}}"
@@ -1039,12 +1086,54 @@ snapshot_list()       { ls -1dt "$BACKUP_DIR"/[0-9]* 2>/dev/null || true; }
 env_version() { image_version "$(get_env WM_IMAGE)"; }
 
 # The instance's external address, used for display and setting the Base URL
+# BASE_URL validation + TLS derivation. A PORT or PATH in BASE_URL is rejected:
+# Caddy's site address would then listen on a container port the published
+# mapping does not cover (measured trap). The port is conveyed by HTTP_PORT
+# (http) or by the automatic 443 publish (https).
+base_url_check() {
+  [ -n "${BASE_URL:-}" ] || return 0
+  case "$BASE_URL" in
+    http://*|https://*) ;;
+    *) die "BASE_URL must start with http:// or https:// (got: ${BASE_URL})" ;;
+  esac
+  local hostport="${BASE_URL#*://}"
+  [ -n "$hostport" ] || die "BASE_URL has no host (got: ${BASE_URL})"
+  case "$hostport" in
+    */*) die "BASE_URL must not contain a path (got: ${BASE_URL}) — serve the instance at the host root, or strip the sub-path in your own reverse proxy" ;;
+  esac
+  case "$hostport" in
+    *:*) die "BASE_URL must not contain a port (got: ${BASE_URL}) — the entry port is HTTP_PORT (${HTTP_PORT}); https publishes 443" ;;
+  esac
+  return 0
+}
+
+# Does BASE_URL ask for TLS? (drives the 443 publish + the Caddyfile site address)
+base_url_tls() {
+  case "${BASE_URL:-}" in https://*) return 0 ;; esac
+  return 1
+}
+
+# A bare IP (or localhost/*.local) cannot get an ACME certificate — Caddy needs
+# `tls internal` there, or it retries ACME forever and serves nothing.
+base_url_needs_internal_tls() {
+  base_url_tls || return 1
+  local host="${BASE_URL#https://}"
+  case "$host" in
+    *[!0-9.]*) case "$host" in localhost|*.local) return 0 ;; esac; return 1 ;;
+    *)         return 0 ;;
+  esac
+}
+
 instance_url() {
+  # An explicit BASE_URL is the instance's advertised address (hardening, status,
+  # links) and wins over the auto-detected IP — the old flow could only ever
+  # advertise http://<lan-ip>:<port>, which is wrong behind a domain/reverse proxy.
+  if [ -n "${BASE_URL:-}" ]; then printf '%s' "$BASE_URL"; return 0; fi
   local host port
   host=$(primary_ip)
   [ -n "$host" ] || host="127.0.0.1"
   port=$(get_env HTTP_PORT)
-  if [ -z "$port" ]; then port="${HTTP_PORT:-80}"; fi
+  if [ -z "$port" ]; then port="${HTTP_PORT:-8080}"; fi
   if [ "$port" = "80" ]; then printf 'http://%s' "$host"
   else printf 'http://%s:%s' "$host" "$port"; fi
 }
@@ -1137,6 +1226,53 @@ sync_db_password() {
   pg_exec psql -U "$u" -d postgres -c "ALTER USER ${u} WITH PASSWORD '${pw}'" >/dev/null 2>&1 \
     || { warn "ALTER USER ${u} failed"; return 1; }
   info "  Synced the .env DB password to the ${u} role"
+}
+
+# Seed a knob into .env. Rule: an EXPLICIT conf/env value (i.e. one that differs
+# from the built-in default) always wins; otherwise an existing .env line is left
+# alone — a hand edit in the deploy instance survives `up`/`deploy` (it is the
+# deployment's own copy, per the documented precedence). The default is only
+# written when the key is missing.
+set_env_knob() { # $1=KEY $2=resolved $3=built-in default
+  if [ "$2" != "$3" ]; then set_env "$1" "$2"; return 0; fi
+  grep -qE "^$1=" "$ENV_FILE" 2>/dev/null || set_env "$1" "$2"
+  return 0
+}
+
+# Refresh ONLY the stack knobs in .env from the resolved values (conf/env/args).
+# Called by up/deploy, so a conf change is picked up without hand-editing the
+# generated files — and without re-rendering .env (that would rotate the DB
+# password). Version pins (WM_IMAGE/WM_EXTRA_IMAGE) and credentials are never touched.
+sync_env_knobs() {
+  [ -f "$ENV_FILE" ] || return 0
+  local tls=0 old="" warn_tls=0
+  # BASE_URL may also live only in .env (the deploy instance copy) — pick it up
+  # before deciding TLS, or a re-render would drop the 443 publish.
+  [ -n "${BASE_URL:-}" ] || BASE_URL=$(get_env BASE_URL)
+  base_url_check
+  base_url_tls && tls=1
+  # A TLS flip changes the PUBLISHED ports, which live in the rendered compose
+  # (compose cannot conditionally publish): detect and tell the user to re-render.
+  old=$(sed -n 's/^WM_TLS=//p' "$ENV_FILE" 2>/dev/null | head -1 | tr -d '[:space:]')
+  if [ -n "$old" ] && [ "$old" != "$tls" ]; then warn_tls=1; fi
+  set_env WM_TLS "$tls"
+  set_env_knob BASE_URL "${BASE_URL:-}" ""
+  set_env_knob WM_WORKER_REPLICAS "$WM_WORKER_REPLICAS" "3"
+  set_env_knob WM_WORKER_MEMORY "$WM_WORKER_MEMORY" "1536M"
+  set_env_knob WM_NATIVE_REPLICAS "$WM_NATIVE_REPLICAS" "1"
+  set_env_knob WM_NATIVE_MEMORY "$WM_NATIVE_MEMORY" "1024M"
+  set_env_knob WM_INDEXER_REPLICAS "$WM_INDEXER_REPLICAS" "0"
+  set_env_knob LOG_MAX_SIZE "$LOG_MAX_SIZE" "20m"
+  set_env_knob LOG_MAX_FILE "$LOG_MAX_FILE" "10"
+  set_env_knob KEEP "$KEEP" "7"
+  set_env_knob ENABLE_LSP "$ENABLE_LSP" "true"
+  set_env_knob ENABLE_MULTIPLAYER "$ENABLE_MULTIPLAYER" "false"
+  set_env_knob ENABLE_DEBUGGER "$ENABLE_DEBUGGER" "true"
+  if [ "$warn_tls" = 1 ]; then
+    warn "BASE_URL scheme changed (WM_TLS ${old} -> ${tls}) — the published ports change with it"
+    info "  re-render and restart: $CLI_NAME deploy --recreate"
+  fi
+  return 0
 }
 
 refresh_planner_stats() {
@@ -1240,7 +1376,7 @@ render_compose() {
 ## Windmill self-hosted compose — generated by `windmill init`
 ##
 ## Compared to the upstream https://github.com/windmill-labs/windmill
-## docker-compose.yml, this file has 8 local modifications. Keep them when syncing
+## docker-compose.yml, this file has 11 local modifications. Keep them when syncing
 ## against upstream:
 ##
 ##  1. Drop the obsolete `version: "3.7"` top-level field (silences a compose warning)
@@ -1263,6 +1399,15 @@ render_compose() {
 ##     drop depends_on and join the external network `aibox-base`.
 ##     Precondition: aibox base start + aibox base createdb windmill,
 ##     .env DATABASE_URL=postgres://aibox:aibox@aibox-base-postgres:5432/windmill.
+##  9. worker/native/indexer replicas + memory limits are .env-interpolated
+##     (WM_WORKER_REPLICAS / WM_WORKER_MEMORY / WM_NATIVE_REPLICAS /
+##      WM_NATIVE_MEMORY / WM_INDEXER_REPLICAS) so sizing no longer needs a
+##      hand-edit of this generated file (which the next render would overwrite).
+## 10. caddy's entry port default is 8080 (80 is privileged + collides with any
+##     web server), and BASE_URL drives the site address: https publishes 443
+##     and gets automatic HTTPS (or `tls internal` for a bare IP).
+## 11. the caddy container reads BASE_URL from .env (empty = plain :80 behind
+##     your own reverse proxy).
 ##
 ## Note: postgres:18's mount point must be /var/lib/postgresql (the parent dir);
 ##       it cannot be reverted to the pre-18 /var/lib/postgresql/data, or an empty
@@ -1343,10 +1488,12 @@ services:
     image: ${WM_IMAGE}
     pull_policy: missing
     deploy:
-      replicas: 3
+      # Knobs come from .env (host conf: WM_WORKER_REPLICAS / WM_WORKER_MEMORY;
+      # `aibox windmill config set WM_WORKER_REPLICAS 6` then windmill deploy/up)
+      replicas: ${WM_WORKER_REPLICAS:-3}
       resources:
         limits:
-          memory: 1536M
+          memory: ${WM_WORKER_MEMORY:-1536M}
           # for GB, use syntax '2Gi'
     restart: unless-stopped
     # Uncomment to enable PID namespace isolation (recommended for security)
@@ -1382,10 +1529,10 @@ services:
     image: ${WM_IMAGE}
     pull_policy: missing
     deploy:
-      replicas: 1
+      replicas: ${WM_NATIVE_REPLICAS:-1}
       resources:
         limits:
-          memory: 1024M
+          memory: ${WM_NATIVE_MEMORY:-1024M}
           # for GB, use syntax '2Gi'
     restart: unless-stopped
     # Uncomment to enable PID namespace isolation (recommended for security)
@@ -1408,7 +1555,7 @@ services:
     image: ${WM_IMAGE}
     pull_policy: missing
     deploy:
-      replicas: 0 # set to 1 to enable full-text job and log search
+      replicas: ${WM_INDEXER_REPLICAS:-0} # conf WM_INDEXER_REPLICAS=1 enables full-text job/log search
     restart: unless-stopped
     expose:
       - 8002
@@ -1424,10 +1571,12 @@ services:
     logging: *default-logging
 
   # Combined extra services: LSP, Multiplayer, and Debugger
-  # Each service can be enabled/disabled via environment variables:
+  # Each service is switched by an .env-interpolated flag (host conf:
+  # ENABLE_LSP / ENABLE_MULTIPLAYER / ENABLE_DEBUGGER — the values live in
+  # .env, written by init and refreshed by up/deploy):
   #   - ENABLE_LSP=true (default) - Language Server Protocol for code intelligence
   #   - ENABLE_MULTIPLAYER=false - Real-time collaboration (Enterprise Edition)
-  #   - ENABLE_DEBUGGER=false - Interactive debugging via DAP WebSocket
+  #   - ENABLE_DEBUGGER=true - Interactive debugging via DAP WebSocket
   windmill_extra:
     image: ${WM_EXTRA_IMAGE}
     pull_policy: missing
@@ -1437,9 +1586,9 @@ services:
       - 3002 # Multiplayer
       - 3003 # Debugger
     environment:
-      - ENABLE_LSP=true
-      - ENABLE_MULTIPLAYER=false # Set to true to enable multiplayer (Enterprise Edition)
-      - ENABLE_DEBUGGER=true # Set to true to enable debugger
+      - ENABLE_LSP=${ENABLE_LSP:-true}
+      - ENABLE_MULTIPLAYER=${ENABLE_MULTIPLAYER:-false} # Set to true to enable multiplayer (Enterprise Edition)
+      - ENABLE_DEBUGGER=${ENABLE_DEBUGGER:-true} # Set to true to enable debugger
       - DEBUGGER_PORT=3003 # Debugger service port
       - ENABLE_NSJAIL=false # Set to true for nsjail sandboxing (requires privileged: true)
       - REQUIRE_SIGNED_DEBUG_REQUESTS=true # Require backend-signed JWT tokens for debug sessions. Do NOT set to false on any internet-reachable deployment: it exposes an unauthenticated code-execution debugger.
@@ -1458,13 +1607,16 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
     ports:
-      # Port controlled by .env's HTTP_PORT (default 80)
-      - "${HTTP_PORT:-80}:80"
+      # Port controlled by .env's HTTP_PORT (default 8080)
+      - "${HTTP_PORT:-8080}:80"
       # `- 25:25` removed: the host's exim4 occupies 127.0.0.1:25, which would make caddy fail to bind.
       # If you need the email trigger later, change this to `- 2525:25` and restore the layer4 :25 block in Caddyfile.
-      # - 443:443 # Uncomment to enable HTTPS handling by Caddy
+      ##__TLS_PORTS__
     environment:
-      - BASE_URL=":80"
+      # Drives the Caddyfile's site address: a real domain gets automatic HTTPS,
+      # a bare IP gets `tls internal` (self-signed), empty = plain :80 behind your
+      # own reverse proxy. Set it host-wide: aibox windmill config set BASE_URL https://example.com
+      - BASE_URL="${BASE_URL:-:80}"
     logging: *default-logging
 
 volumes:
@@ -1482,6 +1634,15 @@ networks:
     name: ${AIBOX_BASE_NETWORK:-aibox-base}
     external: true
 WMEOF
+  # The 443 publish is decided at RENDER time (compose cannot conditionally
+  # publish a port): https -> replace the marker with the line, else drop it.
+  if base_url_tls; then
+    awk '{ if ($0 ~ /^ *##__TLS_PORTS__$/) print "      - \"443:443\""; else print }' "$COMPOSE_FILE" > "${COMPOSE_FILE}.tmp.$$" \
+      && cat "${COMPOSE_FILE}.tmp.$$" > "$COMPOSE_FILE" && rm -f "${COMPOSE_FILE}.tmp.$$"
+  else
+    awk '!/^ *##__TLS_PORTS__$/' "$COMPOSE_FILE" > "${COMPOSE_FILE}.tmp.$$" \
+      && cat "${COMPOSE_FILE}.tmp.$$" > "$COMPOSE_FILE" && rm -f "${COMPOSE_FILE}.tmp.$$"
+  fi
   chmod 0644 "$COMPOSE_FILE"
 }
 
@@ -1526,13 +1687,24 @@ render_caddy() {
 
         # TLS with custom certificates
         # tls /certs/cert.pem /certs/key.pem
+        ##__TLS_INTERNAL__
 }
 WMEOF
+  # https + a bare IP/localhost cannot get an ACME cert: `tls internal` gives a
+  # self-signed one instead of Caddy retrying ACME forever and serving nothing.
+  if base_url_needs_internal_tls; then
+    awk '{ if ($0 ~ /^ *##__TLS_INTERNAL__$/) print "        tls internal"; else print }' "$CADDY_FILE" > "${CADDY_FILE}.tmp.$$" \
+      && cat "${CADDY_FILE}.tmp.$$" > "$CADDY_FILE" && rm -f "${CADDY_FILE}.tmp.$$"
+  else
+    awk '!/^ *##__TLS_INTERNAL__$/' "$CADDY_FILE" > "${CADDY_FILE}.tmp.$$" \
+      && cat "${CADDY_FILE}.tmp.$$" > "$CADDY_FILE" && rm -f "${CADDY_FILE}.tmp.$$"
+  fi
   chmod 0644 "$CADDY_FILE"
 }
 
 render_env() {
-  local ver="$1" dbpass="$2" port="$3"
+  local ver="$1" dbpass="$2" port="$3" tls=0
+  base_url_tls && tls=1
   umask 077
   cat > "$ENV_FILE" <<WMEOF
 # ============================================================================
@@ -1556,11 +1728,47 @@ WM_IMAGE=${WM_REPO}:${ver}
 WM_EXTRA_IMAGE=${WM_EXTRA_REPO}:${ver}
 
 # --- Entry port --------------------------------------------------------------
+# 8080 by default (was 80). Host-wide override: aibox windmill config set HTTP_PORT <n>
 HTTP_PORT=${port}
 
+# --- External address (BASE_URL) --------------------------------------------
+# Empty = advertise http://<detected-ip>:<HTTP_PORT> (the pre-0.16 behaviour).
+# Set to a real URL — http[s]://host, NO port and NO path:
+#   https://wm.example.com  automatic HTTPS (Caddy/ACME; needs 80/443 reachable)
+#   https://10.0.0.5        self-signed via "tls internal" (ACME cannot certify an IP)
+#   http://wm.example.com   plain HTTP on HTTP_PORT
+# Host-wide: aibox windmill config set BASE_URL https://wm.example.com
+# NOTE: this heredoc is UNQUOTED (values expand here) — never use backticks below.
+# Changing only the scheme later needs a re-render: windmill deploy --recreate
+BASE_URL=${BASE_URL:-}
+# Derived: 1 when BASE_URL is https (drives the published 443). Not a conf key.
+WM_TLS=${tls}
+
+# --- Stack sizing (replicas + memory caps read by docker compose) -----------
+# Host-wide: aibox windmill config set WM_WORKER_REPLICAS <n> (applies at the
+# next up/deploy). WM_INDEXER_REPLICAS=1 enables full-text job/log search (EE).
+WM_WORKER_REPLICAS=${WM_WORKER_REPLICAS}
+WM_WORKER_MEMORY=${WM_WORKER_MEMORY}
+WM_NATIVE_REPLICAS=${WM_NATIVE_REPLICAS}
+WM_NATIVE_MEMORY=${WM_NATIVE_MEMORY}
+WM_INDEXER_REPLICAS=${WM_INDEXER_REPLICAS}
+
 # --- Log rotation (prevent long-running instances from filling the disk) ---
-LOG_MAX_SIZE=20m
-LOG_MAX_FILE=10
+LOG_MAX_SIZE=${LOG_MAX_SIZE}
+LOG_MAX_FILE=${LOG_MAX_FILE}
+
+# --- Backup retention (daily pg_dumpall kept by the systemd/launchd timer) --
+# Host-wide: aibox windmill config set KEEP <n> — re-run "windmill systemd
+# install" afterwards: the value is baked into the unit at install time.
+KEEP=${KEEP}
+
+# --- windmill_extra feature switches (LSP / Multiplayer / Debugger) ---------
+# Host-wide: aibox windmill config set ENABLE_MULTIPLAYER true (next up/deploy).
+# Keep ENABLE_DEBUGGER=true only with REQUIRE_SIGNED_DEBUG_REQUESTS=true: an
+# internet-reachable unauthenticated debugger is remote code execution.
+ENABLE_LSP=${ENABLE_LSP}
+ENABLE_MULTIPLAYER=${ENABLE_MULTIPLAYER}
+ENABLE_DEBUGGER=${ENABLE_DEBUGGER}
 
 # --- Egress proxy (only needed when \`windmill check\` queries upstream releases) ---
 # Does not change the system global env; only takes effect inside the subprocess.
@@ -1625,6 +1833,7 @@ Type=oneshot
 User=root
 Environment="WM_DIR=$WM_DIR"
 Environment="WM_CONF_FILE=$WM_CONF_FILE"
+Environment="KEEP=$KEEP"
 ExecStart=$CLI_BIN --quiet --yes backup --daily
 TimeoutStartSec=1800
 Nice=10
@@ -1709,6 +1918,7 @@ cmd_init() {
     case "$1" in
       --version)   ver="${2:-}"; shift 2 ;;
       --port)      port="${2:-}"; shift 2 ;;
+      --base-url)  BASE_URL="${2:-}"; shift 2 ;;
       --ghcr-mirror) WM_GHCR_MIRROR="${2:-}"; shift 2 ;;
       --hub-mirror)  WM_HUB_MIRROR="${2:-}"; shift 2 ;;
       --no-harden) do_harden=0; shift ;;
@@ -1721,6 +1931,7 @@ cmd_init() {
 
   require_ready
   HTTP_PORT="$port"
+  base_url_check
   wm_paths
 
   hr
@@ -1868,8 +2079,12 @@ harden_instance() {
   local ver="$1" newpass="$2"
   local host base token code
 
-  host=$(primary_ip)
-  [ -n "$host" ] || { warn "Cannot determine the local IP; skipping Base URL setup"; return 1; }
+  # With an explicit BASE_URL the detected IP is irrelevant (it may even be empty
+  # on a host with no LAN interface) — the advertised address is the URL.
+  host="${BASE_URL:-}"
+  [ -n "$host" ] || host=$(primary_ip)
+  [ -n "$host" ] || { warn "Cannot determine the local IP (set BASE_URL to skip this); skipping Base URL setup"; return 1; }
+  base_url_check
   base=$(instance_url)
 
   token=$(wm_login changeme)
@@ -1941,6 +2156,7 @@ cmd_deploy() {
 
   require_ready
   wm_paths
+  sync_env_knobs    # conf -> .env knobs (sizing / TLS / logs / retention)
 
   local miss; miss=$(config_missing)
   local vol; vol=$(db_volume 2>/dev/null || true)
@@ -2004,6 +2220,13 @@ cmd_deploy() {
   case "$mode" in
     recreate)
       step "Rebuild containers (keeping the data volume)"
+      # Re-render the artifacts from the current knobs first: the compose is a
+      # RENDER artifact (hand edits are lost at the next render anyway), and this
+      # is the only path that can pick up a BASE_URL scheme change — the 443
+      # publish is decided at render time (compose cannot publish conditionally).
+      # .env is NOT re-rendered: its version pins and DB password must survive.
+      render_compose; info "  docker-compose.yml re-rendered"
+      render_caddy;   info "  Caddyfile re-rendered"
       crun stack_up_staged "$( [ "$core" = 1 ] && echo 'windmill_server' || echo '' )" || die "Startup failed"
       ;;
     restore|daily)
@@ -2206,6 +2429,9 @@ cmd_up() {
 
   acquire_lock
   local p; p=$(get_env HTTP_PORT); HTTP_PORT="${p:-$HTTP_PORT}"
+  # Refresh the stack knobs in .env from the resolved conf/env values BEFORE the
+  # compose runs, so a conf change applies here without hand-editing .env.
+  sync_env_knobs
 
   hr; log "${C_BOLD}Start / reconcile stack${C_RESET}  $(ts)"; hr
   crun stack_up_staged "$( [ "$core" = 1 ] && echo 'windmill_server' || echo '' )" \
@@ -3478,7 +3704,14 @@ ${C_BOLD}Usage${C_RESET}
 
 ${C_BOLD}Options${C_RESET}
   --version X.Y.Z   Target version (default: query the upstream latest release)
-  --port N          External HTTP port (default 80)
+  --port N          External HTTP port (default 8080; an https BASE_URL also
+                    publishes 443)
+  --base-url URL    External URL the instance advertises: http[s]://host, NO port
+                    and NO path. https + a domain = automatic HTTPS (Caddy/ACME,
+                    needs 80/443 reachable); https + a bare IP = a self-signed
+                    cert (`tls internal`); empty = http://<detected-ip>:<port>
+                    behind your own reverse proxy.
+                    Host-wide default: aibox windmill config set BASE_URL https://wm.example.com
   --ghcr-mirror URL ghcr registry mirror (strongly recommended in China). Direct ghcr.io measures ~0.5MB/s;
                     a fresh deploy pulls ~6GiB (>1 hour); https://ghcr.nju.edu.cn measures ~60MB/s
   --hub-mirror URL  docker.io registry mirror (postgres). If the daemon's registry-mirrors
@@ -3497,7 +3730,7 @@ ${C_BOLD}Examples${C_RESET}
   ${CLI_NAME} init                   # version from upstream latest; direct ghcr.io, slow in China
 
 ${C_BOLD}Artifacts${C_RESET}
-  $WM_DIR/docker-compose.yml   7 local modifications (see the file header comment)
+  $WM_DIR/docker-compose.yml   11 local modifications (see the file header comment)
   $WM_DIR/Caddyfile            :25 layer4 block removed (host exim4 occupies it)
   $WM_DIR/.env                 version pinned + random DB password + ghcr mirror (chmod 600)
   $WM_DIR/CREDENTIALS.txt      admin and DB credentials (chmod 600)
@@ -3794,4 +4027,8 @@ main() {
   esac
 }
 
-main "$@"
+# Source guard: `source`-ing this file (bats, tooling) must NOT dispatch — the
+# render/knob functions stay available for offline tests.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi

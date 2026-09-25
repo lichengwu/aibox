@@ -79,7 +79,9 @@ mask_url() {
 }
 
 # Seed host-level config /etc/windmill/windmill.conf (module-spec: "Deploy Directory and Config Location Convention")
-# Key whitelist matches CLI wm_conf_load: PROXY_URL / WM_GHCR_MIRROR / WM_HUB_MIRROR / HTTP_PORT.
+# Key whitelist matches CLI wm_conf_load: PROXY_URL / WM_GHCR_MIRROR / WM_HUB_MIRROR / HTTP_PORT / BASE_URL
+# / WM_WORKER_REPLICAS / WM_WORKER_MEMORY / WM_NATIVE_REPLICAS / WM_NATIVE_MEMORY / WM_INDEXER_REPLICAS
+# / LOG_MAX_SIZE / LOG_MAX_FILE / KEEP.
 # Append-only strategy, never overwrite; writing /etc requires privilege — on Linux deploy hosts usually root; if no permission, warn and skip.
 seed_conf() {
   # Note: under bash 3.2, `local a="x" b="${a}/y"` referencing on the same line triggers unbound (AGENTS.md pitfall family),
@@ -111,7 +113,28 @@ seed_conf() {
   }
 
   if [ ! -f "${conf}" ]; then
-    printf '# windmill host-level config (seeded by aibox install windmill; read-only for CLI)\n# keys: PROXY_URL / WM_GHCR_MIRROR / WM_HUB_MIRROR / HTTP_PORT\n' >"${conf}"
+    cat >"${conf}" <<'CONF'
+# windmill host-level config (seeded by `aibox install windmill`; read-only for the CLI)
+# Edit here, or use:  aibox windmill config set <KEY> <value>
+# Precedence: CLI flag > environment variable > deploy .env > this file > built-in default
+#
+# HTTP_PORT=8080                    # entry HTTP port (https also publishes 443)
+# BASE_URL=https://wm.example.com   # external URL, scheme+host only (no port, no path):
+#                                   #   https + domain  -> automatic HTTPS (needs 80/443)
+#                                   #   https + bare IP -> self-signed (`tls internal`)
+#                                   #   empty           -> plain HTTP behind your own proxy
+# WM_WORKER_REPLICAS=3              # default-group worker replicas
+# WM_WORKER_MEMORY=1536M            # default-group worker memory cap
+# WM_NATIVE_REPLICAS=1              # native worker replicas
+# WM_NATIVE_MEMORY=1024M            # native worker memory cap
+# WM_INDEXER_REPLICAS=0             # 1 = full-text job/log search (EE)
+# LOG_MAX_SIZE=20m                  # docker json-file rotate size
+# LOG_MAX_FILE=10                   # docker json-file files kept
+# KEEP=7                            # daily backups kept by the timer (re-run `windmill systemd install`)
+# PROXY_URL=http://127.0.0.1:7890   # egress proxy (seeded from `aibox proxy` when configured)
+# WM_GHCR_MIRROR=https://ghcr.nju.edu.cn
+# WM_HUB_MIRROR=https://docker.1ms.run
+CONF
   fi
   # Proxy: aibox global proxy delivered (must persist across time/host boundaries)
   if [ -n "${AIBOX_PROXY_URL:-}" ] && [ "${AIBOX_PROXY_ENABLED:-0}" = "1" ]; then

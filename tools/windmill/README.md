@@ -16,9 +16,45 @@ this module is responsible for installing it onto the target machine and seeding
 | --- | --- | --- |
 | CLI itself | `${WINDMILL_BIN_DIR:-${AIBOX_BIN_DIR:-~/.local/bin}}/windmill` | install landing point |
 | Deployment root | `$AIBOX_HOME/apps/windmill` | `.env`, compose, `backups/`, `logs/`, credentials; the deletion boundary of `destroy` |
-| Host-level config | `/etc/windmill/windmill.conf` | key whitelist `PROXY_URL` / `WM_GHCR_MIRROR` / `WM_HUB_MIRROR` / `HTTP_PORT`; seeded on install, only fills in without overwriting, read-only to the CLI; **no credentials stored here** |
+| Host-level config | `/etc/windmill/windmill.conf` | key whitelist (seeded on install, only fills in without overwriting, read-only to the CLI; **no credentials stored here**): `PROXY_URL` · `WM_GHCR_MIRROR` · `WM_HUB_MIRROR` · `HTTP_PORT` (default **8080**) · `BASE_URL` · `WM_WORKER_REPLICAS` / `WM_WORKER_MEMORY` / `WM_NATIVE_REPLICAS` / `WM_NATIVE_MEMORY` / `WM_INDEXER_REPLICAS` · `LOG_MAX_SIZE` / `LOG_MAX_FILE` · `KEEP` · `ENABLE_LSP` / `ENABLE_MULTIPLAYER` / `ENABLE_DEBUGGER` |
 
 The deployment root is the same expression on both platforms (Linux `/root/.aibox/apps/windmill`, macOS `~/.aibox/apps/windmill`).
+
+## Configuration knobs
+
+Host-level (`/etc/windmill/windmill.conf`, written by `aibox windmill config set <KEY> <value>`);
+precedence is **CLI flag > environment variable > deploy `.env` > this conf > built-in default**:
+
+| Key | Default | What it does | When it applies |
+| --- | --- | --- | --- |
+| `HTTP_PORT` | `8080` | entry HTTP port | next `up`/`deploy` (was `80` before 0.16) |
+| `BASE_URL` | (unset) | the external URL the instance advertises, **scheme+host only** (`https://wm.example.com`); no port, no path | next `deploy --recreate` (it changes the published ports) |
+| `WM_WORKER_REPLICAS` | `3` | default-worker-group replica count | next `up`/`deploy` |
+| `WM_WORKER_MEMORY` | `1536M` | default worker memory cap | next `up`/`deploy` |
+| `WM_NATIVE_REPLICAS` | `1` | native worker replicas | next `up`/`deploy` |
+| `WM_NATIVE_MEMORY` | `1024M` | native worker memory cap | next `up`/`deploy` |
+| `WM_INDEXER_REPLICAS` | `0` | `1` enables full-text job/log search (EE) | next `up`/`deploy` |
+| `LOG_MAX_SIZE` | `20m` | docker `json-file` rotate size | next `up`/`deploy` |
+| `LOG_MAX_FILE` | `10` | docker `json-file` files kept | next `up`/`deploy` |
+| `KEEP` | `7` | daily backups kept by the scheduled timer | after `windmill systemd install` (baked into the unit) |
+| `ENABLE_LSP` / `ENABLE_MULTIPLAYER` / `ENABLE_DEBUGGER` | `true` / `false` / `true` | windmill_extra feature switches (LSP, collaboration, debugger) | next `up`/`deploy` |
+| `PROXY_URL` | (unset) | egress proxy (seeded from `aibox proxy`) | immediately |
+| `WM_GHCR_MIRROR` / `WM_HUB_MIRROR` | (unset) | registry mirrors for the image pulls | immediately |
+
+**HTTPS / domain** — `BASE_URL` drives the generated Caddyfile's site address:
+
+```bash
+# real domain: Caddy obtains the certificate automatically (needs 80/443 reachable); 443 gets published
+aibox windmill config set BASE_URL https://wm.example.com && windmill deploy --recreate
+# bare IP or *.local: self-signed via `tls internal` (ACME cannot certify an IP)
+aibox windmill config set BASE_URL https://10.0.0.5 && windmill deploy --recreate
+# behind your own reverse proxy: leave BASE_URL unset (plain HTTP on HTTP_PORT)
+aibox windmill config set BASE_URL ""; windmill deploy --recreate
+```
+
+A port or path inside `BASE_URL` is rejected on purpose — the port is conveyed by `HTTP_PORT`
+(http) or by the automatic 443 publish (https), so a port in the URL would make Caddy listen
+on a container port the published mapping does not cover.
 
 ## Quick start (on the deployment host)
 
