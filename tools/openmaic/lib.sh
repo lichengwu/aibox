@@ -94,7 +94,9 @@ mask_url() {
 #
 # Only done on the deploy host (Linux); does nothing when no proxy is configured.
 sync_proxy_to_conf() {
-  local conf="/etc/openmaic/openmaic.conf" conf_dir cur
+  # The CLI reads ${OPENMAIC_CONF_DIR:-/etc/openmaic}/openmaic.conf — the hook must
+  # write where the CLI reads (a custom conf dir used to silently get no proxy).
+  local conf="${OPENMAIC_CONF_DIR:-/etc/openmaic}/openmaic.conf" conf_dir cur
   [ -n "${AIBOX_PROXY_URL:-}" ] || return 0
   [ "${AIBOX_PROXY_ENABLED:-0}" = "1" ] || return 0
 

@@ -242,7 +242,8 @@ EOF2
   cp "$REPO_ROOT/tools/clash/lib.sh" "$AIBOX_HOME/modules/clash/lib.sh"
   cp "$REPO_ROOT/tools/_shared/common.sh" "$AIBOX_HOME/modules/clash/_common.sh"
   run bash "$REPO_ROOT/bin/aibox" clash badaction
-  [ "$status" -eq 1 ]
+  # usage errors exit 2 (spec §Exit codes: "2 usage error") — the hooks use usage_die
+  [ "$status" -eq 2 ]
   [[ "$output" == *"unknown action: badaction"* ]]
   [[ "$output" == *"aibox clash --help"* ]]
 }

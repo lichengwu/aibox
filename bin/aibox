@@ -56,7 +56,7 @@ if [ -z "${AIBOX_BIN_DIR:-}" ]; then
     ;;
   esac
 fi
-AIBOX_VERSION="0.17.0"
+AIBOX_VERSION="0.18.0"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 
@@ -106,13 +106,13 @@ export C_RST C_DIM C_BOLD C_GRN C_YEL C_RED C_CYA
 
 # ---------- unknown-argument UX (suggestions + one consistent hint) ----------
 # Verbs the dispatcher understands (typo suggestions for the first arg).
-AIBOX_VERBS="install uninstall update upgrade check dashboard purge proxy clash help version self"
+AIBOX_VERBS="install uninstall update upgrade check dashboard purge proxy clash help version self list ports"
 
 # "Close enough to be a typo" for short ASCII words: prefix either way, one
 # substitution, or one transposition. Cheaper than a full Levenshtein and
 # covers the real typos (instal→install, upgrad→upgrade, chekc→check).
 _word_close() { # $1=typed $2=candidate
-  local a="$1" b="$2" i=0 d=0 la lb n
+  local a="$1" b="$2" i=0 d=0 la lb n maxd
   [ "$a" = "$b" ] && return 0
   [ "${#a}" -ge 3 ] || return 1
   case "$b" in "$a"*) return 0 ;; esac
@@ -120,11 +120,15 @@ _word_close() { # $1=typed $2=candidate
   la="${#a}"; lb="${#b}"
   [ $(( la > lb ? la - lb : lb - la )) -le 1 ] || return 1
   n=$(( la < lb ? la : lb ))
+  # Scaled tolerance: 1 edit for short words, 2 from 5 chars up. Without the
+  # scale, a 3-letter typo matched a 4-letter verb at 2 differences ("bas" →
+  # "list") and shadowed the real module suggestion ("base").
+  maxd=1; [ "$n" -ge 5 ] && maxd=2
   while [ "$i" -lt "$n" ]; do
     [ "${a:$i:1}" != "${b:$i:1}" ] && d=$(( d + 1 ))
     i=$(( i + 1 ))
   done
-  [ "$d" -le 2 ]
+  [ "$d" -le "$maxd" ]
 }
 
 _suggest_word() { # $1=typed; rest=candidates → prints the first close match
@@ -143,13 +147,13 @@ die_unknown_module() { # $1=typed name
   local n="$1" sug
   sug="$(_suggest_word "$n" ${AIBOX_VERBS} || true)"
   if [ -n "$sug" ]; then
-    die "Unknown command or module: ${n} — did you mean: aibox ${sug}?  (verbs: aibox help · modules: aibox dashboard --available)"
+    die_usage "Unknown command or module: ${n} — did you mean: aibox ${sug}?  (verbs: aibox help · modules: aibox dashboard --available)"
   fi
   sug="$(_suggest_word "$n" ${AIBOX_MODULES:-} || true)"
   if [ -n "$sug" ]; then
-    die "Unknown module: ${n} — did you mean: aibox ${sug}?  (catalog: aibox dashboard --available)"
+    die_usage "Unknown module: ${n} — did you mean: aibox ${sug}?  (catalog: aibox dashboard --available)"
   fi
-  die "Unknown module: ${n} (aibox dashboard --available shows available modules)"
+  die_usage "Unknown module: ${n} (aibox dashboard --available shows available modules)"
 }
 
 # Installed-module version ("" when absent) — for the re-install note.
@@ -188,12 +192,185 @@ _needed_note() { # $1=dep command
 log()  { printf '%s\n' "$*"; }
 warn() { printf '%s⚠%s  %s\n' "$C_YEL" "$C_RST" "$*" >&2; }
 die()  { printf '%s✗%s  %s\n' "$C_RED" "$C_RST" "$*" >&2; exit 1; }
+# Usage errors are exit 2; preconditions 3/4 (docs/module-spec.md §Exit code
+# convention) — automation can tell "you called it wrong" (2) from "it ran and
+# failed" (1) and from "the environment isn't ready" (3 deps / 4 precheck).
+die_usage() { printf '%s✗%s  %s\n' "$C_RED" "$C_RST" "$*" >&2; exit 2; }
+die_code()  { local _c="$1"; shift; printf '%s✗%s  %s\n' "$C_RED" "$C_RST" "$*" >&2; exit "$_c"; }
 ok()   { printf '%s✓%s  %s\n' "$C_GRN" "$C_RST" "$*"; }
 bad()  { printf '%s✗%s  %s\n' "$C_RED" "$C_RST" "$*"; }
 # Sub-detail: 2-space indent, dim — aligns under the action line above.
 info() { printf '%s  %s%s\n' "$C_DIM" "$*" "$C_RST"; }
 
-# Parse a module.yaml subset (§2.2) from stdin into eval-able AIBOX_MODULE_<name>_* assignments.
+# Per-verb help — the manager's twin of `aibox <module> --help`, reachable as
+# `aibox <verb> --help|-h` (any argument position) and `aibox help <verb>`.
+# ONE block per verb, always exit 0 (help is not an error), so the verb surface
+# cannot drift into "purge answers, install fetches the registry".
+_verb_help() { # $1=verb → usage block on stdout (0) / 1 when unknown (caller prints usage)
+  case "$1" in
+  install)
+    cat <<'EOF'
+usage: aibox install <module> [--skip-checks]
+
+Fetch the module scripts (+ declared includes), run its preflight, then the
+install hook. Declared service deps are installed FIRST (recursive, cycle-guarded).
+
+  --skip-checks           bypass the preflight (soft checks only — missing hard
+                          deps/services are not bypassable)
+  AIBOX_NO_AUTO_DEPS=1    never auto-install (service deps and packages)
+  AIBOX_PM_TIMEOUT=<secs> bound package-manager auto-install (default 600; 0 = off)
+  AIBOX_STRICT_SERVICES=1 exit non-zero when a service dep did not start
+
+related: aibox check <module> (preflight dry-run) · aibox dashboard <module>
+EOF
+    ;;
+  uninstall)
+    cat <<'EOF'
+usage: aibox uninstall <module>|self [--purge] [--yes]
+
+Run the module's uninstall hook, then remove its marker. Data is KEPT unless
+--purge is given (two gates: confirm, then confirm DATA). Residue afterwards:
+aibox purge <module>.
+
+  --purge      also delete the module's DATA (volumes, deploy root)
+  --yes, -y    answer both gates yes (scripts/non-interactive)
+
+related: aibox purge [--apply] · aibox uninstall self [--purge]
+EOF
+    ;;
+  update)
+    cat <<'EOF'
+usage: aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks]
+
+Refresh MODULE SCRIPTS (the repo-pinned floor) and run the update hook. This is
+NOT the upstream app version — that is `aibox upgrade <module>`. Reports the
+version transition, and says so when already current.
+
+  --all             every installed module + the manager itself
+  --restart         restart services after the update
+  --no-restart      never restart (deploy hosts that batch restarts)
+  --skip-checks     bypass the preflight
+
+related: aibox upgrade <module> [--check]
+EOF
+    ;;
+  upgrade)
+    cat <<'EOF'
+usage: aibox upgrade <module> [--check|--rollback|--history] [--to <ver>] [--no-backup] [--yes]
+
+Upgrade the DEPLOYED upstream app version (dockerhub / github-release resolver)
+without an aibox release. Snapshots the data when the module's DB is knowable,
+rewrites the deploy .env image pins, recreates via the module's own health gate,
+and records a rollback point. Multi-hop modules (gitlab) walk the required stops.
+
+  --check         plan only: current/target/path + the recorded rollback point
+  --rollback      go back to the recorded rollback point (swaps the point)
+  --history       list recorded transitions
+  --to <version>  pin a target (works offline; enables downgrades)
+  --no-backup     skip the pre-upgrade data snapshot
+  --yes, -y       skip the confirmation
+
+exit codes: 10 = upgrade failed but rolled back · 20 = manual intervention needed
+related: aibox dashboard <module> (shows the recorded state)
+EOF
+    ;;
+  check)
+    cat <<'EOF'
+usage: aibox check <module>|self
+
+Run the module's preflight without installing (deps, commands, disk, domains,
+docker pull, services), or the environment check for `self` (egress route,
+docker, node/npm, disk). Exit: 3 = hard requirement missing · 4 = precheck failed.
+
+related: aibox install <module> (which runs the same preflight)
+EOF
+    ;;
+  dashboard)
+    cat <<'EOF'
+usage: aibox dashboard [--available] [<module>]
+
+No argument: every installed module per profile — app version, state, endpoint,
+credentials, ports + listeners, residue, and the async "updates available" list.
+
+  --available     the registry catalog (module version + status)
+  <module>        detail + health: app version, endpoint probe, auth, log path,
+                  port listeners, config-key count, upgrade/rollback state
+
+The dashboard is the authoritative view for DERIVED values (profile ports,
+container names, env paths) — docs deliberately point here instead of hardcoding.
+EOF
+    ;;
+  purge)
+    cat <<'EOF'
+usage: aibox purge [<module>...|self] [--apply] [--stop] [--yes]
+
+Scan for residue (containers, volumes, deploy dirs, /etc configs, units, CLI
+binaries, npm packages) and remove it. Dry-run by DEFAULT: nothing is deleted
+without --apply. Works after the module — or aibox itself — is gone.
+
+  --apply    actually delete (default: report only)
+  --stop     stop RUNNING containers among the findings first
+  --yes, -y  skip the confirmation gate
+EOF
+    ;;
+  proxy)
+    cat <<'EOF'
+usage: aibox proxy show|set <url>|unset|on|off|check [url]|env [--remote]
+
+Static proxy config (global; covers module hooks and dispatched CLIs). The clash
+pool takes priority while it is on. Modules that network LATER (on a deploy host)
+get the value persisted into their own config files .
+
+  show                 current config (URL masked)
+  set <url>            set the proxy (asks before accepting a dead one)
+  unset                clear the URL (config file survives as a template)
+  on | off             enable/disable without losing the URL
+  check [url]          connectivity test; verdict uses %{proxy_used} (1 = went
+                       through the proxy) + a direct-connection control
+  env [--remote]       the export lines for your own shell
+
+related: aibox clash on|off|status · `aibox --no-proxy <cmd>` for a one-shot bypass
+EOF
+    ;;
+  clash)
+    cat <<'EOF'
+usage: aibox clash set <sub-url>|on|off|status|refresh|select|test|logs|doctor|use-external
+
+Clash subscription pool (mihomo kernel). While it is on it takes priority over
+the static proxy for the whole toolkit.
+
+  set <sub-url>       store the subscription + generate the config
+  on | off            start/stop the kernel (start/stop/restart also work)
+  status              state + nodes + latency (dashboard view)
+  refresh             re-fetch the subscription
+  select <node>       switch the active node
+  test [url]          connectivity through the pool
+  logs                kernel log
+  doctor              deep diagnostics
+  use-external <port>  reuse a local clash client (Verge etc.) as the egress
+EOF
+    ;;
+  version)
+    cat <<'EOF'
+usage: aibox version   (also: -v, --version)
+
+Print the manager version. Module versions: aibox dashboard --available.
+EOF
+    ;;
+  help)
+    cat <<'EOF'
+usage: aibox help [<verb>|--all]
+
+  aibox help             this overview
+  aibox help <verb>      one verb's usage/options (also: aibox <verb> --help)
+  aibox <module> --help  a module's actions (usage: stanza in module.yaml)
+  aibox <module> <action> --help   one action's args hint
+EOF
+    ;;
+  *) return 1 ;;
+  esac
+  return 0
+}
 # BSD awk compatible (index/substr/sub, no capture groups; runs on bash 3.2's nawk).
 # $1=module name. Scalars -> AIBOX_MODULE_<name>_<key>; lists -> space-joined; nested -> <parent>_<subkey>.
 parse_yaml_module_stdin() {
@@ -897,6 +1074,7 @@ bypass_proxy() {
 cmd_proxy() {
   local sub="${1:-show}"
   case "$sub" in
+    -h|--help) _verb_help proxy; return 0 ;;
     show)  cmd_proxy_show ;;
     set)   shift; cmd_proxy_set "$@" ;;
     unset) cmd_proxy_unset ;;
@@ -905,7 +1083,7 @@ cmd_proxy() {
     check) shift; if [ $# -gt 0 ]; then cmd_proxy_test "$@"; else cmd_proxy_check; fi ;;
     test)  die "'proxy test' merged into: aibox proxy check <target-url> (single target + direct-connection control)" ;;
     env)   shift; cmd_proxy_env "$@" ;;
-    *)     die "Usage: aibox proxy {show|set <url>|unset|on|off|check [url]|env [--remote]}" ;;
+    *)     die_usage "Usage: aibox proxy {show|set <url>|unset|on|off|check [url]|env [--remote]}   (aibox proxy --help)" ;;
   esac
 }
 
@@ -956,7 +1134,7 @@ cmd_proxy_set() {
   if [ "$no_test" = "1" ]; then no_check=1; fi
 
   url=$(normalize_proxy_url "$raw")
-  [ -n "$url" ] || die "Usage: aibox proxy set <url>   e.g. aibox proxy set http://10.0.0.2:7897"
+  [ -n "$url" ] || die_usage "Usage: aibox proxy set <url>   e.g. aibox proxy set http://10.0.0.2:7897"
 
   scheme="${url%%://*}"
   case "$scheme" in
@@ -1715,10 +1893,11 @@ preflight_module() {
   if [ "$fail" != "0" ]; then
     if [ "$hard" = "1" ]; then
       bad "Preflight FAILED: ${name} — fix the issues above (missing dependencies/services can't be bypassed; --skip-checks would only defer the failure)"
-    else
-      bad "Preflight FAILED: ${name} — fix the issues above, or re-run with --skip-checks to bypass"
+      # 3 = dependency missing, 4 = precheck failed (docs/module-spec.md §Exit codes)
+      return 3
     fi
-    return 1
+    bad "Preflight FAILED: ${name} — fix the issues above, or re-run with --skip-checks to bypass"
+    return 4
   fi
   ok "Preflight passed: ${name}"
 }
@@ -1726,7 +1905,8 @@ preflight_module() {
 # `aibox check` — environment check; `aibox check <module>` — that module's preflight.
 cmd_check() {
   local target="${1:-}"
-  [ -n "$target" ] || die "Usage: aibox check <module>|self   (self = environment check)"
+  case "${target}" in -h|--help) _verb_help check; return 0 ;; esac
+  [ -n "$target" ] || die_usage "Usage: aibox check <module>|self   (self = environment check)"
   if [ "$target" = self ]; then cmd_self_check; return $?; fi
   load_registry
   module_exists "$target" || die_unknown_module "$target"
@@ -2091,10 +2271,11 @@ cmd_install() {
   for a in "$@"; do
     case "$a" in
       --skip-checks) PREFLIGHT_SKIP=1 ;;
+      -h|--help) _verb_help install; exit 0 ;;
       *) [ -z "$name" ] && name="$a" ;;
     esac
   done
-  [ -n "$name" ] || die "Usage: aibox install <module> [--skip-checks]"
+  [ -n "$name" ] || die_usage "Usage: aibox install <module> [--skip-checks]"
   # analyze + install declared service deps FIRST (recursive, cycle-guarded)
   _install_ensure_deps "$name"
   download_module "$name"
@@ -2103,7 +2284,13 @@ cmd_install() {
   if [ -n "$plat" ] && [ "$plat" != "$(uname -s | tr '[:upper:]' '[:lower:]')" ]; then
     warn "Module $name targets platform ${plat}, current is $(uname -s) (may error)"
   fi
-  preflight_module "$name" || die "Install aborted by preflight (fix the issues above)"
+  local prc=0
+  preflight_module "$name" || prc=$?
+  if [ "${prc}" = "3" ]; then
+    die_code 3 "Install aborted: a hard requirement is missing (fix the issues above; --skip-checks cannot bypass it)"
+  elif [ "${prc}" != "0" ]; then
+    die_code 4 "Install aborted: the environment check failed (fix the issues above, or re-run with --skip-checks)"
+  fi
   check_ports "$name"
   local inst; inst="$(module_field "$name" install)"
   # Re-install is supported (hooks are idempotent) — say so, so identical
@@ -2231,11 +2418,12 @@ cmd_uninstall() {
     case "$a" in
       --purge)  purge=1 ;;
       --yes|-y) ASSUME_YES=1 ;;
-      -*)       die "unknown option for uninstall: $a (usage: aibox uninstall <module>|self [--purge] [--yes])" ;;
+      -h|--help) _verb_help uninstall; exit 0 ;;
+      -*)       die_usage "unknown option for uninstall: $a (usage: aibox uninstall <module>|self [--purge] [--yes])" ;;
       *)        [ -z "$name" ] && name="$a" ;;
     esac
   done
-  [ -n "$name" ] || die "Usage: aibox uninstall <module>|self [--purge] [--yes]"
+  [ -n "$name" ] || die_usage "Usage: aibox uninstall <module>|self [--purge] [--yes]"
   if [ "$name" = self ]; then
     # 'self' = the manager module (one grammar, no self sub-family)
     if [ "$purge" = 1 ]; then cmd_self_uninstall --purge; else cmd_self_uninstall; fi
@@ -2326,7 +2514,8 @@ cmd_update() {
       --restart|--no-restart) restart_arg="$a" ;;
       --skip-checks)          PREFLIGHT_SKIP=1 ;;
       --yes|-y)               ASSUME_YES=1 ;;
-      -*)                     die "unknown option for update: $a (usage: aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks])" ;;
+      -h|--help)              _verb_help update; exit 0 ;;
+      -*)                     die_usage "unknown option for update: $a (usage: aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks])" ;;
       *)                      [ -z "$name" ] && name="$a" ;;
     esac
   done
@@ -2352,7 +2541,13 @@ cmd_update() {
       download_module "${name}"
       dest="$AIBOX_LAST_DEST"
     fi
-    preflight_module "${name}" || die "Update aborted by preflight (fix the issues above, or re-run with --skip-checks)"
+    local prc=0
+    preflight_module "${name}" || prc=$?
+    if [ "${prc}" = "3" ]; then
+      die_code 3 "Update aborted: a hard requirement is missing (fix the issues above; --skip-checks cannot bypass it)"
+    elif [ "${prc}" != "0" ]; then
+      die_code 4 "Update aborted: the environment check failed (fix the issues above, or re-run with --skip-checks)"
+    fi
     upd="$(module_field "${name}" update)"
     if [ -n "$upd" ] && [ -f "$dest/$upd" ]; then
       # The hook's own output shows above; wrap its failure with module context
@@ -2394,7 +2589,7 @@ cmd_update() {
     done
     [ -n "${failed_list}" ] && bad "update --all: FAILED for:${failed_list} (see each module's output above)"
   else
-    die "Usage: aibox update <module> [--restart|--no-restart] [--all] | --all"
+    die_usage "Usage: aibox update <module> [--restart|--no-restart] [--all] | --all"
   fi
 
   if [ "$self_flag" = "1" ]; then
@@ -2980,13 +3175,14 @@ cmd_upgrade() {
       --rollback)   mode="rollback"; shift ;;
       --history)    mode="history"; shift ;;
       --no-backup)  no_backup=1; shift ;;
+      -h|--help)    _verb_help upgrade; exit 0 ;;
       --to)         target="${2:-}"; [ -n "${target}" ] || die "--to needs a version (e.g. --to 1.17.2)"; pinned=1; shift 2 ;;
       --yes | -y)   ASSUME_YES=1; shift ;;
-      -*)           die "unknown option for upgrade: $1 (usage: aibox upgrade <module> [--check|--rollback|--history] [--to <version>] [--no-backup] [--yes])" ;;
+      -*)           die_usage "unknown option for upgrade: $1 (usage: aibox upgrade <module> [--check|--rollback|--history] [--to <version>] [--no-backup] [--yes])" ;;
       *)            [ -z "${name}" ] && name="$1"; shift ;;
     esac
   done
-  [ -n "${name}" ] || die "Usage: aibox upgrade <module> [--check|--rollback|--history] [--to <version>] [--no-backup] [--yes] — upstream component upgrade, independent of aibox releases (vs: aibox update = re-fetch module scripts)"
+  [ -n "${name}" ] || die_usage "Usage: aibox upgrade <module> [--check|--rollback|--history] [--to <version>] [--no-backup] [--yes] — upstream component upgrade, independent of aibox releases (vs: aibox update = re-fetch module scripts)"
   # --history / --rollback are LOCAL-ONLY (state file + deploy .env) and must work
   # offline, like the rest of the local-first surface; every other path resolves a
   # TARGET version and therefore needs the registry (and its stanza).
@@ -3345,6 +3541,7 @@ CATALOGFB
 # `aibox dashboard` — global overview table; `aibox <module> dashboard` — module detail + health probe.
 cmd_dashboard() {
   case "${1:-}" in
+    -h|--help)   _verb_help dashboard; return 0 ;;
     --available) cmd_list_available ;;
     "")          cmd_dashboard_overview ;;
     *)           cmd_dashboard_detail "$1" ;;
@@ -3984,7 +4181,7 @@ cmd_dev_guide() {
 # named by hooks.svc receives (action, args...)", nothing more. See docs/module-spec.md.
 cmd_module_action() {
   local name="${1:-}"
-  [ -n "$name" ] || die "Usage: aibox <module> <action>  or  aibox help"
+  [ -n "$name" ] || die_usage "Usage: aibox <module> <action>  or  aibox help"
   shift
   local action="${1:-}" next
   # Per-module help: bare, help, -h, --help all route to it (aligned with the
@@ -4300,8 +4497,8 @@ cmd_purge() {
       --apply) apply=1 ;;
       --stop)  stop=1 ;;
       --yes|-y) ASSUME_YES=1 ;;   # the global flag loop stops at 'purge'; accept it here too
-      -h|--help) printf 'usage: aibox purge [<module>...|self] [--apply] [--stop] [--yes]\n'; return 0 ;;
-      -*) die "unknown option for purge: $1 (usage: aibox purge [<module>...|self] [--apply] [--stop] [--yes])" ;;
+      -h|--help) _verb_help purge; return 0 ;;
+      -*) die_usage "unknown option for purge: $1 (usage: aibox purge [<module>...|self] [--apply] [--stop] [--yes])" ;;
       *)  scope="${scope} $1" ;;
     esac
     shift
@@ -4523,8 +4720,8 @@ cmd_self_uninstall() {
     case "$1" in
       --purge)   purge=1 ;;
       --yes|-y)  ASSUME_YES=1 ;;
-      -h|--help) printf 'usage: aibox uninstall self [--purge] [--yes]\n'; return 0 ;;
-      *)         die "unknown option: $1 (usage: aibox uninstall self [--purge] [--yes])" ;;
+      -h|--help) _verb_help uninstall; return 0 ;;
+      *)         die_usage "unknown option: $1 (usage: aibox uninstall self [--purge] [--yes])" ;;
     esac
     shift
   done
@@ -4609,40 +4806,53 @@ usage() {
 
   printf '%sCommands\n\n' "${C_BOLD}${C_CYA}"
   cat <<'EOF'
-  install <module>            Install a module (preflight-gated; --skip-checks to bypass)
-  uninstall <module>|self     Uninstall a module; --purge also deletes data
-  update <module>|self|--all  Update module scripts (self = manager; --all = everything)
-  upgrade <module>            Upgrade deployed component without an aibox release
-                              (repo pins the floor, deploy .env floats; auto-rollback)
-  <module> <action>           Invoke a module action (e.g. aibox pi-web start)
+  install <module> [--skip-checks]   Install a module (preflight-gated)
+  uninstall <module>|self [--purge] [--yes]
+                                    Uninstall; --purge also deletes DATA
+  update <module>|self|--all [--restart|--no-restart] [--skip-checks]
+                                    Refresh module SCRIPTS (repo-pinned floor)
+  upgrade <module> [--check|--rollback|--history] [--to <ver>] [--no-backup] [--yes]
+                                    Upgrade the deployed UPSTREAM app version
+                                    (update ≠ upgrade: scripts vs app version)
+  <module> <action> [args]          Invoke a module action (e.g. aibox pi-web start)
 
 EOF
 
   printf '%sInspection\n\n' "${C_BOLD}${C_CYA}"
   cat <<'EOF'
-  check <module>|self        Preflight check (self = environment: egress, docker, disk)
-  dashboard [--available]    Module overview + ports; --available = registry catalog
-  purge [module...|self]     Residue scan/cleanup (dry-run by default)
+  check <module>|self        Preflight dry-run (self = environment: egress, docker, node, disk)
+  dashboard [--available]    Overview + ports + listeners; --available = registry catalog
+  dashboard <module>         Detail + health + config keys + upgrade/rollback state
+  purge [module...|self] [--apply] [--stop] [--yes]
+                             Residue scan/cleanup (dry-run by default)
+  version, -v, --version     Manager version
 
 EOF
 
   printf '%sProxy & Clash\n\n' "${C_BOLD}${C_CYA}"
   cat <<'EOF'
-  proxy show|set|on|off      Static proxy management (set once; covers module hooks)
-  proxy check [url]          Site connectivity test (no url = full matrix)
-  clash on|off|status        Clash pool (mihomo kernel; takes priority when on)
-  clash set <sub-url>        Store subscription + generate config
-  --no-proxy <command>       Bypass proxy for one invocation
-  --profile <name>           Use a named profile (deterministic ports/volumes)
+  proxy show|set <url>|unset|on|off|check [url]|env [--remote]
+                             Static proxy config (global; covers module hooks)
+  clash set <sub-url>|on|off|status|refresh|select|test|logs|doctor|use-external
+                             Clash pool (mihomo kernel; takes priority when on)
+  --no-proxy <command>       Bypass the proxy for one invocation
+  --profile <name>           Named profile (deterministic ports/volumes)
 
 EOF
 
-  printf '%sGlobal Flags\n\n' "${C_BOLD}${C_CYA}"
+  printf '%sHelp & Global Flags\n\n' "${C_BOLD}${C_CYA}"
   cat <<'EOF'
+  help, -h, --help           This overview
+  <verb> --help              One verb's usage/options (also: aibox help <verb>)
+  <module> --help            A module's actions (from its usage: stanza)
   --yes, -y                  Skip interactive confirmations
   --skip-checks              Bypass preflight checks
   AIBOX_SHA256=<hash>        Verify bin/aibox checksum (bootstrap defense)
   AIBOX_VERIFY=1             Check release SHA256SUMS sidecar
+
+  exit codes: 1 runtime · 2 usage · 3 dependency missing · 4 precheck failed
+              10 upgrade rolled back · 20 manual intervention (module hooks: 30 not ready,
+              40 lock conflict, 50 cancelled — docs/module-spec.md §Exit codes)
 
 EOF
 
@@ -4678,6 +4888,20 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   fi
 
   # ---------- dispatch ----------
+  # Help first, uniformly: `aibox <verb> --help|-h` (any position) and
+  # `aibox help <verb>` render that verb's block and exit 0. Before this, only
+  # purge answered --help; install/check/dashboard treated it as a MODULE name
+  # (fetching the registry) and the rest as an unknown option.
+  case "${1:-}" in
+    help|-h|--help)
+      if [ -n "${2:-}" ]; then
+        _verb_help "${2}" || { usage; exit 2; }
+        exit 0
+      fi ;;
+    install|uninstall|update|upgrade|check|dashboard|purge|proxy|version)
+      case "${2:-}" in -h|--help) _verb_help "$1"; exit 0 ;; esac ;;
+  esac
+
   case "${1:-help}" in
     install)          shift; cmd_install "$@" ;;
     uninstall)        shift; cmd_uninstall "$@" ;;

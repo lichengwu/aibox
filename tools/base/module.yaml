@@ -1,5 +1,5 @@
 name: base
-version: 1.4.4
+version: 1.4.5
 description: "Shared base components (PostgreSQL 18 + Redis 7); each module gets its own DB"
 platform: ""
 dir: tools/base
@@ -52,6 +52,7 @@ actions:
   - restart
   - status
   - dashboard
+  - doctor
   - logs
   - create
   - profile
@@ -72,6 +73,7 @@ usage:
   restart: "Stop + start"
   status: "Container states + PG/Redis rich view"
   dashboard: "Alias of status"
+  doctor: "Deep diagnostics: deps, docker, state, declared ports"
   logs: "Container logs"
   create: "<component> <resource> — create a resource (e.g. create postgres dify)"
   profile: "List named profiles"

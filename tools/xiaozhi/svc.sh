@@ -195,7 +195,10 @@ secret)
     log "server container not running — it will pick the secret up on next start"
   fi
   ;;
+doctor)
+  module_doctor "xiaozhi"
+  ;;
 *)
-  die "unknown action: ${action:-} — run: aibox xiaozhi --help"
+  usage_die "unknown action: ${action:-} — run: aibox xiaozhi --help"
   ;;
 esac

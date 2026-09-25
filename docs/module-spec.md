@@ -669,17 +669,36 @@ aibox clash set <subscription-url> && aibox clash on    # real egress from here 
 
 ### CLI surface
 
+The manager's verbs are fixed; each one answers `--help` (the same block as
+`aibox help <verb>`, exit 0), and **every module action is reachable as
+`aibox <module> <action>`, never as a manager verb**:
+
 ```bash
-aibox check self               # environment: egress route, core domains (raw.githubusercontent/api.github), docker, disk
+aibox check self               # environment: egress route, core domains (raw.githubusercontent/api.github), docker, node/npm, disk
 aibox check <module>           # that module's full preflight (usable before installing)
 aibox install <module> [--skip-checks]
-aibox update  <module> [--skip-checks] [--all]
+aibox update  <module> [--skip-checks] [--all] [--restart|--no-restart]
+aibox upgrade <module> [--check|--rollback|--history] [--to <ver>] [--no-backup]
+aibox dashboard [--available] [<module>]
 AIBOX_SKIP_CHECKS=1 aibox install <module>   # script-friendly bypass
 AIBOX_CHECK_TIMEOUT=3 aibox check <module>   # per-probe timeout (default 8s)
 ```
 
-`--skip-checks` bypasses the WHOLE preflight (deps included) — for air-gapped installs with
-pre-staged dependencies. A failed preflight aborts install/update **before** any hook runs.
+`--skip-checks` bypasses the WHOLE preflight (deps included) — for air-gapped installs
+with pre-staged dependencies; whatever is genuinely missing then fails later at the hook.
+Without it a failed preflight aborts install/update **before** any hook runs: hard
+requirements (deps, commands, services) → exit `3`; soft checks (disk, domains, pull) →
+exit `4` with the `--skip-checks` hint.
+
+**Action-surface conventions** (validator-enforced, so every module feels the same):
+
+| Convention | Rule |
+| --- | --- |
+| lifecycle | a module declaring `start` MUST declare `stop`, `restart`, `status`, `logs` |
+| `dashboard` | MUST exist for service modules (the rich view; `status` is the alias) |
+| `doctor` | MUST exist: the standard diagnostic. Default = the shared `module_doctor` (`_common.sh`) — deps + docker daemon + the module's `dashboard_info` state + declared port listeners; exit `0` healthy / `3` dep missing / `30` not ready. A module with deeper domain checks (clash) may implement its own `doctor` as long as it covers those four |
+| dispatch CLIs | a module that passes actions through to its own CLI (openmaic `up`/`down`, windmill) MUST alias `start`/`stop`/`restart` onto that CLI's spelling, so `aibox <module> start` works everywhere |
+| usage errors | hooks die with `usage_die` (exit `2`), never `die`, for `Usage:`/`unknown action:`/`unknown option` |
 
 ### Per-module check matrix (current modules)
 

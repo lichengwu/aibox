@@ -7,6 +7,67 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.18.0] — 2026-09-25
+
+An instruction-system + documentation + test-infrastructure pass.
+Semver: minor — new CLI behaviors (per-verb help, exit codes, `doctor` everywhere)
+and new test tooling; no breaking change.
+
+### Added
+
+- **Per-verb help, everywhere** — `aibox <verb> --help` (any argument position) and
+  `aibox help <verb>` render that verb's usage/options and exit 0. Before this only
+  `purge` answered; `install`/`check`/`dashboard` treated `--help` as a MODULE name and
+  even hit the registry, the rest reported an unknown option. `aibox help` now lists the
+  real sub-verb surface (proxy `unset`/`env`, clash `set/on/off/status/refresh/select/
+  test/logs/doctor/use-external`, `--rollback`/`--history`, the exit-code table).
+- **`doctor` on every module** — the standard diagnostic: declared deps, docker daemon
+  reachability, the module's own reported state and its declared port listeners (shared
+  `module_doctor`, local-only). Exit `0` healthy / `3` dep missing / `30` not ready.
+  Five modules had no diagnostic at all and one hint pointed at a non-existent
+  `aibox base doctor`; clash and openmaic keep their deeper domain-specific `doctor`.
+- **Dispatch-CLI lifecycle aliases** — openmaic now maps `start`/`stop`/`restart` onto its
+  own `up`/`down`, so `aibox <module> start` works on every module (windmill already did).
+- **Docker test harness** (`tests/docker/`) — one command builds a pinned image (bats,
+  shellcheck, the GO yq CI uses, expect, a non-root `tester`) and runs gates + the fast
+  suite as **root AND non-root** + (opt-in) the docker-backed integration suites against
+  the host daemon. `bash 3.2` stays covered by the macOS CI job and is documented as such.
+- **`tests/CASES.md`** — every pitfall-log entry, every CHANGELOG `### Fixed` class and
+  every live-caught bug mapped to the test that locks it (guarded by `tests/docs-integrity.bats`).
+- **Three new fast suites**: `cli-consistency.bats` (18: help/exit codes/doctor/aliases),
+  `docs-integrity.bats` (10: links, index, inventory, en/zh parity, stale verbs),
+  `history-cases.bats` (8: the four historical gaps — proxy verdict, proxy persistence,
+  multibyte frames, docker-daemon wording).
+
+### Changed
+
+- **Exit codes follow the documented contract**: usage errors are `2` (were `1`), a failed
+  preflight is `3` (missing hard dependency) or `4` (soft check, with the `--skip-checks`
+  hint) — automation can now distinguish "called wrong" from "ran and failed" from
+  "environment not ready". Module hooks use `usage_die` for the same reason (validator-enforced).
+- **Validator gained three rules**: service modules must declare `doctor` and `dashboard`;
+  dispatch modules declaring `up` must also declare `start`; hooks must not `die` for usage
+  errors. The scaffolder emits a compliant skeleton for both styles (the `--no-compose`
+  variant previously emitted the *compose* svc.sh and failed its own rules).
+- **openmaic's proxy hook writes where its CLI reads** (`OPENMAIC_CONF_DIR` honoured —
+  a custom conf dir silently got no proxy before).
+- `aibox help`'s overview is now generated from the same data the code uses, and
+  `README(.zh)` documents `--help`, the exit codes, `doctor` and the test harness.
+
+### Fixed
+
+- **`aibox clash use-external` crashed** with `desc: command not found` — a missing `=""`
+  made bash run `desc` as a command (exit 127); the port-less invocation is the common one.
+- **Typo suggestions no longer shadow real modules** — a 3-letter typo matched a 4-letter
+  verb at two differences (`bas` → `list`), hiding the real suggestion (`base`); the
+  tolerance now scales with word length.
+- **Two stale integration assertions** (`aibox check self`'s disk line, `check base`'s
+  docker-pull line) could never pass and had never run in CI (the workflow is
+  dispatch-only) — both fixed, plus the `psql` calls in the profile suites are pinned to
+  `-d postgres` (without it they depended on a user-named DB existing, which raced
+  container init).
+- **Two broken relative doc links** and the missing test-suite inventory.
+
 ## [0.17.0] — 2026-09-25
 
 A consistency + upgrade-safety pass: docs/config drift on one side, and the
@@ -1070,6 +1131,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.18.0]: https://github.com/lichengwu/aibox/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/lichengwu/aibox/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/lichengwu/aibox/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/lichengwu/aibox/compare/v0.15.0...v0.15.1

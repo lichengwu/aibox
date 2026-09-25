@@ -134,3 +134,9 @@ high-priority candidates (raced, not pinned — the fastest route serves).
 - **Latency testing/switching delegated to mihomo**: the `url-test`/`fallback` strategy groups are mature; aibox only calls the API to report/trigger.
 - **nohup+pid for a simple daemon**: works immediately cross-platform (macOS/Linux) without depending on launchd/systemd unit files. If mihomo dies, aibox detects `CLASH_ENABLED` but no port response and falls back to the static proxy (no silent failure). A systemd/launchd unit for boot-time auto-start is a future optional enhancement.
 - **mihomo is shipped by aibox**: users need not install it manually; the install hook downloads the matching-platform binary from the GitHub release — through the source pool (direct + mirrors, rate-probed, resumable failover) above.
+
+## Standard actions
+
+`aibox clash start|stop|restart|status|logs` — the shared lifecycle; `dashboard` is the
+rich view (alias of `status`), and `doctor` is the standard diagnostic (deps, docker,
+state, declared ports; see below).

@@ -3,7 +3,7 @@
 - Upstream: [PostgreSQL](https://www.postgresql.org/) (image `postgres:18`) and
   [Redis](https://redis.io/) (image `redis:7`) — pinned by major tag; bumps are
   deliberate operations (PG major upgrades need `pg_upgrade`/dump-restore planning).
-- Spec: [`../../docs/module-spec.md`](../../docs/module-spec.md) §base module /
+- Spec: [`../../docs/module-spec.md`](../../../docs/module-spec.md) §base module /
   shared components; the module is the PROVIDER side of the `services:` contract.
 
 ## Design decisions

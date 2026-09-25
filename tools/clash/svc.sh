@@ -34,7 +34,7 @@ use-external)
   # Reuse a local clash client (Verge etc.) as the aibox egress — no kernel of
   # our own. $1 = port (default: detect from the running processes' typical
   # ports — Verge mixed is 7897).
-  port="${1:-}" ext="" desc guessed=""
+  port="${1:-}" ext="" desc="" guessed=""
   if [ -z "${port}" ]; then
     ext="$(detect_external_clash | head -1)"
     if [ -n "${ext}" ]; then
@@ -43,7 +43,7 @@ use-external)
       port="${guessed:-7890}"
     fi
   fi
-  [ -n "${port}" ] || die "Usage: aibox clash use-external <port> (no external clash process detected)"
+  [ -n "${port}" ] || usage_die "Usage: aibox clash use-external <port> (no external clash process detected)"
   ext_port_alive "${port}" || die "nothing listening on 127.0.0.1:${port} — start the clash app first (or pass its mixed port)"
   _state_set_mode external "${port}"
   ok "aibox egress now reuses the external clash on 127.0.0.1:${port} (node control stays in that app)"
@@ -58,7 +58,7 @@ refresh)
   refresh_now
   ;;
 set)
-  [ $# -ge 1 ] || die "Usage: aibox clash set <subscription-url>"
+  [ $# -ge 1 ] || usage_die "Usage: aibox clash set <subscription-url>"
   sub="$1"
   shift
   [ -n "${CLASH_SECRET:-}" ] || CLASH_SECRET="$(gen_secret)"
@@ -78,7 +78,7 @@ set)
   log "Enable: aibox clash on"
   ;;
 select)
-  [ $# -ge 1 ] || die "Usage: aibox clash select <node-name>"
+  [ $# -ge 1 ] || usage_die "Usage: aibox clash select <node-name>"
   api_put "/proxies/AUTO" "{\"name\":\"$1\"}" >/dev/null 2>&1 &&
     log "Switched to $1" || die "Switch failed (mihomo not running or node doesn't exist)"
   ;;
@@ -112,6 +112,6 @@ doctor)
   [ -f "$(providers_dir)/pool.yaml" ] && log "pool.yaml cached" || warn "pool.yaml not cached"
   ;;
 *)
-  die "unknown action: ${action:-} — run: aibox clash --help"
+  usage_die "unknown action: ${action:-} — run: aibox clash --help"
   ;;
 esac

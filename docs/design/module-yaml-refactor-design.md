@@ -3,7 +3,7 @@
 > Status: Design draft (spec-only; this round does not modify any actual `.sh` / `module.yaml` / `docker-compose*.yml` content)
 > Date: 2026-09-16
 > Scope: ① Remove redundancy from module.yaml fields (actions / files / dashboard); ② Shared-component (PG/Redis) dependency declaration + connection-info propagation spec
-> Related: This design is an incremental revision of [`docs/module-system-spec.md`](module-system-spec.md); after landing, the corresponding spec sections will be updated accordingly
+> Related: This design is an incremental revision of [`docs/module-system-spec.md`](../module-system-spec.md); after landing, the corresponding spec sections will be updated accordingly
 > Principle: **Keep it simple and extensible.** Shared-component propagation introduces no codegen — one shared env file + compose `--env-file` live read + module-referenced variables.
 
 ---

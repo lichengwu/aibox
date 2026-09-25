@@ -93,3 +93,10 @@ Cross-platform: macOS uses launchd (`~/Library/LaunchAgents` plist + `KeepAlive`
 | `uninstall.sh` | uninstall |
 | `update.sh` | update |
 | `svc.sh` | `start/stop/restart/status/logs/diagnose` |
+
+## Diagnostics
+
+`aibox pi-web doctor` — declared deps, docker daemon reachability, the module's own
+reported state (`dashboard_info`) and its declared port listeners. Shared
+implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
+exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.

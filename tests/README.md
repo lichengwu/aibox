@@ -53,6 +53,7 @@ Every regression test below was born from a real bug found in review or live tes
 | `proxy-fallback.bats` — clash fallback + precedence | live bug: `proxy check/test` died "No proxy configured" while clash provided a working proxy |
 | `base-svc.bats` — create dispatch/alias/usage | `createdb`→`create <component>` refactor must keep the deprecated alias + clear errors |
 | `ux-hardening.bats` — suggestions/preflight hints/bounded PM/profile output | the 0.15.0 UX pass: typos must suggest, hard deps must not advertise `--skip-checks`, package auto-install must be bounded (`AIBOX_PM_TIMEOUT`) + deduped, bin-dir precedence must match the bootstrap |
+| `cli-consistency.bats` — 18 tests: per-verb `--help`, exit-code convention (2/3/4), `doctor` on every module, lifecycle aliases, `usage_die` | live audit: only `purge` answered `--help` (install/check/dashboard even fetched the registry for a module named `--help`), usage errors exited 1 while the spec documents 2, preflight exited 1 vs the documented 3/4, five modules had no `doctor` and one hint pointed at a non-existent action, openmaic lacked `start`/`stop`, and module hooks used `die` for usage errors |
 | `deps-at-action.bats` — start/restart ensure declared services | live bug: `aibox xiaozhi start` died with "shared base not running — first: aibox base start" (two commands for one intent); the redis-only entry form was skipped entirely, and `base create` died with "PG not running?" instead of starting the stack |
 | `upgrade-rollback.bats` — 18 tests: recorded rollback point, verified rollback, exit 10/20, data snapshot | live review: the engine claimed "rolled back" without verifying, always returned 20 (spec says 10/20), had no rollback POINT (only an automatic one), and overwrote the module marker with the app version |
 | `docs-config-drift.bats` — 10 tests: env keys ↔ code, derived values ↔ dashboard pointer, declared ports ↔ published ports, exit-code contract | live audit: docs hardcoded profile-derived ports (base/pi-web), openmaic declared a port nothing publishes (5432 vs upstream 3000), and the docs index needed the superseded banner kept |
@@ -68,6 +69,78 @@ Every regression test below was born from a real bug found in review or live tes
   `HOME` when testing `install.sh`). Sub-second per test.
 - Anything touching the service manager, docker, or large downloads → `integration/`,
   guarded (skip) by default, unique test profile names, snapshot-diff teardown.
+
+
+## Docker test harness (reproducible, one command)
+
+```bash
+tests/docker/run.sh                 # build the image + gates + fast suite (root + non-root)
+tests/docker/run.sh --integration   # also tests/integration/*.bats (needs a docker host)
+tests/docker/run.sh --fast-only     # skip the non-root parity pass
+tests/docker/run.sh --shell         # drop into the container
+```
+
+`tests/docker/Dockerfile` pins the environment (bats, shellcheck, the GO yq CI uses,
+expect, a non-root `tester` user). Phases: **gates** (`bash -n` · shellcheck error ·
+gotcha #1/#8 · `validate-module.sh --all`) → **fast suite as root** → **fast suite as
+non-root** (the CI-parity pass: root can mask permission bugs — it caught two real
+test failures in this repo) → integration (opt-in). The harness exits non-zero if any
+phase fails and prints a per-phase summary.
+
+bash 3.2 itself is NOT reproducible in an Ubuntu image (it predates every supported
+distro): the macOS CI job `macos-bash32` stays the authoritative 3.2 runtime gate,
+while the harness runs the static 3.2 checks (parse-compat + gotcha scanners).
+
+## Test inventory (every suite, generated)
+
+Fast suite (`bats tests/*.bats`, no docker/network, ~seconds) — **37 files**:
+
+- `base-env.bats`
+- `base-svc.bats`
+- `clash-pool.bats`
+- `cli-consistency.bats`
+- `cli-surface.bats`
+- `command-surface.bats`
+- `config-system.bats`
+- `config.bats`
+- `dash-template.bats`
+- `deps-at-action.bats`
+- `dify-docker-pool.bats`
+- `docker-tags-pool.bats`
+- `docs-config-drift.bats`
+- `docs-integrity.bats`
+- `gh-pool.bats`
+- `gitlab-credentials.bats`
+- `gitlab-upgrade-path.bats`
+- `history-cases.bats`
+- `install-sh.bats`
+- `installed.bats`
+- `module-install.bats`
+- `module-tools.bats`
+- `new-api.bats`
+- `node-pool.bats`
+- `pi-web-npm.bats`
+- `preflight.bats`
+- `profile.bats`
+- `proxy-fallback.bats`
+- `proxy.bats`
+- `purge.bats`
+- `registry.bats`
+- `self-uninstall.bats`
+- `upgrade-rollback.bats`
+- `upgrade.bats`
+- `ux-hardening.bats`
+- `windmill-config.bats`
+- `xiaozhi.bats`
+
+Integration suite (`bats tests/integration/*.bats`, docker/an opted-in scenario) — 4 files:
+
+- `integration/base-profiles.bats`
+- `integration/pi-web-profiles.bats`
+- `integration/preflight-check.bats`
+- `integration/windmill-consumer.bats`
+
+**Historical bug → test mapping: [`CASES.md`](CASES.md)** — every pitfall-log entry, every CHANGELOG `### Fixed` class and every live-caught bug, with the suite that locks it.
 
 ## Coverage probe (function-level, zero-dependency)
 

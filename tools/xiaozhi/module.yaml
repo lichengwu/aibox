@@ -1,5 +1,5 @@
 name: xiaozhi
-version: 1.2.3
+version: 1.2.4
 description: "Xiaozhi ESP32 server (docker compose): backend for xiaozhi-esp32 AI voice devices (manager console + websocket relay + bundled MySQL)"
 platform: ""
 dir: tools/xiaozhi
@@ -51,6 +51,7 @@ actions:
   - restart
   - status
   - dashboard
+  - doctor
   - logs
   - credentials
   - secret
@@ -73,6 +74,7 @@ usage:
   restart: "Recreate containers (applies .env changes)"
   status: "Container + console + ws + secret state + rich view"
   dashboard: "Alias of status"
+  doctor: "Deep diagnostics: deps, docker, state, declared ports"
   logs: "Container logs"
   credentials: "Admin login + secret location"
   secret: "<value> — manually set the server.secret (console 参数管理)"

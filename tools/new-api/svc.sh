@@ -107,7 +107,10 @@ credentials)
   info "SESSION_SECRET (session signing) lives in $(deploy_root)/.env (mode 600)"
   info "channel tokens/keys are managed in the web console (stored in the shared PG new_api database)"
   ;;
+doctor)
+  module_doctor "new-api"
+  ;;
 *)
-  die "unknown action: ${action:-} — run: aibox new-api --help"
+  usage_die "unknown action: ${action:-} — run: aibox new-api --help"
   ;;
 esac

@@ -119,6 +119,8 @@ actions:
   - restart
   - status
   - dashboard
+  - doctor
+  - logs
   - logs
 
 # Shared-library include: repo tools/_shared/common.sh (output helpers
@@ -144,6 +146,8 @@ usage:
   status: "TODO what status shows"
   logs: "TODO which container/service"
   dashboard: "TODO module-owned rich view (see lib.sh render_dashboard)"
+  doctor: "Deep diagnostics: deps, docker, state, declared ports (shared module_doctor)"
+  logs: "TODO which log (maps to the CLI's own logs)"
 
 upstream:
   homepage: https://example.com/TODO
@@ -183,10 +187,17 @@ hooks:
   update: update.sh
   svc: svc.sh
 
-# CLI-dispatch style (like openmaic/windmill): list the passthrough actions.
+# CLI-dispatch style (like openmaic/windmill): the standard verbs + passthrough
+# actions. start/stop/restart/logs must exist (spec §CLI surface) and are mapped
+# onto the dispatched CLI's spelling in svc.sh.
 actions:
+  - start
+  - stop
+  - restart
   - status
   - dashboard
+  - doctor
+  - logs
 
 # Shared-library include: repo tools/_shared/common.sh (output helpers
 # log/warn/ok/info/die + the docker.io download pool) ships into the module
@@ -205,8 +216,13 @@ env:
 # Per-action help text (one line each) — `aibox __NAME__ --help` renders this
 # table. The validator WARNs when a declared action has no usage entry.
 usage:
+  start: "Start the upstream stack (alias of the CLI's own verb)"
+  stop: "Stop the upstream stack (alias)"
+  restart: "Restart the upstream stack (alias)"
   status: "TODO what status shows"
   dashboard: "TODO module-owned rich view (see lib.sh render_dashboard)"
+  doctor: "Deep diagnostics: deps, docker, state, declared ports (shared module_doctor)"
+  logs: "TODO which log (maps to the CLI's own logs)"
 
 upstream:
   homepage: https://example.com/TODO
@@ -346,7 +362,8 @@ log "apply changes: aibox __NAME__ restart"
 EOF
 
 # ---------- svc.sh ----------
-render "$DEST/svc.sh" <<'EOF'
+if [ "$WITH_COMPOSE" = 1 ]; then
+  render "$DEST/svc.sh" <<'EOF'
 #!/usr/bin/env bash
 # __NAME__ module — service ops hook: aibox __NAME__ <action> [args]
 set -euo pipefail
@@ -379,14 +396,48 @@ case "$action" in
   dashboard)
     render_dashboard
     ;;
+  doctor)
+    module_doctor __NAME__
+    ;;
   logs)
     docker compose logs --tail 100 "$@"
     ;;
   *)
-    die "unknown action: $action (declared: start stop restart status logs)"
+    usage_die "unknown action: $action — run: aibox __NAME__ --help"
     ;;
 esac
 EOF
+else
+  render "$DEST/svc.sh" <<'EOF'
+#!/usr/bin/env bash
+# __NAME__ module — CLI-dispatch hook (no compose file of its own): the module's
+# own CLI does the work. The STANDARD verbs must still work (spec §CLI surface):
+# aibox __NAME__ start|stop|restart|status|dashboard|logs|doctor.
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+. "$DIR/lib.sh"
+
+action="${1:-status}"
+[ $# -gt 0 ] && shift
+
+# TODO: point CLI at the dispatched command (module install destination first,
+# then PATH — see tools/openmaic/svc.sh for the reference implementation).
+CLI="${AIBOX_BIN_DIR:-$HOME/.local/bin}/__NAME__"
+[ -x "$CLI" ] || CLI="$(command -v __NAME__ || true)"
+[ -n "$CLI" ] || die "__NAME__ command not found, run first: aibox install __NAME__"
+
+case "$action" in
+  # TODO: map onto your CLI's spelling (openmaic: up/down, windmill: start/stop)
+  start)     action="TODO-up" ;;
+  stop)      action="TODO-down" ;;
+  restart)   action="TODO-restart" ;;
+  dashboard) action="status" ;;
+  doctor)    module_doctor __NAME__; exit $? ;;
+esac
+exec "$CLI" "$action" "$@"
+EOF
+fi
 
 # ---------- README.md ----------
 render "$DEST/README.md" <<'EOF'

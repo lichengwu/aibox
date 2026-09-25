@@ -99,9 +99,9 @@ teardown_file() {
   run bash "$REPO_ROOT/bin/aibox" --profile itta base create postgres "$FRESH"
   [ "$status" -eq 0 ]
   # createdb waits for PG readiness now (pg_isready loop) — no manual sleep needed
-  run docker exec aibox-base-itta-postgres psql -U aibox -tAc "SELECT count(*) FROM pg_database WHERE datname='$FRESH'"
+  run docker exec aibox-base-itta-postgres psql -U aibox -d postgres -tAc "SELECT count(*) FROM pg_database WHERE datname='$FRESH'"
   [ "$output" = "1" ]
-  run docker exec aibox-base-ittb-postgres psql -U aibox -tAc "SELECT count(*) FROM pg_database WHERE datname='$FRESH'"
+  run docker exec aibox-base-ittb-postgres psql -U aibox -d postgres -tAc "SELECT count(*) FROM pg_database WHERE datname='$FRESH'"
   [ "$output" = "0" ]
   # idempotent re-run
   run bash "$REPO_ROOT/bin/aibox" --profile itta base create postgres "$FRESH"
@@ -111,7 +111,7 @@ teardown_file() {
   run bash "$REPO_ROOT/bin/aibox" --profile itta base createdb "${FRESH}2"
   [ "$status" -eq 0 ]
   [[ "$output" == *"deprecated"* ]]
-  docker exec aibox-base-itta-postgres psql -U aibox -tAc "SELECT count(*) FROM pg_database WHERE datname='${FRESH}2'" | grep -qx 1
+  docker exec aibox-base-itta-postgres psql -U aibox -d postgres -tAc "SELECT count(*) FROM pg_database WHERE datname='${FRESH}2'" | grep -qx 1
 }
 
 @test "networks isolated: itta network contains only itta containers" {

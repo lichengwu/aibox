@@ -25,17 +25,23 @@ teardown_file() {
 @test "aibox check self — environment check passes (core domains, docker, disk)" {
   run bash "$REPO_ROOT/bin/aibox" check self
   [ "$status" -eq 0 ] || echo "$output"
-  [[ "$output" == *"environment check"* ]]
-  [[ "$output" == *"raw.githubusercontent.com"* ]]
-  [[ "$output" == *"disk free at AIBOX_HOME"* ]]
+  [[ "$output" == *"environment check"* ]] || false
+  [[ "$output" == *"raw.githubusercontent.com"* ]] || false
+  [[ "$output" == *"docker daemon reachable"* || "$output" == *"docker not available"* ]] || false
+  # the disk line reads "disk free:    <N>G at AIBOX_HOME" — assert the label, not a
+  # literal value (this assertion said "disk free at AIBOX_HOME", which could never match)
+  [[ "$output" == *"disk free:"* ]] || false
 }
 
 @test "aibox check base — full preflight (deps, disk, daemon pull probe or cache short-circuit)" {
   run bash "$REPO_ROOT/bin/aibox" check base
   [ "$status" -eq 0 ] || echo "$output"
-  [[ "$output" == *"Preflight passed: base"* ]]
-  # either the images are cached (short-circuit) or the daemon pull probe succeeded
-  [[ "$output" == *"cached"* || "$output" == *"daemon can pull"* ]]
+  [[ "$output" == *"Preflight passed: base"* ]] || false
+  [[ "$output" == *"docker"* ]] || false
+  [[ "$output" == *"disk:"* ]] || false
+  # NOTE: deliberately NO docker-pull assertion — base declares no checks.docker_pull
+  # (its images go through the docker.io pool at `base start`, probed by the daemon);
+  # the old assertion ("cached" || "daemon can pull") could never match either.
 }
 
 @test "aibox check windmill — strict services gate: fails while base is not installed, hint shows the fix" {

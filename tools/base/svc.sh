@@ -35,16 +35,19 @@ logs)
   compose logs -f
   ;;
 create)
-  [ $# -ge 2 ] || die "Usage: aibox base create <component> <resource> [usage]"
+  [ $# -ge 2 ] || usage_die "Usage: aibox base create <component> <resource> [usage]"
   _create "$1" "$2" "${3:-}"
   ;;
 createdb)
   warn "'createdb' is deprecated; use 'create postgres <name>'"
-  [ $# -ge 1 ] || die "Usage: aibox base createdb <module> [usage] (deprecated)"
+  [ $# -ge 1 ] || usage_die "Usage: aibox base createdb <module> [usage] (deprecated)"
   _create postgres "$1" "${2:-}"
   ;;
 profile)
   _profile_list
   ;;
-*) die "unknown action: ${action:-} — run: aibox base --help" ;;
+doctor)
+  module_doctor "base"
+  ;;
+*) usage_die "unknown action: ${action:-} — run: aibox base --help" ;;
 esac

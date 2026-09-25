@@ -130,8 +130,13 @@ aibox dashboard <module>          单模块详情 + 健康探测（头部显示�
 aibox purge [<module>...|self]    残留扫描/清理（默认 dry-run；--apply 先确认、
                                   再问是否停运行中容器）
 aibox proxy {show|set|on|off|…}   静态出口代理配置（全局）
+aibox <verb> --help               该动词的用法与选项 · 等价：aibox help <verb>
 aibox --no-proxy <command>        单条命令绕过代理
 ```
+
+退出码对自动化稳定：`1` 运行错误 · `2` 用法错误/被拒绝 · `3` 依赖缺失 ·
+`4` 预检失败 · `10` 升级已回滚 · `20` 需人工干预（模块钩子另有 `30` 未就绪、
+`40` 锁冲突、`50` 用户取消 —— 见 [module-spec §Exit codes](docs/module-spec.md)）。
 
 ### 模块动词（透传到模块的 svc.sh）
 
@@ -141,10 +146,12 @@ aibox <module> --help             动作表（离线，来自模块的 usage: �
 aibox <module> <action> --help    单个动作的用法（参数 + 描述）
 ```
 
-每个服务模块实现标准生命周期（`start / stop / restart / status / logs`）加自己的
-领域动作（`base create postgres <db>`、`gitlab credentials`、`clash select <节点>`…）。
-`status` 展示运维事实**和富视图**（容器、健康、端点、凭据、端口监听）——
-模块级的 `dashboard` 是 `status` 的别名。
+每个服务模块实现同一套标准动作 —— `start / stop / restart / status / logs`、
+`dashboard`（富视图：容器、健康、端点、凭据、端口监听）与 `doctor`（依赖 + docker
+守护进程 + 自报状态 + 声明端口监听；退出 `0` 健康 / `3` 缺依赖 / `30` 未就绪）——
+再加自己的领域动作（`base create postgres <db>`、`gitlab credentials`、
+`clash select <节点>`…）。分发型模块（openmaic、windmill）把生命周期动词映射到
+自己 CLI 的写法，因此 `aibox <module> start` 在任何模块上都可用。
 
 ### 端口与端点
 
@@ -238,6 +245,17 @@ scripts/validate-module.sh mytool       # 一致性门禁（CI 跑 --all）
 欢迎 PR。先读 [`AGENTS.md`](AGENTS.md) —— bash 编码规范、坑日志（带最小复现的
 平台陷阱）、模块规范入口。Conventional Commits；每次发版遵循
 [changelog 标准](CHANGELOG.md)。
+
+### 测试
+
+```bash
+bats tests/*.bats                 # 快速套件：无需 docker/网络，几秒钟
+tests/docker/run.sh               # 可复现：门禁 + 快速套件（root 与非 root 各一遍）
+tests/docker/run.sh --integration # 追加 docker 支撑的 E2E 套件（用宿主 daemon）
+```
+
+[`tests/CASES.md`](tests/CASES.md) 把每一个记录过的 bug（坑日志、changelog 修复、
+线上抓到的）映射到锁住它的测试 —— 每修一个 bug 就加一行。
 
 ## 许可证
 

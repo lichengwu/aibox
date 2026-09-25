@@ -1,5 +1,5 @@
 name: gitlab
-version: 1.5.3
+version: 1.5.4
 description: "GitLab CE self-hosted (omnibus docker): web UI + git over SSH, embedded PG/Redis"
 platform: ""
 dir: tools/gitlab
@@ -34,6 +34,7 @@ actions:
   - restart
   - status
   - dashboard
+  - doctor
   - logs
   - credentials
   - config
@@ -55,6 +56,7 @@ usage:
   restart: "Recreate the container"
   status: "Container + web health + rich view"
   dashboard: "Alias of status"
+  doctor: "Deep diagnostics: deps, docker, state, declared ports"
   logs: "Container logs"
   credentials: "Show the seeded root password + verify it against the live account"
   config: "Show/set config keys (store: apps/gitlab/.env)"

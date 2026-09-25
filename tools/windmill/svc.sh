@@ -2,7 +2,8 @@
 # windmill module — service action hook
 # This module has no resident process of its own (stack is managed by docker compose), so here we only **pass through**:
 #   aibox windmill status   ->  windmill status
-#   aibox windmill doctor   ->  windmill doctor
+#   aibox windmill doctor   ->  module_doctor (the shared uniform diagnostics)
+#   aibox windmill check    ->  windmill check (the CLI's deep, deploy-aware check)
 # All real actions are performed by the local windmill CLI (including its own confirmation, concurrency lock, and exit codes).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,6 +49,8 @@ fi
 # output IS the rich view; no separate render here)
 case "${action}" in
 dashboard) action="status" ;;
+# Standard diagnostic verb: the CLI calls it `check`.
+doctor) module_doctor windmill ;;
 esac
 
 exec "${CLI}" "${action}" "$@"

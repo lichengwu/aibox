@@ -109,7 +109,10 @@ credentials)
   fi
   warn "credentials live in $(deploy_root)/.env (mode 600) — treat as secrets"
   ;;
+doctor)
+  module_doctor "dify"
+  ;;
 *)
-  die "unknown action: ${action:-} — run: aibox dify --help"
+  usage_die "unknown action: ${action:-} — run: aibox dify --help"
   ;;
 esac

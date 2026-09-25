@@ -1,5 +1,5 @@
 name: windmill
-version: 1.5.0
+version: 1.5.1
 description: "Windmill self-host ops CLI (init/upgrade/backup/drill/doctor)"
 platform: ""
 dir: tools/windmill
@@ -48,6 +48,7 @@ actions:
   - restart
   - status
   - dashboard
+  - doctor
   - logs
   - shell
   - credentials
@@ -88,6 +89,7 @@ usage:
   restart: "Recreate containers"
   status: "Stack health + version info"
   dashboard: "Same as status (dispatched to the CLI)"
+  doctor: "Deep diagnostics (the CLI\'s check)"
   logs: "Container logs"
   shell: "Open a shell in the server container"
   credentials: "Show admin + database credentials"

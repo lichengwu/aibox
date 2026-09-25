@@ -144,8 +144,14 @@ aibox dashboard <module>          single-module detail + health probe (app versi
 aibox purge [<module>...|self]    residue scan/cleanup (dry-run by default; --apply
                                   confirms, then asks about RUNNING containers)
 aibox proxy {show|set|on|off|…}   static egress proxy config (global)
+aibox <verb> --help               that verb's usage + options · also: aibox help <verb>
 aibox --no-proxy <command>        bypass the proxy for one command
 ```
+
+Exit codes are stable for automation: `1` runtime · `2` usage / declined ·
+`3` dependency missing · `4` precheck failed · `10` upgrade rolled back ·
+`20` manual intervention (module hooks add `30` not ready, `40` lock conflict,
+`50` cancelled — [module-spec §Exit codes](docs/module-spec.md)).
 
 ### Module verbs (pass-through to the module's svc.sh)
 
@@ -155,12 +161,14 @@ aibox <module> --help             action table (offline, from the module's usage
 aibox <module> <action> --help    the single action's usage (args + description)
 ```
 
-Every service module implements the standard lifecycle
-(`start / stop / restart / status / logs`) plus its own domain actions
-(`base create postgres <db>`, `gitlab credentials`, `clash select <node>`, …).
-`status` shows the module's operational facts **and its rich view**
-(containers, health, endpoints, credentials, port listeners) — `dashboard` is
-an alias of `status` at the module level.
+Every service module implements the same standard set —
+`start / stop / restart / status / logs`, `dashboard` (the rich view: containers,
+health, endpoints, credentials, port listeners) and `doctor` (deps + docker daemon
++ reported state + declared port listeners; exit `0` healthy / `3` dep missing /
+`30` not ready) — plus its own domain actions (`base create postgres <db>`,
+`gitlab credentials`, `clash select <node>`, …). Dispatch-type modules (openmaic,
+windmill) alias the lifecycle verbs onto their own CLI's spelling, so
+`aibox <module> start` works everywhere.
 
 ### Ports & endpoints
 
@@ -265,6 +273,17 @@ PRs welcome. Read [`AGENTS.md`](AGENTS.md) first — it carries the bash coding
 conventions, the pitfall log (platform traps with minimal repros), and the
 module spec pointers. Conventional Commits; every release follows the
 [changelog standard](CHANGELOG.md).
+
+### Testing
+
+```bash
+bats tests/*.bats                 # fast suite: no docker, no network, ~seconds
+tests/docker/run.sh               # reproducible: gates + the fast suite as root AND non-root
+tests/docker/run.sh --integration # + the docker-backed E2E suites (host daemon)
+```
+
+[`tests/CASES.md`](tests/CASES.md) maps every logged bug (pitfall log, changelog
+fixes, live catches) to the test that locks it — add a row with every fix.
 
 ## License
 

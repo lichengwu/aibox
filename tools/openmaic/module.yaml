@@ -1,5 +1,5 @@
 name: openmaic
-version: 1.3.3
+version: 1.3.4
 description: "OpenMAIC ops CLI (install/upgrade/backup/doctor)"
 platform: ""
 dir: tools/openmaic
@@ -45,6 +45,8 @@ hooks:
   svc: svc.sh
 
 actions:
+  - start
+  - stop
   - status
   - dashboard
   - health
@@ -83,6 +85,8 @@ env:
 
 usage:
   status: "Version / health / containers / resources overview"
+  start: "Alias of up (standard lifecycle)"
+  stop: "Alias of down (standard lifecycle)"
   dashboard: "Same as status (dispatched to the CLI)"
   health: "[--wait N] — health check (exit code is probe-friendly)"
   doctor: "Environment self-check"

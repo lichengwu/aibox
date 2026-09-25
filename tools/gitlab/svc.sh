@@ -111,7 +111,10 @@ credentials)
     warn "no seeded password (uninstalled? run: aibox install gitlab)"
   fi
   ;;
+doctor)
+  module_doctor "gitlab"
+  ;;
 *)
-  die "unknown action: ${action:-} — run: aibox gitlab --help"
+  usage_die "unknown action: ${action:-} — run: aibox gitlab --help"
   ;;
 esac

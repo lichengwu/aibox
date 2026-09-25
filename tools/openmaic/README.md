@@ -145,3 +145,9 @@ Exit code tiers: `0` success, `1` runtime error, `2` usage error, `3` missing de
 ## Platform
 
 Cross-platform: installation is copying a single file; the CLI is bash 3.2 compatible (uses fixed fds instead of bash 4's `exec {fd}>`). Service commands require docker (Docker Desktop on macOS / docker on Linux), with no OS restriction — read-only commands still work without docker.
+
+## Standard actions
+
+`aibox openmaic start|stop|restart|status|logs` — the shared lifecycle; `dashboard` is the
+rich view (alias of `status`), and `doctor` is the standard diagnostic (deps, docker,
+state, declared ports; see below).

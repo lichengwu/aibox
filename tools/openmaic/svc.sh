@@ -11,7 +11,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 action="${1:-}"
 if [ -z "${action}" ]; then
-  die "Usage: aibox openmaic <action> [args] (see: openmaic help)"
+  usage_die "Usage: aibox openmaic <action> [args] (see: openmaic help)"
 fi
 shift
 
@@ -38,6 +38,10 @@ fi
 # dashboard maps to the CLI's own status (dispatch-only module — the CLI's
 # output IS the rich view; no separate render here)
 case "${action}" in
+# Standard lifecycle aliases: dispatch CLIs expose their own verbs (openmaic uses
+# up/down), but `aibox <module> start|stop` must work everywhere (spec §CLI surface).
+start)  action="up" ;;
+stop)   action="down" ;;
 dashboard) action="status" ;;
 esac
 

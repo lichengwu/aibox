@@ -74,7 +74,93 @@ ensure_shared_base() {
   die "the shared base did not become ready within ${timeout_s}s — check: aibox base status"
 }
 
+# ---------- shared diagnostics (`doctor`) ----------
+# Every module exposes a `doctor` action with the SAME shape (the audit found
+# doctor/check/diagnose/-none across modules and a hint pointing at a
+# non-existent `aibox base doctor`). Checks: declared deps, docker when declared,
+# the module's own reported state, and the declared port listeners — all local
+# (no network). Exit: 0 healthy · 3 a dependency is missing · 30 not ready
+# (docs/module-spec.md §Exit codes); 1 for a partial report.
+port_listening() { # $1=port → 0 when something listens
+  local p="$1" lsof ss
+  lsof="$(command -v lsof 2>/dev/null || true)"; [ -x "${lsof}" ] || lsof="/usr/sbin/lsof"
+  ss="$(command -v ss 2>/dev/null || true)";     [ -x "${ss}" ] || ss="/usr/sbin/ss"
+  if [ -x "${lsof}" ]; then "${lsof}" -iTCP:"${p}" -sTCP:LISTEN >/dev/null 2>&1
+  elif [ -x "${ss}" ]; then [ -n "$("${ss}" -Htln "sport = :${p}" 2>/dev/null)" ]
+  else return 1; fi
+}
+
+module_doctor() { # $1=module name (defaults to $AIBOX_MODULE)
+  local m="${1:-${AIBOX_MODULE:-}}" yaml="" deps="" d dcmd ptag os info="" ver="" state="" ep="" health=""
+  local miss=0 notready=0 dself
+  dself="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  yaml="${dself}/module.yaml"
+  [ -f "${yaml}" ] || yaml="${dself}/../${m}/module.yaml"
+  deps="$(awk '/^deps:/{f=1;next} /^[a-z_]+:/{f=0} f&&/^  - /{sub(/^  - /,""); gsub(/^"|"$/,""); printf "%s ", $0}' "${yaml}" 2>/dev/null || true)"
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  log "${m} doctor  ${C_DIM:-}$(date '+%Y-%m-%d %H:%M')${C_RST:-}"
+  # 1) declared deps (docker gets a daemon probe, not just a CLI check)
+  if [ -n "${deps}" ]; then
+    for d in ${deps}; do
+      dcmd="${d}"; ptag=""
+      dcmd="${dcmd%\"}"; dcmd="${dcmd#\"}"   # quoted entries ("node:22")
+      case "${dcmd}" in *@*) ptag="${dcmd##*@}"; dcmd="${dcmd%@*}" ;; esac
+      [ -n "${ptag}" ] && [ "${ptag}" != "${os}" ] && continue
+      case "${dcmd}" in *:*) dcmd="${dcmd%%:*}" ;; esac
+      if command -v "${dcmd}" >/dev/null 2>&1; then
+        case "${dcmd}" in
+        docker) if docker info >/dev/null 2>&1; then ok "dep         docker (daemon reachable)"
+                else warn "dep         docker — CLI present but the daemon is UNREACHABLE (start docker)"; miss=1; fi ;;
+        *)      ok "dep         ${dcmd}" ;;
+        esac
+      else
+        warn "dep         ${dcmd} MISSING — fix: aibox install ${m} (preflight auto-installs deps)"
+        miss=1
+      fi
+    done
+  else
+    info "dep         (none declared)"
+  fi
+  # 2) the module's own state report (dashboard_info is the module's contract)
+  if type dashboard_info >/dev/null 2>&1; then
+    info="$(dashboard_info 2>/dev/null || true)"
+    ver="$(printf '%s\n' "${info}" | sed -n 's/^version=//p' | head -1)"
+    state="$(printf '%s\n' "${info}" | sed -n 's/^state=//p' | head -1)"
+    ep="$(printf '%s\n' "${info}" | sed -n 's/^endpoint=//p' | head -1)"
+    health="$(printf '%s\n' "${info}" | sed -n 's/^health=//p' | head -1)"
+    case "${state}" in
+    ok)        ok "state       ok${ver:+ (app ${ver})}" ;;
+    starting)  warn "state       starting (container up, health pending)"; notready=1 ;;
+    stopped)   warn "state       stopped — fix: aibox ${m} start"; notready=1 ;;
+    na)        info "state       n/a (CLI module — no resident service)" ;;
+    "")        info "state       (module reports no state)" ;;
+    esac
+    [ -n "${ep}" ] && info "endpoint    ${ep}${health:+ ${C_DIM:-}· ${C_RST:-}${health}}"
+  else
+    info "state       (module has no dashboard_info)"
+  fi
+  # 3) declared ports
+  local ports="" entry
+  ports="$(awk '/^ports:/{f=1;next} /^[a-z_]+:/{f=0} f&&/^  - /{sub(/^  - /,""); printf "%s ", $0}' "${yaml}" 2>/dev/null || true)"
+  for entry in ${ports}; do
+    local pnum="${entry%%/*}"
+    case "${pnum}" in ''|*[!0-9]*) continue ;; esac
+    if port_listening "${pnum}"; then ok "port        ${entry} listening"
+    else info "port        ${entry} — (not listening)"; fi
+  done
+  [ -n "${ports}" ] || info "port        (none declared)"
+  # verdict
+  if [ "${miss}" = "1" ]; then printf '%s✗  not healthy: a dependency is missing (aibox install %s)%s\n' "${C_RED:-}" "${m}" "${C_RST:-}"; return 3; fi
+  if [ "${notready}" = "1" ]; then printf '%s⚠  not ready: the service is not running (aibox %s start)%s\n' "${C_YEL:-}" "${m}" "${C_RST:-}"; return 30; fi
+  ok "all checks passed"
+  return 0
+}
+
+# Usage errors in module hooks are exit 2 (same convention as the manager).
+usage_die() { printf '%s✗%s  %s\n' "${C_RED:-}" "${C_RST:-}" "$*" >&2; exit 2; }
+
 # ---------- dashboard keyline template (spec §Dashboard template) ----------
+
 # Shared render helpers for module-owned rich views (render_dashboard); the
 # manager (bin/aibox, a single-file CLI that cannot source this file) inlines
 # the SAME shapes — keep them in sync via the spec. Plain (NO_COLOR) shapes:

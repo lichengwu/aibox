@@ -89,3 +89,10 @@ aibox check xiaozhi
 the engine strips the leading `v` and the `images:` prefixes rebuild the exact
 upstream ghcr tags (`server_0.9.7` / `web_0.9.7`). Cross-major guardrail
 refuses auto-jumps; `--to` pins. Auto-rollback on failed health check.
+
+## Diagnostics
+
+`aibox xiaozhi doctor` — declared deps, docker daemon reachability, the module's own
+reported state (`dashboard_info`) and its declared port listeners. Shared
+implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
+exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.

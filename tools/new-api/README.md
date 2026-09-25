@@ -72,3 +72,10 @@ aibox check new-api
 `^v\d+\.\d+\.\d+(-rc\.\d+)?$` from docker hub (includes the active `v1.0.0-rc`
 line — visible to `--check`, pinnable via `--to`; the cross-major guardrail
 refuses auto-jumping 0.13.x → 1.0.0-rc). Auto-rollback on failed health check.
+
+## Diagnostics
+
+`aibox new-api doctor` — declared deps, docker daemon reachability, the module's own
+reported state (`dashboard_info`) and its declared port listeners. Shared
+implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
+exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.

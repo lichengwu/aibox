@@ -158,3 +158,10 @@ manageable — extend manually if needed (see `docs/DEVELOPMENT.md`):
 
 To switch vector store: drop the `weaviate` service, set `VECTOR_STORE`, and add
 the matching service + env (model the block on dify's upstream compose).
+
+## Diagnostics
+
+`aibox dify doctor` — declared deps, docker daemon reachability, the module's own
+reported state (`dashboard_info`) and its declared port listeners. Shared
+implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
+exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.

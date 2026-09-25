@@ -133,3 +133,16 @@ Notes from the field (Alibaba Cloud Linux 4, 2026-09):
 - ghcr.io images (windmill) are NOT covered by docker.io mirrors; the windmill
   CLI probes and auto-selects a public ghcr mirror (`WM_GHCR_MIRROR`) — see
   `tools/windmill/docs/DEVELOPMENT.md`.
+
+## Standard actions
+
+`aibox base start|stop|restart|status|logs` — the shared lifecycle; `dashboard` is the
+rich view (alias of `status`), and `doctor` is the standard diagnostic (deps, docker,
+state, declared ports; see below).
+
+## Diagnostics
+
+`aibox base doctor` — declared deps, docker daemon reachability, the module's own
+reported state (`dashboard_info`) and its declared port listeners. Shared
+implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
+exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.

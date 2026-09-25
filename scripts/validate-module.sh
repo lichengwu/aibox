@@ -429,7 +429,28 @@ validate_module() {
     for need in stop restart status logs; do
       printf '%s\n' $acts | grep -qx "$need" || err "service-type module (actions has start) missing lifecycle action: $need"
     done
+    # Standard diagnostic verb (spec §CLI surface): `doctor` must exist so the
+    # same command works everywhere. Modules may implement it themselves (clash,
+    # openmaic) as long as it covers deps/state/ports; the shared module_doctor
+    # in tools/_shared/common.sh is the default.
+    printf '%s\n' $acts | grep -qx doctor || err "service-type module missing the standard 'doctor' action (see spec §CLI surface)"
+    printf '%s\n' $acts | grep -qx dashboard || err "service-type module missing the 'dashboard' action (rich view; alias of status)"
   fi
+  # Dispatch-CLI modules must alias the standard lifecycle verbs onto their own
+  # CLI's spelling (e.g. openmaic up/down): `aibox <module> start` works everywhere.
+  if printf '%s\n' $acts | grep -qx up; then
+    printf '%s\n' $acts | grep -qx start || err "dispatch-type module with 'up' must also declare 'start' (lifecycle alias)"
+  fi
+  # Usage/unknown-action deaths in hooks are exit 2 (the same convention as the
+  # manager): use usage_die, not die. NOTE: loop variable must NOT be `d` — that
+  # holds the module directory for the checks below.
+  local hf
+  for hf in "$d"/*.sh; do
+    [ -f "$hf" ] || continue
+    case "$(basename "$hf")" in lib.sh) continue ;; esac
+    grep -nE '(^|[^_[:alnum:]])die "(Usage:|unknown action:|unknown option)' "$hf" >/dev/null 2>&1 \
+      && warn "$(basename "$hf"): usage errors must exit 2 — use usage_die (not die) for 'Usage:'/'unknown action:'"
+  done
 
   # --- S17: dashboard subfields (endpoints/hint only) ---
   if grep -qE '^dashboard:' "$f"; then

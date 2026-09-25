@@ -99,7 +99,7 @@ config)
     PI_WEB_BIND) BIND="${3}" ;;
     PI_WEB_PORT) PORT="${3}" ;;
     PI_WEB_PASSWORD) PASSWORD="${3}" ;;
-    *) die "unknown key: ${2} (keys: aibox pi-web --help)" ;;
+    *) usage_die "unknown key: ${2} (keys: aibox pi-web --help)" ;;
     esac
     resolve_node
     # BIND/PORT/PASSWORD are lib.sh globals that write_service renders into the
@@ -117,7 +117,7 @@ config)
   unset)
     [ -n "${2:-}" ] || die "usage: aibox pi-web config unset <KEY>"
     def="$(cfg_env_declare "${DIR}/module.yaml" | awk -F'\t' -v k="${2}" '$1==k{print $2}')"
-    [ -n "${def}" ] || die "unknown key: ${2}"
+    [ -n "${def}" ] || usage_die "unknown key: ${2}"
     case "${def}" in
     random | auto* | generated)
       # re-generating secrets on unset: drop to a fresh random
@@ -161,7 +161,10 @@ diagnose)
   echo "== port =="
   port_listen_lines "$PORT" || echo "not listening"
   ;;
+doctor)
+  module_doctor "pi-web"
+  ;;
 *)
-  die "unknown action: ${action:-} — run: aibox pi-web --help"
+  usage_die "unknown action: ${action:-} — run: aibox pi-web --help"
   ;;
 esac

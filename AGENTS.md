@@ -216,6 +216,8 @@ scripts/validate-module.sh <name> | --all                                  # con
 
 **Flow**: scaffold → fill `module.yaml` (ports/checks/deps/services/usage/includes) → implement the hooks → `scripts/validate-module.sh <name>` until PASS → `bats tests/*.bats` → live smoke (install / start / status / logs / stop / uninstall on a docker host) → add the module row to README(.zh). **`tools/gitlab/` is the reference implementation onboarded with exactly this flow.**
 
+**CLI conventions** (validator-enforced; the instruction-system contract, spec §CLI surface / §Exit codes): every manager verb answers `--help` (identical to `aibox help <verb>`); every service module declares `doctor` (the shared `module_doctor`: deps + docker daemon + `dashboard_info` state + port listeners); dispatch-CLI modules alias `start`/`stop`/`restart` onto their CLI's own verbs; usage errors in hooks go through `usage_die` (exit `2`), never `die`; exit codes are stable for automation — `1` runtime, `2` usage/declined, `3` dependency missing, `4` precheck failed, `10` upgrade rolled back, `20` manual intervention (hooks add `30` not ready, `40` lock conflict, `50` cancelled).
+
 **Help system**: every module carries a `usage:` map in module.yaml (one line per declared action, args hint first: `"<node-name> — switch the active node"`); `aibox <module> --help` renders the action table, `aibox <module> <action> --help` renders the single action — both local-first. The validator WARNs on actions without usage entries; the scaffolder emits a TODO skeleton. Unknown actions die with `run: aibox <module> --help` (never a hand-maintained action list).
 
 **Iron rules** (validator + CI enforce; details in the spec):
