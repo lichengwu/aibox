@@ -38,10 +38,13 @@ dependencies, no package manager, works on the bash 3.2 that ships with macOS.
 - **Mirror acceleration built in** — GitHub / docker.io / npm mirrors are pre-ranked by
   real downloads on your machine, not guessed. Verification-gated: a mirror serving a
   corrupt body is discarded and the next source is tried.
-- **Staged upgrades** — `aibox upgrade <module>` bumps the deployed upstream version
-  without an aibox release: pin the target, per-hop health gates, auto-rollback.
-  GitLab's official required-upgrade-stops rule is automated (multi-hop path computed,
-  each hop on the latest patch, readiness-gated between hops).
+- **Staged upgrades with a rollback point** — `aibox upgrade <module>` bumps the deployed
+  upstream version without an aibox release: pin the target, per-hop health gates, a VERIFIED
+  auto-rollback (exit 10 = failed but rolled back, 20 = needs a human), a recorded rollback
+  point (`--rollback` goes back, `--history` lists transitions) and a pre-upgrade data snapshot
+  for shared-PG consumers (`--no-backup` skips). GitLab's official required-upgrade-stops rule
+  is automated (multi-hop path computed, each hop on the latest patch, readiness-gated between
+  hops).
 - **Local-first dashboards** — `aibox dashboard` renders state (✓ ok / ⚠ starting /
   ○ stopped), endpoints, credentials, port listeners from local metadata; async probes
   never block the view. Every block leads with the deployed **app version** (npm
@@ -129,8 +132,11 @@ aibox uninstall <module>|self     asks first, then asks about DATA (--purge answ
                                   yes upfront; --yes skips prompts for scripts)
 aibox update <module>|self|--all  refresh module SCRIPTS (the repo-pinned floor)
 aibox upgrade <module> [flags]    bump the deployed UPSTREAM version (dockerhub /
-                                  github-release resolver, health gate, auto-rollback,
-                                  staged multi-hop for gitlab). update ≠ upgrade:
+                                  github-release resolver, health gate, verified
+                                  auto-rollback, staged multi-hop for gitlab).
+                                  --check plan · --rollback to the recorded pin ·
+                                  --history transitions · --no-backup skips the
+                                  shared-PG snapshot. update ≠ upgrade:
                                   scripts vs upstream app version
 aibox check <module>|self         preflight dry-run; self = environment check
 aibox dashboard [--available]     overview (installed modules) / catalog

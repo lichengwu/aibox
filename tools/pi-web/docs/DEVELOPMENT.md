@@ -62,12 +62,14 @@ children.
 ## Testing
 
 - Service status: `aibox pi-web status`
-- Health check: `curl -u pi:<password> http://127.0.0.1:30141/`
+- Health check: `curl -u pi:<password> http://127.0.0.1:<port>/` — the port is profile-derived:
+  read it from `aibox dashboard pi-web` (default profile: 30141)
 - Diagnostics: `aibox pi-web diagnose`
 
 ## Module Configuration
 
-- Port: 30141/tcp:http (overridable via `PI_WEB_PORT`)
+- Port: 30141/tcp:http for the DEFAULT profile (overridable via `PI_WEB_PORT`); named
+  profiles derive it (`37100 + hash % 100`) — the live value is in `aibox dashboard pi-web`
 - Password: randomly generated (`resolve_password`, persisted to plist, read back idempotently on reinstall/update); overridden by `PI_WEB_PASSWORD`
 - Deployment target: mac launchd plist (`~/Library/LaunchAgents`) / linux systemd --user (`~/.config/systemd/user/pi-web.service`)
 - Autostart: mac launchd `KeepAlive` / linux systemd `Restart=always` (no root required)

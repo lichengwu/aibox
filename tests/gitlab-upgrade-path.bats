@@ -100,11 +100,13 @@ STUB
   mark_installed() { :; }
 
   run _upgrade_multi_hop gitlab 19.2.6-ce.0 "$envf" "$svc" \
-    "GITLAB_IMAGE=gitlab/gitlab-ce:" '^[0-9]+\.[0-9]+\.[0-9]+-ce\.0$' gitlab/gitlab-ce dockerhub-tags 19.5 19.8.3-ce.0
-  [ "$status" -eq 20 ]
+    "GITLAB_IMAGE=gitlab/gitlab-ce:" '^[0-9]+\.[0-9]+\.[0-9]+-ce\.0$' gitlab/gitlab-ce dockerhub-tags 0 19.5 19.8.3-ce.0
+  # 10 = "upgrade failed, rolled back" (spec §Exit codes): the mid-path rollback to
+  # hop 1 is a healthy, resumable state — 20 is reserved for a failing rollback
+  [ "$status" -eq 10 ]
   [[ "$output" == *"hop 1/2: 19.5.9-ce.0"* ]]
   [[ "$output" == *"hop 2/2: 19.8.3-ce.0"* ]]
-  [[ "$output" == *"rolling back to 19.5"* ]]
+  [[ "$output" == *"rolled back to 19.5.9-ce.0"* ]]
   # rollback restored hop-1's image (not the original, not the failed hop-2)
   [ "$(grep -m1 '^GITLAB_IMAGE=' "$envf" | cut -d= -f2-)" = "gitlab/gitlab-ce:19.5.9-ce.0" ]
   # hop-1 backup holds the ORIGINAL image (the pre-upgrade state)
@@ -125,7 +127,7 @@ STUB
   mark_installed() { :; }
 
   run _upgrade_multi_hop gitlab 19.2.6-ce.0 "$envf" "$svc" \
-    "GITLAB_IMAGE=gitlab/gitlab-ce:" '^[0-9]+\.[0-9]+\.[0-9]+-ce\.0$' gitlab/gitlab-ce dockerhub-tags 19.5 19.8.3-ce.0
+    "GITLAB_IMAGE=gitlab/gitlab-ce:" '^[0-9]+\.[0-9]+\.[0-9]+-ce\.0$' gitlab/gitlab-ce dockerhub-tags 0 19.5 19.8.3-ce.0
   [ "$status" -eq 0 ]
   [[ "$output" == *"upgraded to 19.8.3-ce.0 through 1 required stop(s)"* ]]
   [ "$(grep -m1 '^GITLAB_IMAGE=' "$envf" | cut -d= -f2-)" = "gitlab/gitlab-ce:19.8.3-ce.0" ]

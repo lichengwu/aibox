@@ -33,9 +33,10 @@
   复活重新参选，`dockerpool.cache` 跨运行共享。
 - **内置镜像加速** —— GitHub / docker.io / npm 镜像按你机器上的真实下载排序，
   不是拍脑袋。校验门控：镜像返回坏包体会被丢弃并换下一个源。
-- **阶梯升级** —— `aibox upgrade <module>` 无需 aibox 发版即可升级部署的上游版本：
-  健康门 + 自动回滚。GitLab 官方的必经停靠点规则已自动化（多跳路径计算、
-  每跳最新 patch、跳间就绪门）。
+- **带回滚点的阶梯升级** —— `aibox upgrade <module>` 无需 aibox 发版即可升级部署的上游版本：
+  健康门 + **验证过的自动回滚**（退出码 10 = 已回滚，20 = 需人工干预）、记录回滚点
+  （`--rollback` 回退、`--history` 看历史）、共享 PG 消费者升级前自动快照（`--no-backup` 跳过）。
+  GitLab 官方的必经停靠点规则已自动化（多跳路径计算、每跳最新 patch、跳间就绪门）。
 - **本地优先的仪表板** —— `aibox dashboard` 从本地元数据渲染状态（✓ ok /
   ⚠ starting / ○ stopped）、端点、凭据、端口监听；异步探测永不阻塞视图。
   每个模块块头部是部署的**应用版本**（npm 包 / 镜像 tag / 内核 tag；aibox
@@ -119,7 +120,9 @@ aibox uninstall <module>|self     先确认卸载、再确认是否删数据（-
                                   "删"；--yes 为脚本场景跳过确认）
 aibox update <module>|self|--all  刷新模块脚本（仓库钉住的版本底线）
 aibox upgrade <module> [flags]    升级部署的上游版本（dockerhub/github-release
-                                  解析、健康门、自动回滚、gitlab 阶梯多跳）。
+                                  解析、健康门、验证过的自动回滚、gitlab 阶梯多跳）。
+                                  --check 计划 · --rollback 回记录的回滚点 ·
+                                  --history 历史 · --no-backup 跳过共享 PG 快照。
                                   update ≠ upgrade：脚本版本 vs 上游应用版本
 aibox check <module>|self         预检演练；self = 环境检查
 aibox dashboard [--available]     总览（已安装模块）/ 目录

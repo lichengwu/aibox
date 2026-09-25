@@ -7,6 +7,73 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.17.0] — 2026-09-25
+
+A consistency + upgrade-safety pass: docs/config drift on one side, and the
+upgrade/rollback story turned into a framework with a recorded rollback point.
+Semver: minor — new verbs, new dashboard rows and a normative doc rule; one stale
+port declaration removed.
+
+### Added
+
+- **A recorded rollback point + `aibox upgrade <module> --rollback` / `--history`** — the
+  engine writes `$AIBOX_HOME/upgrades/<module>.state` (+ `.log`) at every phase (`from`,
+  `to`, `ts`, `envbak`, `databak`, `status`, `live`), so a manual rollback knows exactly
+  what it is returning to. `--rollback` swaps the point (undo-the-undo), and both verbs
+  work **offline** (state file + deploy `.env` only).
+- **Pre-upgrade data snapshot for shared-PG consumers** — a module whose `services:`
+  declares `base:postgres#<db>` gets that database dumped to
+  `$AIBOX_HOME/upgrades/<module>-db-<ts>.sql.gz` before the version moves (container and
+  user come from `base.env`); `--no-backup` skips it; the restore recipe is printed,
+  never auto-run. Modules with no shared DB now say “rollback restores the version pin
+  only” instead of implying safety.
+- **Post-upgrade verification** — after a successful upgrade the version the RUNNING app
+  reports (`dashboard_info`) is recorded, and a tag/app-version mismatch warns.
+- **Dashboard detail rows** — `config` (declared knob count + `aibox <m> config list`),
+  `upgrade` (last transition `from → to · status · timestamp · live`) and `rollback` (the
+  recorded pin + the exact command). `aibox dashboard base` additionally prints
+  `containers` and `env` — exactly the profile-derived values docs now point at instead
+  of hardcoding.
+- **Normative doc rule (spec §Doc hygiene + AGENTS.md rule 10)** — never hardcode derived
+  values (profile ports, container names, env paths, credentials): label the
+  default-profile default and point at `aibox dashboard <module>` / `aibox <module>
+  config list`. The validator WARNs when a profile-deriving module documents numeric
+  ports with no dashboard pointer, and `tests/docs-config-drift.bats` locks the whole
+  class (env-key ↔ code references, port declarations ↔ published ports, exit codes).
+
+### Changed
+
+- **Verified auto-rollback + the documented exit codes** — a failed health check restores
+  the `.env` pin, recreates, and then CHECKS the result: healthy → exit `10` (“upgrade
+  failed, rolled back”), still broken → exit `20` (“manual intervention needed”) with the
+  pin path and the retry command. The engine previously claimed “rolled back” without
+  verifying, and always returned `20`.
+- **The installed marker keeps the MODULE version** — the engine no longer overwrites it
+  with the app version (that made the next `aibox update` report a bogus version
+  transition); the app version now lives in the upgrade state, where the dashboard reads it.
+- **Multi-hop rollback is precise** — it restores the previous hop's *resolved* version
+  (read from that hop's `.env` backup) and records a path-level rollback point
+  (`.prepath.<ts>.<pid>`) for returning to where the path started.
+- **Dangerous backup-name collision removed** — `.env` backups are `<ts>.<pid>` suffixed:
+  two runs inside the same second used to share a path, and a rollback in that window
+  clobbered its own rollback point (caught by the new suite).
+- base `1.4.3` → `1.4.4` (dashboard rows), openmaic `1.3.2` → `1.3.3` (port declaration).
+
+### Fixed
+
+- **openmaic declared `5432/tcp:postgres` while the upstream compose publishes only `3000`**
+  (its PostgreSQL is compose-internal, with no host mapping) — a declared port is rendered
+  by the dashboard with a listen mark and reserved by the port-conflict gate, so the stale
+  entry misled both. Removed; `docs/DEVELOPMENT.md` explains where the connection really lives.
+- **Docs no longer present profile-derived ports as universal** — base/pi-web READMEs and
+  pi-web's DEVELOPMENT label the default-profile values and point at the dashboard (base also
+  documents the profile-suffixed deploy root/env file).
+- **`--history` / `--rollback` no longer require the registry** — they died with
+  “Unknown module” on an offline host even though everything they need is local; unknown
+  modules still report “Unknown module” on the resolution paths.
+- **`.env` renderer executed backticks in its own comments** (windmill module, from 0.16's
+  unquoted heredoc) — locked by a test there; noted here because it shipped in 0.16.0.
+
 ## [0.16.0] — 2026-09-25
 
 The windmill module becomes configurable where it previously required hand-editing
@@ -1003,6 +1070,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.17.0]: https://github.com/lichengwu/aibox/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/lichengwu/aibox/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/lichengwu/aibox/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/lichengwu/aibox/compare/v0.14.0...v0.15.0

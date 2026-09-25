@@ -20,7 +20,8 @@
 
 ## Module Configuration
 
-- Ports: 3000/tcp:app (OpenMAIC http) + 5432/tcp:pg
+- Port: 3000/tcp:app (OpenMAIC http) — the postgres service has NO host port
+  (internal to the compose network; shared mode uses the base PG), so it is not declared
 - Credentials: `.env.local` (API Key, access password)
 - Deployment target: app root `$AIBOX_HOME/apps/openmaic`; config `/etc/openmaic/openmaic.conf` (delivers `OPENMAIC_PROXY_URL` via proxy)
 - Autostart: none resident (svc passes through to the CLI)
@@ -38,7 +39,9 @@
 openmaic's DB connection lives in `.env.local` (`DATABASE_URL=postgres://openmaic:...`). Connecting to the shared base PG
 is **CLI-driven** (enabled by `OPENMAIC_SHARED_PG=1`); no manual edits to the upstream compose are needed anymore:
 
-1. Start the shared base: `aibox base start` (PG 35432, container name `aibox-base-postgres`)
+1. Start the shared base: `aibox base start` — the live PG port + container name come from
+   **`aibox dashboard base`** (default profile: 35432 / `aibox-base-postgres`; named profiles
+   derive both)
 2. Enable shared mode: write `OPENMAIC_SHARED_PG=1` to `/etc/openmaic/openmaic.conf`
    (or temporarily `OPENMAIC_SHARED_PG=1 openmaic install`)
 3. `openmaic install` — the CLI automatically:

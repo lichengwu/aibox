@@ -56,7 +56,7 @@ if [ -z "${AIBOX_BIN_DIR:-}" ]; then
     ;;
   esac
 fi
-AIBOX_VERSION="0.16.0"
+AIBOX_VERSION="0.17.0"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 
@@ -2757,13 +2757,36 @@ _upgrade_hop_latest_patch() { # $1=repo $2=pattern $3=stop(major.minor)
 # gate incl. readiness) → settle → mark_installed. Failure rolls back to the
 # PREVIOUS hop's version (the .env backup taken at hop start holds it) → exit 20.
 _upgrade_multi_hop() {
-  local name="$1" cur_ver="$2" envf="$3" svc="$4" images="$5" pattern="$6" repo="$7" src="$8"
-  shift 8
+  local name="$1" cur_ver="$2" envf="$3" svc="$4" images="$5" pattern="$6" repo="$7" src="$8" no_backup="$9"
+  shift 9
   local hop_list=("$@")
   local n_hops="${#hop_list[@]}" i=0 hop_spec hop_ver k first prefix tag bak ts img
   first="$(printf '%s' "${images}" | awk '{print $1}')"
   k="${first%%=*}"
   prefix="${first#*=}"
+
+  # Recorded rollback point for the WHOLE path (the original pin). Per-hop backups
+  # would be overwritten by later hops, and after a partial path the user needs to
+  # be able to go back to where they started, not just one hop.
+  local rp_ts rp_bak rp_snap="" db
+  rp_ts="$(date +%Y%m%d%H%M%S)"
+  rp_bak="${envf}.prepath.${rp_ts}.$$"
+  cp "${envf}" "${rp_bak}"
+  db="$(_upgrade_db_name "${name}")"
+  if [ "${no_backup}" = 1 ]; then
+    log "data snapshot skipped (--no-backup) — rollback restores the version pin only"
+  elif [ -n "${db}" ]; then
+    log "snapshotting the shared-base database '${db}' before the path …"
+    rp_snap="$(_upgrade_db_snapshot "${name}" "${db}")"
+    if [ -n "${rp_snap}" ]; then ok "  data snapshot: ${rp_snap}"; else warn "  snapshot failed — rollback restores the version pin only"; fi
+  fi
+  _upgrade_state_set "${name}" ts "${rp_ts}"
+  _upgrade_state_set "${name}" from "${cur_ver}"
+  _upgrade_state_set "${name}" to "${hop_list[$((n_hops - 1))]}"
+  _upgrade_state_set "${name}" envbak "${rp_bak}"
+  _upgrade_state_set "${name}" databak "${rp_snap}"
+  _upgrade_state_set "${name}" status started
+  _upgrade_log_append "${name}" "${cur_ver} → ${hop_list[$((n_hops - 1))]} path-started ($((n_hops - 1)) stops)${rp_snap:+ snapshot=${rp_snap}}"
 
   log "hop path: ${cur_ver} → ${hop_list[*]} ($((n_hops - 1)) required stop(s); omnibus boots 3-5 min each)"
   for hop_spec in "${hop_list[@]}"; do
@@ -2791,18 +2814,33 @@ _upgrade_multi_hop() {
     fi
 
     ts="$(date +%Y%m%d%H%M%S)"
-    bak="${envf}.hop${i}.${ts}"
+    bak="${envf}.hop${i}.${ts}.$$"
     cp "${envf}" "${bak}"
     upgrade_env_rewrite "${envf}" "${k}=${img}"
     log "  ${cur_ver} → ${hop_ver} (backup: ${bak})"
 
     if ! AIBOX_MODULE="${name}" bash "${svc}" start; then
-      local prev="${cur_ver}"
-      [ "${i}" -gt 1 ] && prev="${hop_list[$((i - 2))]}"
-      warn "hop ${i}/${n_hops} (${hop_ver}) failed the health gate — rolling back to ${prev}"
-      cp "${bak}" "${envf}"
-      AIBOX_MODULE="${name}" bash "${svc}" start || true
-      warn "rolled back to ${prev} (inspect: aibox ${name} logs; retry: aibox upgrade ${name})"
+      # The version we are rolling back TO: read it from the hop backup (the
+      # previous hop's resolved version, not its "major.minor" spec).
+      local prev cur_pin
+      prev="$(grep -m1 "^${k}=" "${bak}" 2>/dev/null | cut -d= -f2- || true)"
+      prev="${prev#"${prefix}"}"
+      [ -n "${prev}" ] || { prev="${cur_ver}"; [ "${i}" -gt 1 ] && prev="${hop_list[$((i - 2))]}"; }
+      cur_pin="${hop_ver}"
+      warn "hop ${i}/${n_hops} (${cur_pin}) failed the health gate"
+      if _upgrade_rollback "${name}" "${svc}" "${envf}" "${bak}" "${prev}"; then
+        _upgrade_state_set "${name}" status rolled-back
+        _upgrade_state_set "${name}" live "$(_upgrade_live_version "${name}")"
+        _upgrade_log_append "${name}" "hop ${i}/${n_hops} ${hop_ver} rolled-back to ${prev}"
+        warn "resume the path when ready: aibox upgrade ${name}   (start-over rollback: aibox upgrade ${name} --rollback)"
+        return 10
+      fi
+      _upgrade_state_set "${name}" status manual
+      _upgrade_log_append "${name}" "hop ${i}/${n_hops} ${hop_ver} rollback-failed"
+      warn "manual intervention needed — the rollback to ${prev} did not come up either"
+      log "  inspect : aibox ${name} logs"
+      log "  pin     : ${envf} (hop backup: ${bak}; path backup: ${rp_bak})"
+      [ -n "${rp_snap}" ] && [ -n "${db}" ] && _upgrade_db_restore_hint "${rp_snap}" "${db}"
       return 20
     fi
 
@@ -2812,49 +2850,235 @@ _upgrade_multi_hop() {
       log "  settling ${AIBOX_UPGRADE_HOP_SETTLE}s (background migrations)…"
       sleep "${AIBOX_UPGRADE_HOP_SETTLE}"
     fi
-    mark_installed "${name}" "${hop_ver}"
+    _upgrade_log_append "${name}" "hop ${i}/${n_hops} ${hop_ver} ok"
     ok "  hop ${i}/${n_hops} healthy at ${hop_ver}"
     cur_ver="${hop_ver}"
   done
+  _upgrade_state_set "${name}" live "$(_upgrade_live_version "${name}")"
+  _upgrade_state_set "${name}" status ok
+  _upgrade_log_append "${name}" "path complete at ${hop_ver}"
   ok "${name} upgraded to ${hop_ver} through $((n_hops - 1)) required stop(s) — data volumes preserved"
+  log "rollback point: aibox upgrade ${name} --rollback   (back to the path start)"
   log "reclaim the old images: docker image prune"
   return 0
 }
 
+# ---------- upgrade state / rollback points ----------
+# One state file + an append-only log per module under $AIBOX_HOME/upgrades/.
+# The engine's AUTOMATIC rollback only covers a failed upgrade; `--rollback`
+# (a user-level rollback POINT) needs to know the previous pin, where its .env
+# backup lives, and whether a data snapshot was taken. State is local-only:
+# the dashboard renders it with zero network.
+_upgrade_dir()        { printf '%s/upgrades' "${AIBOX_HOME}"; }
+_upgrade_state_file() { printf '%s/%s.state' "$(_upgrade_dir)" "$1"; }
+_upgrade_log_file()   { printf '%s/%s.log'   "$(_upgrade_dir)" "$1"; }
+
+_upgrade_state_set() { # $1=module $2=key $3=value (merge; single line)
+  local m="$1" k="$2" v="$3" f tmp
+  f="$(_upgrade_state_file "${m}")"
+  mkdir -p "$(_upgrade_dir)" 2>/dev/null || true
+  tmp="${f}.tmp.$$"
+  : >"${tmp}"
+  if [ -f "${f}" ]; then grep -vE "^${k}=" "${f}" >"${tmp}" 2>/dev/null || true; fi
+  printf '%s=%s\n' "${k}" "$(printf '%s' "${v}" | tr '\n' ' ')" >>"${tmp}"
+  mv "${tmp}" "${f}" 2>/dev/null || rm -f "${tmp}" 2>/dev/null || true
+  return 0
+}
+
+_upgrade_state_get() { # $1=module $2=key → value ("" when absent)
+  local f; f="$(_upgrade_state_file "$1")"
+  [ -f "${f}" ] || return 0
+  sed -n "s/^$2=//p" "${f}" | head -1
+}
+
+_upgrade_log_append() { # $1=module $2=line
+  local f; f="$(_upgrade_log_file "$1")"
+  mkdir -p "$(_upgrade_dir)" 2>/dev/null || true
+  printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$2" >>"${f}" 2>/dev/null || true
+  return 0
+}
+
+# The running app's version, via the module's own dashboard_info (local probe).
+# Recorded after an upgrade: the image tag is a promise, this is the evidence.
+_upgrade_live_version() { # $1=module
+  local m="$1" mod_dir="${AIBOX_MOD_DIR}/$1" out
+  [ -f "${mod_dir}/lib.sh" ] || return 0
+  out="$(AIBOX_MODULE="${m}" AIBOX_HOME="${AIBOX_HOME}" bash -c ". '${mod_dir}/lib.sh' 2>/dev/null && type dashboard_info >/dev/null 2>&1 && dashboard_info 2>/dev/null || true" 2>/dev/null | sed -n 's/^version=//p' | head -1)"
+  out="${out#v}"; out="${out%% *}"
+  [ -n "${out}" ] && printf '%s' "${out}"
+  return 0
+}
+
+# Shared-base DB name for a module (services: base:postgres#<db>) → "" when none.
+_upgrade_db_name() { # $1=module
+  local svcs svc
+  svcs="$(_module_meta_local "$1" services)"
+  [ -n "${svcs}" ] || svcs="$(module_field "$1" services 2>/dev/null || true)"
+  for svc in ${svcs}; do
+    case "$svc" in base:postgres#*) printf '%s' "${svc#base:postgres#}"; return 0 ;; esac
+  done
+  return 0
+}
+
+# Pre-upgrade DATA snapshot, generic for shared-base consumers: the DB lives in
+# the base container (base.env carries its name/user — single source), so the
+# engine can dump it without any module-specific code. Prints the snapshot path
+# ("" when there is nothing to snapshot or the dump failed).
+_upgrade_db_snapshot() { # $1=module $2=db
+  local m="$1" db="$2" envf c u ts out
+  envf="${AIBOX_HOME}/base.env"
+  [ -f "${envf}" ] || return 0
+  c="$(grep -E '^AIBOX_POSTGRES_HOST=' "${envf}" 2>/dev/null | cut -d= -f2- | head -1)"
+  u="$(grep -E '^AIBOX_POSTGRES_USER=' "${envf}" 2>/dev/null | cut -d= -f2- | head -1)"
+  [ -n "${c}" ] || return 0
+  [ -n "${u}" ] || u="aibox"
+  command -v docker >/dev/null 2>&1 || return 0
+  mkdir -p "$(_upgrade_dir)" 2>/dev/null || true
+  ts="$(date +%Y%m%d%H%M%S)"
+  out="$(_upgrade_dir)/${m}-db-${ts}.sql.gz"
+  if docker exec "${c}" pg_dump -U "${u}" -d "${db}" 2>/dev/null | gzip -c >"${out}" 2>/dev/null && [ -s "${out}" ]; then
+    printf '%s' "${out}"
+    return 0
+  fi
+  rm -f "${out}" 2>/dev/null || true
+  return 0
+}
+
+# Manual data-restore recipe (printed, never auto-run: restoring data over a live
+# instance is a deliberate act).
+_upgrade_db_restore_hint() { # $1=snapshot $2=db
+  local snap="$1" db="$2" envf c u
+  envf="${AIBOX_HOME}/base.env"
+  c="$(grep -E '^AIBOX_POSTGRES_HOST=' "${envf}" 2>/dev/null | cut -d= -f2- | head -1)"; [ -n "${c}" ] || c="<base-pg-container>"
+  u="$(grep -E '^AIBOX_POSTGRES_USER=' "${envf}" 2>/dev/null | cut -d= -f2- | head -1)"; [ -n "${u}" ] || u="aibox"
+  log "  data    : gunzip -c ${snap} | docker exec -i ${c} psql -U ${u} -d ${db}"
+}
+
+# Verified rollback: restore the recorded .env pin and re-run the module's start,
+# then CHECK the result. The old flow restored + started but never verified — it
+# claimed "rolled back" and returned 20 even when the module was still broken,
+# while docs/module-spec.md §Exit codes promises 10 (failed, rolled back) and
+# 20 (not ready after rollback).
+_upgrade_rollback() { # $1=module $2=svc $3=envfile $4=envbak $5=prev_ver
+  local name="$1" svc="$2" envf="$3" bak="$4" prev="$5"
+  [ -f "${bak}" ] || { warn "no .env backup to roll back to (${bak})"; return 1; }
+  cp "${bak}" "${envf}" || { warn "cannot restore ${envf} from ${bak}"; return 1; }
+  log "restored ${envf} from ${bak} (pin back to ${prev})"
+  if AIBOX_MODULE="${name}" bash "${svc}" start; then
+    ok "rolled back to ${prev} — the previous version is healthy"
+    return 0
+  fi
+  warn "the rollback to ${prev} did NOT come up healthy"
+  return 1
+}
+
 cmd_upgrade() {
-  local name="" target="" check_only=0 pinned=0
+  local name="" target="" check_only=0 pinned=0 mode="" no_backup=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --check)      check_only=1; shift ;;
+      --rollback)   mode="rollback"; shift ;;
+      --history)    mode="history"; shift ;;
+      --no-backup)  no_backup=1; shift ;;
       --to)         target="${2:-}"; [ -n "${target}" ] || die "--to needs a version (e.g. --to 1.17.2)"; pinned=1; shift 2 ;;
       --yes | -y)   ASSUME_YES=1; shift ;;
-      -*)           die "unknown option for upgrade: $1 (usage: aibox upgrade <module> [--check] [--to <version>] [--yes])" ;;
+      -*)           die "unknown option for upgrade: $1 (usage: aibox upgrade <module> [--check|--rollback|--history] [--to <version>] [--no-backup] [--yes])" ;;
       *)            [ -z "${name}" ] && name="$1"; shift ;;
     esac
   done
-  [ -n "${name}" ] || die "Usage: aibox upgrade <module> [--check] [--to <version>] [--yes] — upstream component upgrade, independent of aibox releases (vs: aibox update = re-fetch module scripts)"
-  load_registry
-  module_exists "${name}" || die_unknown_module "${name}"
-  is_installed "${name}" || die "${name} not installed (first: aibox install ${name})"
-
+  [ -n "${name}" ] || die "Usage: aibox upgrade <module> [--check|--rollback|--history] [--to <version>] [--no-backup] [--yes] — upstream component upgrade, independent of aibox releases (vs: aibox update = re-fetch module scripts)"
+  # --history / --rollback are LOCAL-ONLY (state file + deploy .env) and must work
+  # offline, like the rest of the local-first surface; every other path resolves a
+  # TARGET version and therefore needs the registry (and its stanza).
   local src repo images mapping pattern
-  src="$(module_field "${name}" upgrade_source)"
-  repo="$(module_field "${name}" upgrade_repo)"
-  images="$(module_field "${name}" upgrade_images)"
-  mapping="$(module_field "${name}" upgrade_mapping_url)"
-  pattern="$(module_field "${name}" upgrade_tag_pattern)"
-  [ -n "${src}" ] || die "${name} does not declare upgrade support (module.yaml 'upgrade:' stanza — see docs/module-spec.md §Component upgrades)"
-  [ -n "${repo}" ] || die "${name} upgrade stanza missing repo"
-  [ -n "${images}" ] || die "${name} upgrade stanza missing the images list"
+  if [ "${mode}" = "history" ] || [ "${mode}" = "rollback" ]; then
+    is_installed "${name}" || die "${name} not installed (first: aibox install ${name})"
+  else
+    load_registry
+    module_exists "${name}" || die_unknown_module "${name}"
+    is_installed "${name}" || die "${name} not installed (first: aibox install ${name})"
+    src="$(module_field "${name}" upgrade_source)"
+    repo="$(module_field "${name}" upgrade_repo)"
+    images="$(module_field "${name}" upgrade_images)"
+    mapping="$(module_field "${name}" upgrade_mapping_url)"
+    pattern="$(module_field "${name}" upgrade_tag_pattern)"
+    [ -n "${src}" ] || die "${name} does not declare upgrade support (module.yaml 'upgrade:' stanza — see docs/module-spec.md §Component upgrades)"
+    [ -n "${repo}" ] || die "${name} upgrade stanza missing repo"
+    [ -n "${images}" ] || die "${name} upgrade stanza missing the images list"
+  fi
 
-  # Locate the deploy .env via the module's own lib.sh (same pattern as dashboard_info).
-  local mod_dir="${AIBOX_MOD_DIR}/${name}" envf root
+  # Locate the module cache + the deploy .env via the module's own lib.sh
+  # (the same pattern dashboard_info uses) — shared by every mode.
+  local mod_dir="${AIBOX_MOD_DIR}/${name}" envf root svc
   [ -f "${mod_dir}/lib.sh" ] || die "Missing ${mod_dir}/lib.sh (try: aibox update ${name})"
   root="$(AIBOX_MODULE="${name}" AIBOX_HOME="${AIBOX_HOME}" bash -c ". '${mod_dir}/lib.sh' 2>/dev/null; deploy_root 2>/dev/null" 2>/dev/null || true)"
   [ -n "${root}" ] || die "cannot locate ${name} deploy root (lib.sh deploy_root)"
   envf="${root}/.env"
   [ -f "${envf}" ] || die "${name} deploy .env not found (${envf}; reinstall: aibox install ${name})"
-  local svc="${mod_dir}/svc.sh"
+  svc="${mod_dir}/svc.sh"
+
+  # --history: the recorded transitions (local state, zero network)
+  if [ "${mode}" = "history" ]; then
+    local lf st st_from st_to st_ts st_live
+    lf="$(_upgrade_log_file "${name}")"
+    st="$(_upgrade_state_get "${name}" status)"
+    st_from="$(_upgrade_state_get "${name}" from)"; st_to="$(_upgrade_state_get "${name}" to)"
+    st_ts="$(_upgrade_state_get "${name}" ts)";   st_live="$(_upgrade_state_get "${name}" live)"
+    if [ -z "${st}" ] && [ ! -f "${lf}" ]; then
+      log "no upgrade recorded for ${name} yet (nothing to show)"
+      return 0
+    fi
+    log "${name} — last recorded upgrade:"
+    [ -n "${st}" ] && log "  state   : ${st}$( [ -n "${st_ts}" ] && printf ' (%s)' "${st_ts}" )"
+    [ -n "${st_from}" ] && log "  pin     : ${st_from} → ${st_to:-?}$( [ -n "${st_live}" ] && printf '   live: %s' "${st_live}" )"
+    [ -n "${st_from}" ] && log "  rollback: aibox upgrade ${name} --rollback   (back to ${st_from})"
+    if [ -f "${lf}" ]; then
+      log "  history :"
+      tail -n "${AIBOX_UPGRADE_HISTORY_LINES:-10}" "${lf}" | sed 's/^/    /'
+    fi
+    return 0
+  fi
+
+  # --rollback: restore the recorded pre-upgrade pin (a rollback POINT). Local
+  # first: it needs no network unless the pin has to be resolved manually.
+  if [ "${mode}" = "rollback" ]; then
+    local r_from r_bak r_snap r_db r_to r_now r_newbak
+    r_from="$(_upgrade_state_get "${name}" from)"
+    r_bak="$(_upgrade_state_get "${name}" envbak)"
+    r_snap="$(_upgrade_state_get "${name}" databak)"
+    r_to="$(_upgrade_state_get "${name}" to)"
+    r_db="$(_upgrade_db_name "${name}")"
+    [ -n "${r_from}" ] || die "no rollback point recorded for ${name} — nothing to roll back to (pin explicitly: aibox upgrade ${name} --to <version>)"
+    if [ "${ASSUME_YES:-0}" != 1 ]; then
+      ask_confirm "Roll ${name} back to ${r_from}? (restores the version pin and recreates the containers)" \
+        || { warn "declined (non-interactive? add --yes)"; return 2; }
+    fi
+    [ -f "${r_bak}" ] || die "the recorded .env backup is gone (${r_bak}) — pin manually: aibox upgrade ${name} --to ${r_from}"
+    # Symmetric: the version we are leaving becomes the next rollback point, so a
+    # second --rollback undoes this one (git-revert semantics, not a dead end).
+    r_now="$(_upgrade_live_version "${name}")"
+    [ -n "${r_now}" ] || r_now="${r_to}"
+    r_newbak="${envf}.bak.$(date +%Y%m%d%H%M%S).$$"
+    cp "${envf}" "${r_newbak}" 2>/dev/null || true
+    if _upgrade_rollback "${name}" "${svc}" "${envf}" "${r_bak}" "${r_from}"; then
+      _upgrade_state_set "${name}" status rolled-back
+      _upgrade_state_set "${name}" from "${r_now:-?}"
+      _upgrade_state_set "${name}" to "${r_from}"
+      _upgrade_state_set "${name}" envbak "${r_newbak}"
+      _upgrade_state_set "${name}" databak ""
+      _upgrade_state_set "${name}" live "$(_upgrade_live_version "${name}")"
+      _upgrade_log_append "${name}" "${r_now:-?} → ${r_from} rolled-back-by-user"
+      [ -n "${r_snap}" ] && info "the upgrade's data snapshot is still available: ${r_snap}"
+      [ -n "${r_snap}" ] && [ -n "${r_db}" ] && _upgrade_db_restore_hint "${r_snap}" "${r_db}"
+      return 0
+    fi
+    _upgrade_state_set "${name}" status manual
+    _upgrade_log_append "${name}" "${r_now:-?} → ${r_from} rollback-failed"
+    warn "rollback failed — manual intervention needed"
+    log "  inspect : aibox ${name} logs"
+    log "  pin     : ${envf}"
+    return 20
+  fi
 
   # Current live version: the first declared image key's tag (fallback: compose floor).
   local first k prefix cur_img cur_ver
@@ -2886,6 +3110,10 @@ cmd_upgrade() {
 
   if [ "$(upgrade_ver_cmp "${target}" "${cur_ver}")" = "0" ]; then
     log "${name} is already at ${cur_ver}"
+    if [ "${check_only}" = 1 ]; then
+      local rb_pt; rb_pt="$(_upgrade_state_get "${name}" from)"
+      [ -n "${rb_pt}" ] && log "rollback: ${rb_pt}   application: aibox upgrade ${name} --rollback"
+    fi
     return 0
   fi
 
@@ -2915,9 +3143,23 @@ HOPSLIST
     die "latest ${target} crosses a major version (current ${cur_ver}) — major upgrades can require migrations/data steps; pin explicitly: aibox upgrade ${name} --to ${target}"
   fi
 
+  # Downgrade honesty: schema/data migrations are usually one-way, so a version
+  # rollback alone may leave the app unable to start on the old code.
+  if [ "$(upgrade_ver_cmp "${target}" "${cur_ver}")" = "-1" ]; then
+    warn "downgrade ${cur_ver} → ${target}: data migrations are usually one-way"
+    warn "  a version rollback alone may not be enough — aibox upgrade ${name} --history shows the recorded data snapshot"
+  fi
+
+  # Rollback point (recorded from a previous upgrade) — surfaced by --check so the
+  # user knows the way back BEFORE applying.
+  local rb_from rb_ts
+  rb_from="$(_upgrade_state_get "${name}" from)"
+  rb_ts="$(_upgrade_state_get "${name}" ts)"
+
   if [ "${check_only}" = 1 ]; then
     log "current : ${cur_ver}"
     log "target  : ${target}"
+    [ -n "${rb_from}" ] && log "rollback: ${rb_from}$( [ -n "${rb_ts}" ] && printf ' (recorded %s)' "${rb_ts}" )   application: aibox upgrade ${name} --rollback"
     if [ "${n_hops}" -gt 1 ]; then
       log "path    : $((n_hops - 1)) required upgrade stop(s) — official rule: every stop between current and target, each hop on the minor's latest patch, migrations must finish before the next hop"
       i=0
@@ -2954,7 +3196,7 @@ HOPSLIST
 
   # ---- multi-hop execution: gitlab-style required upgrade stops ----
   if [ "${n_hops}" -gt 1 ]; then
-    _upgrade_multi_hop "${name}" "${cur_ver}" "${envf}" "${svc}" "${images}" "${pattern}" "${repo}" "${src}" "${hop_list[@]}"
+    _upgrade_multi_hop "${name}" "${cur_ver}" "${envf}" "${svc}" "${images}" "${pattern}" "${repo}" "${src}" "${no_backup}" "${hop_list[@]}"
     return $?
   fi
 
@@ -2994,24 +3236,75 @@ HOPSLIST
     fi
   done
 
-  # Back up, rewrite ONLY the declared image keys, recreate + health-wait via svc start.
-  local ts bak
+  # Back up the pin, snapshot the data (when the module's DB is knowable), then
+  # rewrite ONLY the declared image keys and recreate + health-wait via svc start.
+  # Every phase is recorded, so a failed upgrade still leaves a usable rollback
+  # point and the dashboard can show the state.
+  local ts bak db snap=""
   ts="$(date +%Y%m%d%H%M%S)"
-  bak="${envf}.bak.${ts}"
+  # $$ keeps the name unique: two runs inside the same second would otherwise
+  # share a path — and a rollback in that window would clobber its own rollback
+  # point (caught by tests/upgrade-rollback.bats).
+  bak="${envf}.bak.${ts}.$$"
   cp "${envf}" "${bak}"
   log "backed up ${envf} → ${bak}"
+  db="$(_upgrade_db_name "${name}")"
+  if [ "${no_backup}" = 1 ]; then
+    log "data snapshot skipped (--no-backup) — rollback restores the version pin only"
+  elif [ -n "${db}" ]; then
+    log "snapshotting the shared-base database '${db}' before the upgrade …"
+    snap="$(_upgrade_db_snapshot "${name}" "${db}")"
+    if [ -n "${snap}" ]; then ok "  data snapshot: ${snap}"
+    else warn "  snapshot failed — rollback restores the version pin only"; fi
+  else
+    log "no shared-base database declared for ${name} — rollback restores the version pin only"
+    log "  (schema migrations may be one-way; see docs/module-spec.md §Component upgrades)"
+  fi
+  _upgrade_state_set "${name}" ts "${ts}"
+  _upgrade_state_set "${name}" from "${cur_ver}"
+  _upgrade_state_set "${name}" to "${target}"
+  _upgrade_state_set "${name}" envbak "${bak}"
+  _upgrade_state_set "${name}" databak "${snap}"
+  _upgrade_state_set "${name}" status started
+  _upgrade_log_append "${name}" "${cur_ver} → ${target} started${snap:+ snapshot=${snap}}"
   upgrade_env_rewrite "${envf}" "${newvals[@]}"
   log "rewrote image tags in ${envf} (${cur_ver} → ${target})"
 
   if ! AIBOX_MODULE="${name}" bash "${svc}" start; then
-    warn "upgrade failed the health check — rolling back to ${cur_ver}"
-    cp "${bak}" "${envf}"
-    AIBOX_MODULE="${name}" bash "${svc}" start || true
-    warn "rolled back to ${cur_ver} (inspect: aibox ${name} logs; retry once fixed: aibox upgrade ${name} --to ${target})"
+    warn "upgrade failed the health check (${cur_ver} → ${target})"
+    if _upgrade_rollback "${name}" "${svc}" "${envf}" "${bak}" "${cur_ver}"; then
+      _upgrade_state_set "${name}" status rolled-back
+      _upgrade_state_set "${name}" live "$(_upgrade_live_version "${name}")"
+      _upgrade_log_append "${name}" "${cur_ver} → ${target} rolled-back"
+      warn "inspect: aibox ${name} logs; retry once fixed: aibox upgrade ${name} --to ${target}"
+      return 10
+    fi
+    _upgrade_state_set "${name}" status manual
+    _upgrade_log_append "${name}" "${cur_ver} → ${target} rollback-failed"
+    warn "manual intervention needed — the rollback did not come up either"
+    log "  inspect : aibox ${name} logs"
+    log "  pin     : ${envf} (backup: ${bak})"
+    log "  retry   : aibox upgrade ${name} --to ${cur_ver}    (re-apply the previous pin)"
+    [ -n "${snap}" ] && [ -n "${db}" ] && _upgrade_db_restore_hint "${snap}" "${db}"
     return 20
   fi
-  mark_installed "${name}" "${target}"
+  # NOTE: the module's installed-marker version is NOT overwritten with the app
+  # version: the marker means "module version" (what `aibox update` compares),
+  # and the app version now lives in the upgrade state where the dashboard reads
+  # it. Overwriting it made `aibox update` report a bogus version transition on
+  # the next run (app 1.19.0 vs module 1.4.3).
+  # Post-upgrade verification: what does the RUNNING app report? (recorded; a
+  # mismatch warns but never fails — the module's own health gate already passed)
+  local live
+  live="$(_upgrade_live_version "${name}")"
+  _upgrade_state_set "${name}" live "${live}"
+  _upgrade_state_set "${name}" status ok
+  _upgrade_log_append "${name}" "${cur_ver} → ${target} ok${snap:+ snapshot=${snap}}"
   ok "${name} upgraded ${cur_ver} → ${target} (data volumes preserved; backup: ${bak})"
+  if [ -n "${live}" ] && [ "${live#v}" != "${target}" ]; then
+    warn "the running app reports ${live} (pin: ${target}) — the image tag and the app version can differ per module"
+  fi
+  log "rollback point: aibox upgrade ${name} --rollback   (back to ${cur_ver})"
   log "reclaim the old images: docker image prune"
 }
 
@@ -3504,6 +3797,26 @@ cmd_dashboard_detail() {
     done
     printf '  %s%-10s%s %s\n' "$C_DIM" "ports" "$C_RST" "$plist"
   fi
+  # config keys: the settable knobs live in module.yaml env: — surfacing the count
+  # answers "what can I tune here?" in the very view the docs point at
+  local nkeys
+  nkeys="$(_module_env_local "$name" 2>/dev/null | grep -c . || true)"
+  if [ "${nkeys:-0}" -gt 0 ] 2>/dev/null; then
+    printf '  %s%-10s%s %s\n' "$C_DIM" "config" "$C_RST" "${nkeys} key(s) · aibox ${name} config list"
+  fi
+  # upgrade state (local file, zero network): last transition + the rollback point
+  local ust ufrom uto uts ulive
+  ust="$(_upgrade_state_get "$name" status)"
+  ufrom="$(_upgrade_state_get "$name" from)"
+  uto="$(_upgrade_state_get "$name" to)"
+  uts="$(_upgrade_state_get "$name" ts)"
+  ulive="$(_upgrade_state_get "$name" live)"
+  if [ -n "${ust}" ]; then
+    printf '  %s%-10s%s %s\n' "$C_DIM" "upgrade" "$C_RST" "${ufrom:-?} → ${uto:-?} ${C_DIM}·${C_RST} ${ust}$( [ -n "${uts}" ] && printf ' %s(%s)%s' "$C_DIM" "${uts}" "$C_RST" )$( [ -n "${ulive}" ] && printf ' %s· live %s%s' "$C_DIM" "${ulive}" "$C_RST" )"
+  elif grep -q '^upgrade:' "$AIBOX_MOD_DIR/$name/module.yaml" 2>/dev/null || [ -n "$(module_field "$name" upgrade_source 2>/dev/null || true)" ]; then
+    printf '  %s%-10s%s %s\n' "$C_DIM" "upgrade" "$C_RST" "${C_DIM}no upgrade recorded · aibox upgrade ${name} --check${C_RST}"
+  fi
+  [ -n "${ufrom}" ] && printf '  %s%-10s%s %s\n' "$C_DIM" "rollback" "$C_RST" "${ufrom} ${C_DIM}· aibox upgrade ${name} --rollback${C_RST}"
   printf '  %s%-10s %s · %s%s\n' "$C_DIM" "module" "${ver:-?}" "$AIBOX_MOD_DIR/$name/" "$C_RST"
 }
 

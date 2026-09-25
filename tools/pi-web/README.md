@@ -29,6 +29,10 @@ aibox pi-web diagnose
 
 ## Environment variables
 
+> **`PI_WEB_PORT`'s value below is the DEFAULT profile's port** — a named profile
+> (`aibox --profile <name>`) derives its own port and service label. Read the live values
+> from **`aibox dashboard pi-web`** (endpoint · service) instead of copying the number.
+
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PI_WEB_PASSWORD` | randomly generated | HTTP Basic Auth password (username is fixed to `pi`); randomly generated on first install and written into the plist, read back from the plist on reinstall/update (idempotent, not rotated); setting this variable overrides it |

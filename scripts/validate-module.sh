@@ -506,6 +506,15 @@ validate_module() {
     done <<ENVLIST
 $(sed -n '/^env:/,/^[a-zA-Z]/p' "$f" | sed -n 's/^  //p' | grep -vE '^(env:)?$')
 ENVLIST
+    # Doc hygiene (spec §Doc hygiene): a module that DERIVES ports from a profile
+    # (lib.sh hashes the profile name) must not document numeric ports without an
+    # 'aibox dashboard' pointer — those numbers are only the default profile's.
+    # WARN, not ERROR: prose judgment stays human; the rule catches the drift class.
+    if [ -f "$d/README.md" ] && grep -qE '_profile_load|_profile_hash' "$d/lib.sh" 2>/dev/null; then
+      if grep -qE '[0-9]{4,5}' "$d/README.md" 2>/dev/null && ! grep -q 'aibox dashboard' "$d/README.md" 2>/dev/null; then
+        warn "README documents numeric ports while the module derives them per profile — add an 'aibox dashboard <name>' pointer (spec §Doc hygiene)"
+      fi
+    fi
     # README cross-check (bidirectional, exact names): the declaration is the
     # CLI-discoverable surface; the README table is the documented one —
     # they must not drift apart (the gap the config system closed)

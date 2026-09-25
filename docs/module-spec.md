@@ -423,7 +423,7 @@ Rules:
 | `aibox install <name>` | `install.sh` |
 | `aibox uninstall <name>` | `uninstall.sh` |
 | `aibox update <name>` | `update.sh` (manager re-fetches module scripts first) |
-| `aibox upgrade <name>` | manager engine — locates the deploy .env via the module's `lib.sh deploy_root`, rewrites image keys, then invokes `svc.sh start` (see §Component upgrades) |
+| `aibox upgrade <name>` | manager engine — locates the deploy .env via the module's `lib.sh deploy_root`, snapshots the data when the DB is knowable, rewrites image keys, then invokes `svc.sh start`; `--check` / `--rollback` / `--history` / `--no-backup` (see §Component upgrades) |
 | `aibox <name> <action>` | `svc.sh <action>` |
 
 ## Component upgrades (`aibox upgrade <module>` — upstream-driven, floor vs live)
@@ -460,16 +460,37 @@ upstream release **without any aibox release**:
    pairing thus always matches what the target release itself ships.
 5. **Fail fast**: every new image is `docker pull`ed BEFORE anything is touched (daemon egress
    probed the same way preflight does; failure → exit `4`, nothing changed).
-6. **Atomic-ish apply**: `.env` → `.env.bak.<ts>` backup; ONLY the declared image keys are
+6. **Atomic-ish apply**: `.env` → `.env.bak.<ts>.<pid>` backup; ONLY the declared image keys are
    rewritten (missing keys appended, mode preserved); containers recreated via the module's own
-   `svc.sh start` (which health-waits per its normal contract).
-7. **Auto-rollback**: failed health check → restore the backup, recreate, exit `20` with the
-   retry hint.
+   `svc.sh start` (which health-waits per its normal contract). The pid suffix keeps two runs in
+   the same second from sharing a path (a rollback in that window would clobber its own point).
+7. **Recorded rollback point**: every phase is recorded in `$AIBOX_HOME/upgrades/<module>.state`
+   (+ `<module>.log`): `from`, `to`, `ts`, `envbak`, `databak`, `status`
+   (`started`/`ok`/`rolled-back`/`manual`) and `live` (the version the RUNNING app reports after
+   the upgrade, read from the module's `dashboard_info`). `--history` prints it; `--rollback`
+   restores the recorded pin and swaps the point (undo-the-undo); the dashboard's detail view
+   shows `upgrade`/`rollback` rows from the same file (local, zero network).
+8. **Data snapshot when knowable**: a module whose `services:` declares `base:postgres#<db>`
+   consumes the shared base, so the engine dumps that database (`base.env` carries the container
+   and user) to `$AIBOX_HOME/upgrades/<module>-db-<ts>.sql.gz` BEFORE moving the version;
+   `--no-backup` skips it. The restore recipe is printed, never auto-run. Modules with no shared
+   DB say so explicitly (“rollback restores the version pin only”) — schema migrations are
+   usually one-way, so `--rollback` cannot promise data safety there.
+9. **Verified auto-rollback, spec-aligned exit codes**: a failed health check restores the
+   backup, recreates, and then CHECKS the result — healthy → exit `10` (“failed, rolled back”);
+   still broken → exit `20` (“manual intervention needed”) with the pin path + retry command.
+   The pre-0.16 flow claimed “rolled back” without verifying and always returned `20`.
 
-The current live version is reported by `--check`, shown by `dashboard` (module's
-`dashboard_info` may print `version=…` from its `.env`), and recorded in the installed-state
-marker after a successful upgrade (note: a subsequent `aibox update <module>` re-marks the
-floor — the `.env` keeps the live version; cosmetic only).
+**Manual rollback**: `aibox upgrade <module> --rollback [--yes]` goes back to the recorded
+`from` version (it needs no resolution network), and `aibox upgrade <module> --history` lists
+the transitions + the live versions. The module's installed-marker version stays the MODULE
+version — the app version lives in the state file (overwriting the marker made `aibox update`
+report bogus transitions on its next run).
+
+The current live version is reported by `--check` (which also prints the recorded rollback
+point) and by `dashboard` (the module's `dashboard_info` prints `version=…` from its own probe).
+A downgrade (`--to <older>`) is allowed but warned: data migrations are usually one-way, so the
+recorded data snapshot is the honest way back.
 
 ### `upgrade:` stanza (module.yaml, flat shape — parser-compatible like `checks:`)
 
@@ -783,6 +804,21 @@ Rules:
 - New modules: the scaffolder emits the skeleton (app_version TODO +
   dashboard_info with `version=` + render_dashboard via dash_header);
   the validator WARNs on gaps (S18/S19).
+
+### Doc hygiene: dynamic values live in the dashboard (normative)
+
+Ports, container names, env-file paths and credentials are **derived** (profile suffix, hash,
+per-instance override), so a doc that hardcodes them goes stale the moment anyone uses a named
+profile — and the README is part of the module contract (validator checks it). Rule:
+
+- State the **default-profile default** if it helps orientation, and label it as such.
+- Point readers at the authoritative view: **`aibox dashboard <module>`** (endpoint · provider
+  containers · env file · config-key count · upgrade/rollback state), `aibox dashboard` (overview
+  + the port table + listeners) or `aibox <module> config list` for knobs.
+- Never present a derived value as the value (the validator WARNs when a module whose ports are
+  profile-derived documents numeric ports without any `aibox dashboard` pointer).
+- The same applies to the dashboard itself: expose derived values there (base prints
+  `containers`/`env`) rather than only in prose.
 
 ### DB naming convention (shared base, spec §5.4)
 

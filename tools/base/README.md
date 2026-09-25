@@ -35,6 +35,12 @@ consuming module's compose (--env-file base.env)
 
 ## Configuration (env overrides)
 
+> **Default-profile defaults, not universal truth.** A named profile
+> (`aibox --profile <name>`) derives its own ports, container names and env file, and a
+> live instance may have been overridden — read the authoritative values from
+> **`aibox dashboard base`** (endpoint · containers · env) or `aibox profile list`
+> instead of copying the numbers below.
+
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `AIBOX_BASE_POSTGRES_PORT` | `35432` | host-side PG port (container uses 5432 internally) |
@@ -43,6 +49,9 @@ consuming module's compose (--env-file base.env)
 | `AIBOX_BASE_REDIS_PORT` | `36379` | host-side Redis port |
 
 ## Files & state
+
+> Named profiles live in `apps/base-<profile>/` with `base-<profile>.env` —
+> `aibox dashboard base` prints both (plus the derived container names).
 
 | Path | What |
 | --- | --- |

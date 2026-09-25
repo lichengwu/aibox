@@ -348,6 +348,11 @@ DASHDB
   else
     dash_row "redis" "${C_YEL:-}not running${C_RST:-}"
   fi
+  # The profile-DERIVED values that docs must not hardcode: container names,
+  # the env file consumers read (base-<profile>.env) and the deploy root.
+  # `aibox dashboard base` is the authoritative view (AGENTS.md/docs convention).
+  dash_row "containers" "${POSTGRES_CONTAINER} · ${REDIS_CONTAINER}"
+  dash_row "env" "${ENV_FILE}"
   dash_row "network" "${AIBOX_BASE_NETWORK:-aibox-base}"
   dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/base/"
 }
