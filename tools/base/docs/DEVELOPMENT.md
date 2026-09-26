@@ -45,3 +45,34 @@ scripts/validate-module.sh base        # conformance (same rules as CI)
 bats tests/base-env.bats tests/base-svc.bats
 bats tests/integration/base-profiles.bats   # needs docker: dual-profile E2E
 ```
+
+## Design decisions (2026-09 dependency review)
+
+- **One link resolver per profile.** `base_env_file` / `base_pg_container` / `base_network_name`
+  live in `tools/_shared/common.sh`; base's own `_profile_load` derives through the same
+  helpers. Before that, three consumers hardcoded `$AIBOX_HOME/base.env` while base wrote
+  `base-<profile>.env` for named profiles — a named-profile consumer either attached to the
+  DEFAULT instance (silently writing to the wrong database) or joined the wrong network.
+- **The connection file is a versioned contract.** Keys are additive; a rename bumps
+  `AIBOX_BASE_ENV_VERSION` on both sides and consumers fail with `aibox update base` guidance
+  instead of interpolating empty strings.
+- **Secrets are generated once, never rotated silently.** Resolution order: explicit
+  env/config → the value already in the contract file (so existing deployments keep
+  working) → `$AIBOX_HOME/.base-secret` (mode 600) → a fresh random value. `cmd_start` also
+  ALTERs the role so the DB and the contract can never disagree.
+- **Redis auth + one logical DB per module.** Keyspace separation by index is not security;
+  the password is published in the contract file and every consumer reads its slot from its
+  own `redis-env-file`. `dify` reserves three consecutive slots for its DB/broker/agent roles.
+- **Image pins in the deploy root's `.env`.** Compose reads `${AIBOX_BASE_PG_IMAGE:-postgres:18}`
+  so `aibox base upgrade` can float/roll back versions without editing a file that
+  `aibox update base` overwrites. `--project-directory` makes the project name independent
+  of the caller's CWD.
+- **Readiness before the contract.** `base start` waits for `pg_isready` + an authenticated
+  `PING` before writing `AIBOX_BASE_READY=1`; the multi-profile integration suite used to
+  catch a race where a consumer created its DB while PG was still initializing.
+- **State file shared with the manager.** `upgrades/base.state` uses the manager's keys
+  (`from`/`to`/`ts`/`envbak`/`databak`/`status`) so `aibox dashboard base` renders it and
+  `aibox upgrade base --rollback` restores the same pin file.
+- **Reverse-dependency awareness.** The manager lists installed dependents
+  (`_base_dependents`) and gates `base stop` / `uninstall base` / `purge base`; purge also
+  scans every profile's deploy root (`apps/<name>-<profile>`).

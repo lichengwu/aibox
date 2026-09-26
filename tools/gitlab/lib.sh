@@ -26,7 +26,9 @@ deploy_root() {
   local root
   root="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}"
   [ -n "$root" ] || die "cannot determine deploy root: HOME and AIBOX_HOME are both empty"
-  printf '%s' "$root/apps/$MODULE_NAME"
+  # profile-scoped (spec §Deploy root): two profiles must never share one deploy
+  # .env/compose. The default profile keeps the unsuffixed path (no migration).
+  printf '%s' "${root}/apps/${MODULE_NAME}$(profile_suffix)"
 }
 
 # Load the deploy .env (KEY=VALUE, written by the install hook) into the

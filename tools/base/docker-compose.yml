@@ -7,9 +7,17 @@
 # All names/ports are parameterized via ${VAR:-default}. The "base" profile (default)
 # uses the defaults below; named profiles (AIBOX_PROFILE=<name>) override via env vars
 # exported by lib.sh's _profile_load.
+#
+# IMAGE PINS: the tags come from the deploy-root .env (${AIBOX_BASE_*_IMAGE:-floor}),
+# so `aibox base upgrade --pg <tag>` can float them without touching this file
+# (which a module update overwrites).
+# PORT BIND: published on ${AIBOX_BASE_BIND:-127.0.0.1} — consumers only need the
+# compose network (service name:5432), the host publish is for the operator; the
+# old all-interfaces default exposed an admin DB (and a Redis with a default-weak
+# story) to the network.
 services:
   postgres:
-    image: postgres:18
+    image: ${AIBOX_BASE_PG_IMAGE:-postgres:18}
     container_name: ${AIBOX_BASE_PG_CONTAINER:-aibox-base-postgres}
     restart: unless-stopped
     environment:
@@ -17,7 +25,13 @@ services:
       POSTGRES_PASSWORD: ${AIBOX_BASE_POSTGRES_PASSWORD:-aibox}
       POSTGRES_DB: aibox
     ports:
-      - "${AIBOX_BASE_POSTGRES_PORT:-35432}:5432"
+      - "${AIBOX_BASE_BIND:-127.0.0.1}:${AIBOX_BASE_POSTGRES_PORT:-35432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AIBOX_BASE_POSTGRES_USER:-aibox}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     volumes:
       # Mounted at the PARENT dir on purpose: postgres:17+ images use
       # PGDATA=/var/lib/postgresql/<ver>/docker and declare VOLUME /var/lib/postgresql,
@@ -27,11 +41,22 @@ services:
       - default
 
   redis:
-    image: redis:7
+    image: ${AIBOX_BASE_REDIS_IMAGE:-redis:7}
     container_name: ${AIBOX_BASE_REDIS_CONTAINER:-aibox-base-redis}
     restart: unless-stopped
+    # Auth is ON: the password is generated once (or taken from the operator) and
+    # published in base.env as AIBOX_REDIS_PASSWORD; consumers inject it.
+    command: ["redis-server", "--requirepass", "${AIBOX_BASE_REDIS_PASSWORD}", "--save", "60", "1"]
     ports:
-      - "${AIBOX_BASE_REDIS_PORT:-36379}:6379"
+      - "${AIBOX_BASE_BIND:-127.0.0.1}:${AIBOX_BASE_REDIS_PORT:-36379}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$AIBOX_BASE_REDIS_PASSWORD\" PING | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    environment:
+      AIBOX_BASE_REDIS_PASSWORD: ${AIBOX_BASE_REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     networks:

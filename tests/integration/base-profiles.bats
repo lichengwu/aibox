@@ -138,3 +138,41 @@ teardown_file() {
   [[ "$output" == *"127.0.0.1:$PG_A"* ]]
   [[ "$output" != *aibox-base-ittb* ]]
 }
+
+@test "shared-base contract: both profiles publish the contract keys + Redis auth + slots" {
+  local p env pw
+  for p in itta ittb; do
+    env="$AIBOX_HOME/base-$p.env"
+    [ -f "$env" ] || { echo "no contract file for $p"; false; }
+    grep -q '^AIBOX_BASE_ENV_VERSION=1$' "$env" || { cat "$env"; false; }
+    grep -q "^AIBOX_BASE_PROFILE=$p$" "$env" || { cat "$env"; false; }
+    grep -q '^AIBOX_BASE_MODULE_VERSION=1\.' "$env" || false
+    grep -q '^AIBOX_BASE_READY=1$' "$env" || false
+    grep -q '^AIBOX_REDIS_PASSWORD=..*' "$env" || { echo "no redis password in $env"; false; }
+  done
+  pw="$(grep -m1 '^AIBOX_REDIS_PASSWORD=' "$AIBOX_HOME/base-itta.env" | cut -d= -f2-)"
+  # authenticated PING works …
+  run docker exec aibox-base-itta-redis redis-cli --no-auth-warning -a "$pw" PING
+  [[ "$output" == *PONG* ]] || { echo "authenticated PING failed: $output"; false; }
+  # … and an unauthenticated client is rejected (auth is really ON)
+  run docker exec aibox-base-itta-redis redis-cli PING
+  [[ "$output" == *NOAUTH* || "$status" -ne 0 ]] || { echo "unauthenticated command accepted: $output"; false; }
+
+  # per-profile Redis slots are independent + written where the consumer reads them
+  run bash "$REPO_ROOT/bin/aibox" --profile itta base create redis xiaozhi
+  [[ "$output" == *"Redis logical DB for xiaozhi: 1"* ]] || { echo "$output"; false; }
+  [ -f "$AIBOX_HOME/redis-itta-xiaozhi.env" ] || { echo "no per-profile redis env"; false; }
+  run bash "$REPO_ROOT/bin/aibox" --profile ittb base create redis dify 3
+  [[ "$output" == *"Redis logical DB for dify: 1"* ]] || { echo "$output"; false; }
+  [ -f "$AIBOX_HOME/redis-ittb-dify.env" ] || false
+  # the two profiles' registries are separate files (no cross-profile bleed)
+  [ -f "$AIBOX_HOME/apps/base-itta/redis-dbs.conf" ] || { echo "itta registry missing"; false; }
+  [ -f "$AIBOX_HOME/apps/base-ittb/redis-dbs.conf" ] || false
+}
+
+@test "host ports bind to 127.0.0.1 by default (admin DB not exposed on the LAN)" {
+  local binding
+  binding="$(docker port aibox-base-itta-postgres 2>/dev/null | head -1)"
+  [ -n "$binding" ] || { echo "no port binding reported"; false; }
+  [[ "$binding" == *"-> 127.0.0.1:"* ]] || { echo "postgres published as '${binding}' (expected 127.0.0.1)"; false; }
+}

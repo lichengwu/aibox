@@ -114,6 +114,8 @@ _staged_up() {
 case "${action}" in
 start)
   _ensure_base
+  # this module consumes shared Redis only; make sure its slot exists
+  ensure_shared_redis_db "${MODULE_NAME}" 1
   # Source pools: ghcr (server/web) + docker.io (mysql) — bounded direct
   # probes first (healthy → compose pulls direct, zero overhead); dead/slow
   # routes → mirror pre-pull + tag (see lib.sh).

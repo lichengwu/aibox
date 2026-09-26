@@ -141,7 +141,9 @@ _setup_dify_deploy() {
   printf 'AIBOX_INSTALLED_base="1.1.0"\n' > "$AIBOX_INSTALLED"
   run cmd_upgrade base
   [ "$status" -ne 0 ]
-  [[ "$output" == *"does not declare upgrade support"* ]]
+  # base implements its own upgrade verbs → the manager points at them instead of
+  # a bare "no support" (same for openmaic/windmill)
+  [[ "$output" == *"owns its upgrade path"*"aibox base upgrade --help"* ]] || { echo "$output"; false; }
 }
 
 @test "cmd_upgrade --check (mocked resolver): reports current/target/status, exit 0" {

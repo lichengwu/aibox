@@ -56,7 +56,7 @@ if [ -z "${AIBOX_BIN_DIR:-}" ]; then
     ;;
   esac
 fi
-AIBOX_VERSION="0.18.0"
+AIBOX_VERSION="0.19.0"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 
@@ -2359,14 +2359,18 @@ ensure_services() { # $1=module [$2=--action]
       rc=1
       continue
     fi
-    # --action and the base is already up → nothing to do (quiet)
+    # --action and the base is already up → nothing to do (quiet). NOTE: the
+    # fast path now also requires the CONTRACT env file (profile-aware) — a live
+    # network with a missing base.env used to leave consumers with empty values.
     if [ "${mode}" = "--action" ] && [ "${started}" = "0" ] && _base_stack_up; then
+      _base_env_check || true
       continue
     fi
     if [ "${started}" = "0" ]; then
       info "Starting shared base (${name} needs it)…"
       AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" start || { warn "base start failed (start manually: aibox base start)"; rc=1; continue; }
       started=1
+      _base_env_check || true
     fi
     [ -n "${resource}" ] || continue
     info "Creating ${component} resource '${resource}' (shared base)…"
@@ -2379,13 +2383,71 @@ ensure_services() { # $1=module [$2=--action]
 # exists AND its docker network is present (both are written by `base start`).
 # No docker → not up, so the caller's ensure runs and fails LOUDLY instead of
 # silently skipping.
+# ---------- profile-aware shared-base linking (manager twin of the shared lib) ----------
+# The single-file CLI cannot source tools/_shared/common.sh, so these mirror
+# base_profile_suffix/base_env_file/base_network_name/base_env_check there. Keep
+# them in sync — they are the reason a consumer can never look at the DEFAULT
+# profile's base.env while base runs under a named profile.
+_aibox_profile_suffix() {
+  case "${AIBOX_PROFILE:-base}" in
+  '' | base) printf '' ;;
+  *)        printf '%s' "-${AIBOX_PROFILE}" ;;
+  esac
+}
+
+_base_env_file() { printf '%s/base%s.env' "${AIBOX_HOME:-${HOME:+$HOME/.aibox}}" "$(_aibox_profile_suffix)"; }
+
+_base_network_name() {
+  local env net
+  env="$(_base_env_file)"
+  net="$(grep -E '^AIBOX_BASE_NETWORK=' "${env}" 2>/dev/null | cut -d= -f2- | head -1 || true)"
+  [ -n "${net}" ] || net="aibox-base$(_aibox_profile_suffix)"
+  printf '%s' "${net}"
+}
+
+BASE_ENV_VERSION_SUPPORTED="1"
+
+_base_env_check() { # 0 = usable; warns with a fix hint otherwise
+  local env ver
+  env="$(_base_env_file)"
+  [ -f "${env}" ] || { warn "shared base env missing: ${env} (run: aibox base start)"; return 1; }
+  ver="$(grep -E '^AIBOX_BASE_ENV_VERSION=' "${env}" 2>/dev/null | cut -d= -f2- | head -1 || true)"
+  if [ -n "${ver}" ] && [ "${ver}" != "${BASE_ENV_VERSION_SUPPORTED}" ]; then
+    warn "shared base env contract mismatch: ${env} declares v${ver}, the manager expects v${BASE_ENV_VERSION_SUPPORTED}"
+    warn "  fix: aibox update base && aibox base restart   (or update aibox itself: aibox update self)"
+    return 1
+  fi
+  return 0
+}
+
 _base_stack_up() {
-  local env="${AIBOX_HOME:-$HOME/.aibox}/base.env" net
+  local env net
+  env="$(_base_env_file)"
+  # the contract file is part of "up": a running network without base.env leaves
+  # consumers interpolating empty values (and the network falls back to the
+  # default name) — require both
   [ -f "$env" ] || return 1
   command -v docker >/dev/null 2>&1 || return 1
-  net="$(grep -E '^AIBOX_BASE_NETWORK=' "$env" 2>/dev/null | cut -d= -f2- || true)"
-  [ -n "${net}" ] || net="aibox-base"
+  net="$(_base_network_name)"
   docker network inspect "${net}" >/dev/null 2>&1
+}
+
+# Installed modules that declare a HARD base dependency (services: base:*) — the
+# reverse direction of the install-time guarantee, used to warn before
+# stopping/uninstalling/purging the provider. Local metadata only.
+_base_dependents() { # [exclude-module] → space-separated names
+  local excl="${1:-}" f m deps out=""
+  for f in "$AIBOX_MOD_DIR"/*/module.yaml; do
+    [ -f "$f" ] || continue
+    m="$(awk -F': *' '/^name:/{gsub(/"/,"",$2); print $2; exit}' "$f" 2>/dev/null)"
+    [ -n "${m}" ] || m="$(basename "$(dirname "$f")")"
+    [ "${m}" = "base" ] && continue
+    [ "${m}" = "${excl}" ] && continue
+    is_installed "${m}" || continue
+    deps="$(awk '/^services:/{d=1;next} /^[a-z_]+:/{d=0} d&&/^  - /{sub(/^  - /,""); gsub(/"/,""); printf "%s ", $0}' "$f" 2>/dev/null)"
+    case " ${deps} " in *" base:"*) out="${out}${out:+ }${m}" ;; esac
+  done
+  printf '%s' "${out}"
 }
 
 # Action-time declared-deps guard: existence only — no auto-install, no
@@ -2430,6 +2492,16 @@ cmd_uninstall() {
     return $?
   fi
   is_installed "$name" || { warn "$name not installed; residue left behind? scan it: aibox purge $name"; return; }
+
+  # Reverse-dependency gate (base is a provider): removing it breaks every
+  # consumer — name them before the confirmation so the decision is informed.
+  if [ "$name" = "base" ]; then
+    local _deps; _deps="$(_base_dependents)"
+    if [ -n "${_deps}" ]; then
+      warn "installed modules depend on the shared base: ${_deps}"
+      warn "  uninstalling base leaves them pointing at a missing provider (restore with: aibox install base && aibox base start)"
+    fi
+  fi
 
   # Interaction contract (spec §Interactive confirmation — the same two-gate
   # model for every destructive verb; the old plain uninstall ran with ZERO
@@ -3198,7 +3270,14 @@ cmd_upgrade() {
     images="$(module_field "${name}" upgrade_images)"
     mapping="$(module_field "${name}" upgrade_mapping_url)"
     pattern="$(module_field "${name}" upgrade_tag_pattern)"
-    [ -n "${src}" ] || die "${name} does not declare upgrade support (module.yaml 'upgrade:' stanza — see docs/module-spec.md §Component upgrades)"
+    if [ -z "${src}" ]; then
+      # Modules that OWN their upgrade path (base's infra image pins, the dispatch
+      # CLIs) say so, instead of a bare "no support" that reads like a bug.
+      case " $(_module_meta_local "${name}" actions) $(module_field "${name}" actions 2>/dev/null || true) " in
+      *" upgrade "*) die "${name} owns its upgrade path — use: aibox ${name} upgrade --help   (the manager engine drives modules with an 'upgrade:' stanza; this one implements its own verbs)" ;;
+      esac
+      die "${name} does not declare upgrade support (module.yaml 'upgrade:' stanza — see docs/module-spec.md §Component upgrades)"
+    fi
     [ -n "${repo}" ] || die "${name} upgrade stanza missing repo"
     [ -n "${images}" ] || die "${name} upgrade stanza missing the images list"
   fi
@@ -4226,6 +4305,24 @@ cmd_module_action() {
     esac
   fi
   is_installed "$name" || die "$name not installed (first: aibox install ${name})"
+  # Reverse-dependency gate: base is a PROVIDER — stopping it breaks every
+  # consumer (the consumer side checks the forward direction at start). Warn +
+  # confirm; --yes skips (scripts).
+  if [ "$name" = "base" ]; then
+    case " ${action} " in
+    *" stop "*)
+      local _deps; _deps="$(_base_dependents)"
+      if [ -n "${_deps}" ]; then
+        warn "installed modules depend on the shared base: ${_deps}"
+        warn "  they break until it is back — restart them afterwards: aibox <module> restart"
+        case " $* " in *" --yes "* | *" -y "*) ;; *)
+          ask_confirm "Continue with 'base ${action}' anyway?" || { warn "declined (non-interactive? add --yes)"; return 2; }
+          ;;
+        esac
+      fi
+      ;;
+    esac
+  fi
   # Bringing a module UP ensures its declared service deps first — live-caught:
   # `aibox xiaozhi start` died with "shared base not running — first: aibox base
   # start" (two commands for one intent). stop/logs/status never start anything.
@@ -4265,6 +4362,16 @@ _purge_rc_strip() { # $1=rc file: remove the marked "# aibox" + export PATH bloc
 _purge_etc_root()     { printf '%s' "${PURGE_ETC:-/etc}"; }
 # Module CLIs may exist in the resolved bin dir AND in the legacy ~/.local/bin
 # (pre-0.15 default) — scan both so an old copy is never reported as "clean".
+# Named-profile deploy roots (apps/<name>-<profile>, profile-scoped since 0.19):
+# purge must reach residue from ANY profile, not just the default one.
+_purge_apps_profile_paths() { # $1=module
+  local d
+  for d in "$AIBOX_HOME"/apps/"$1"-*; do
+    [ -e "$d" ] || continue
+    printf '%s\n' "$d"
+  done
+}
+
 _purge_bin_path() { # $1=binary name
   printf '%s\n' "$AIBOX_BIN_DIR/$1"
   [ "$AIBOX_BIN_DIR" = "$HOME/.local/bin" ] || printf '%s\n' "$HOME/.local/bin/$1"
@@ -4300,10 +4407,10 @@ residue_paths() { # $1=module → candidate paths (scan filters by existence)
               _purge_bin_path openmaic ;;
     windmill) printf '%s\n' "$AIBOX_HOME/apps/windmill" "$(_purge_etc_root)/windmill"
               _purge_bin_path windmill ;;
-    gitlab)   printf '%s\n' "$AIBOX_HOME/apps/gitlab" ;;
-    dify)     printf '%s\n' "$AIBOX_HOME/apps/dify" ;;
-    new-api)  printf '%s\n' "$AIBOX_HOME/apps/new-api" ;;
-    xiaozhi)  printf '%s\n' "$AIBOX_HOME/apps/xiaozhi" ;;
+    gitlab)   printf '%s\n' "$AIBOX_HOME/apps/gitlab" "$(_purge_apps_profile_paths gitlab)" ;;
+    dify)     printf '%s\n' "$AIBOX_HOME/apps/dify" "$(_purge_apps_profile_paths dify)" ;;
+    new-api)  printf '%s\n' "$AIBOX_HOME/apps/new-api" "$(_purge_apps_profile_paths new-api)" ;;
+    xiaozhi)  printf '%s\n' "$AIBOX_HOME/apps/xiaozhi" "$(_purge_apps_profile_paths xiaozhi)" ;;
   esac
   return 0
 }
@@ -4539,6 +4646,24 @@ cmd_purge() {
   printf 'Applying...\n'
 
   # ---- confirm ----
+  # Purge reaches into the shared base (scope 'base'/'self'/all) — name the
+  # dependents before the irreversible gate: deleting base's volumes empties the
+  # consumers' databases on their next start.
+  local _purge_hits_base=0 _scope_tok
+  if [ -z "$scope" ]; then
+    _purge_hits_base=1
+  else
+    for _scope_tok in $scope; do
+      case "${_scope_tok}" in base | self) _purge_hits_base=1 ;; esac
+    done
+  fi
+  if [ "${_purge_hits_base}" = "1" ]; then
+    local _deps; _deps="$(_base_dependents)"
+    if [ -n "${_deps}" ]; then
+      warn "this purge includes the shared base; installed modules depend on its DATA: ${_deps}"
+      warn "  keep a copy first: aibox base dump"
+    fi
+  fi
   if [ "${ASSUME_YES:-0}" != "1" ]; then
     if [ -t 0 ]; then
       ask_confirm "Delete all ${PURGE_COUNT} residue items listed above? This is IRREVERSIBLE" || { warn "Cancelled, nothing deleted"; return 2; }

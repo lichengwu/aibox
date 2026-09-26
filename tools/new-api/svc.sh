@@ -22,6 +22,9 @@ _ensure_base() {
 case "${action}" in
 start)
   _ensure_base
+  # self-heal: a hand-dropped DB used to surface as a cryptic app error
+  ensure_shared_db "${AIBOX_POSTGRES_DB:-new_api}"
+  ensure_shared_redis_db "${MODULE_NAME}" 1
   # docker.io source pool: bounded direct probe (healthy → compose pulls
   # direct, zero overhead); direct dead → ranked mirror pre-pull + tag.
   # shellcheck disable=SC2046

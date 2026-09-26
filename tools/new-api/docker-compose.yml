@@ -33,7 +33,9 @@ services:
       - SQL_DSN=postgresql://${AIBOX_POSTGRES_USER}:${AIBOX_POSTGRES_PASSWORD}@${AIBOX_POSTGRES_HOST}:${AIBOX_POSTGRES_PORT}/new_api
       # Base redis has NO password (base's redis:7 runs without requirepass) —
       # no credentials in the connection string.
-      - REDIS_CONN_STRING=redis://${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}
+      # shared Redis runs WITH auth and one logical DB per module (allocated by
+      # `aibox base create redis new-api`; the manager ensures it)
+      - REDIS_CONN_STRING=redis://:${AIBOX_REDIS_PASSWORD}@${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}/${AIBOX_REDIS_DB:-0}
       - TZ=${TZ:-Asia/Shanghai}
       # Session signing: pinned once at install (deploy .env) so restarts keep
       # sessions stable (upstream auto-generates when unset; multi-node REQUIRES

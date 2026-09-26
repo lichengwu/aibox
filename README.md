@@ -120,6 +120,16 @@ aibox install dify
 aibox dify start
 ```
 
+The shared base is versioned, backed up and floatable on its own:
+
+```bash
+aibox base dump                # whole-cluster pg_dumpall + Redis snapshot (safety net)
+aibox base upgrade --check     # current image pins + the recorded rollback point
+aibox base upgrade --pg postgres:19   # dump → pin → readiness gate → pin rollback on failure
+aibox base upgrade --rollback  # back to the recorded pins
+aibox base create redis <module>      # allocate the module's own Redis logical DB (auth is on)
+```
+
 ## CLI Grammar
 
 One grammar: **`aibox <verb> <module>`** — "self" is a module too (the manager itself).

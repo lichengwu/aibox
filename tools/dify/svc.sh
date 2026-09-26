@@ -18,6 +18,11 @@ start)
   # one intent).
   if shared_base_enabled; then
     ensure_shared_base
+    # self-heal: a hand-dropped DB (or a first start after enabling shared mode)
+    # used to surface as a cryptic app error — create the two dify databases
+    ensure_shared_db dify
+    ensure_shared_db dify_plugin
+    ensure_shared_redis_db "${MODULE_NAME}" 3
   fi
   # docker.io source pool: bounded direct probe (healthy → compose pulls direct,
   # zero overhead); direct dead → ranked mirror pre-pull + tag (see lib.sh).

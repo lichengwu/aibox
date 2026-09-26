@@ -250,7 +250,7 @@ _wait_http() { # $1 = port
   # base.env-injected vars and the external aibox-base network.
   y="$REPO_ROOT/tools/new-api/docker-compose.yml"
   grep -q 'SQL_DSN=postgresql://\${AIBOX_POSTGRES_USER}:\${AIBOX_POSTGRES_PASSWORD}@\${AIBOX_POSTGRES_HOST}:\${AIBOX_POSTGRES_PORT}/new_api' "$y"
-  grep -q 'REDIS_CONN_STRING=redis://\${AIBOX_REDIS_HOST}:\${AIBOX_REDIS_PORT}' "$y"
+  grep -q 'REDIS_CONN_STRING=redis://:\${AIBOX_REDIS_PASSWORD}@\${AIBOX_REDIS_HOST}:\${AIBOX_REDIS_PORT}/\${AIBOX_REDIS_DB:-0}' "$y" || { echo "$output"; false; }
   grep -q 'name: \${AIBOX_BASE_NETWORK:-aibox-base}' "$y"
   grep -q 'external: true' "$y"
   grep -q 'name: \${NEW_API_DATA_VOLUME:-aibox_new_api_data}' "$y"

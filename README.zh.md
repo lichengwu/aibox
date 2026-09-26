@@ -108,6 +108,16 @@ aibox install dify
 aibox dify start
 ```
 
+共享基座自身也可版本化、可备份、可升级回滚：
+
+```bash
+aibox base dump                # 全集群 pg_dumpall + Redis 快照（安全网）
+aibox base upgrade --check     # 当前镜像 pin + 已记录的回滚点
+aibox base upgrade --pg postgres:19   # 先备份 → 换 pin → 就绪门 → 失败回滚 pin
+aibox base upgrade --rollback  # 回到记录的 pin
+aibox base create redis <module>      # 为该模块分配独立 Redis 逻辑库（已开启鉴权）
+```
+
 ## CLI 语法
 
 一个语法：**`aibox <动词> <模块>`** —— "self" 也是一个模块（管理器本身）。

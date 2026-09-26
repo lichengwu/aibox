@@ -7,6 +7,72 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.19.0] — 2026-09-25
+
+The shared-base dependency review, fixed end-to-end.
+Semver: minor — new base verbs (dump/restore/upgrade), a versioned `base.env` contract,
+Redis auth + per-module logical DBs, profile-scoped deploy roots and a reverse-dependency
+gate; all with compatible defaults (existing deployments keep their paths, secrets and
+unsuffixed deploy roots).
+
+### Added
+
+- **`aibox base dump|restore`** — whole-cluster `pg_dumpall` + a Redis snapshot into
+  `$AIBOX_HOME/backups/base[-<profile>]/`; `restore` prints its warning and takes a file (or
+  the newest). This is the safety net that only existed inside the consumers' own CLIs.
+- **A real upgrade path for base** — `aibox base upgrade [--check|--pg <tag>|--redis <tag>|--rollback]`:
+  the image pins moved to the deploy root's `.env` (the compose reads
+  `${AIBOX_BASE_PG_IMAGE:-postgres:18}`), so a switch dumps first, rewrites the pin,
+  recreates through the readiness gate, rolls the pin back on failure (exit `10`, or `20`
+  when the rollback is unhealthy too) and records the transition in the same
+  `$AIBOX_HOME/upgrades/base.state` the manager uses — `aibox dashboard base` shows it and
+  `aibox upgrade base --rollback` restores the same pin file.
+- **A versioned `base.env` contract** — `AIBOX_BASE_ENV_VERSION`, `AIBOX_BASE_PROFILE`,
+  `AIBOX_BASE_MODULE_VERSION`, `AIBOX_BASE_READY` plus the connection keys; consumers call
+  `base_env_check` and get `aibox update base` guidance on a mismatch instead of
+  interpolating empty values. Keys are additive by contract; pre-0.19 files keep working.
+- **Redis auth + one logical DB per module** — the password is generated once (or
+  operator-set) and published in `base.env`; `aibox base create redis <module> [slots]`
+  allocates a slot range (registry `apps/base[-<profile>]/redis-dbs.conf`) and writes the
+  module's `redis-<profile>-<module>.env`. dify reserves three consecutive slots; new-api and
+  xiaozhi read `AIBOX_REDIS_DB`. Three modules used to share index 0 with no password at all.
+- **Reverse-dependency protection** — `base stop`, `uninstall base` and `purge base` now name
+  the installed dependents and gate on a confirmation; purge also scans every profile's
+  deploy root (`apps/<name>-<profile>`).
+
+### Changed
+
+- **Profile-aware linking, everywhere** — `base_env_file` / `base_pg_container` /
+  `base_network_name` / `ensure_shared_base` / `ensure_shared_db` / `ensure_shared_redis_db`
+  / `redis_env_file` in the shared library are the single resolver; the manager, the three
+  compose-type consumers (dify, new-api, xiaozhi) and base itself derive through them. A
+  hardcoded `$AIBOX_HOME/base.env` silently attached a named-profile module to the DEFAULT
+  instance (wrong database, wrong network) — the validator now errors on it.
+- **Deploy roots are profile-scoped** — `deploy_root()` ends with `$(profile_suffix)` for
+  dify/gitlab/new-api/xiaozhi (the default profile keeps the unsuffixed path, so nothing
+  moves). Two profiles used to overwrite each other's deploy `.env`/compose.
+- **`base start` waits for readiness** — bounded `pg_isready` + authenticated Redis `PING`
+  (`AIBOX_BASE_READY_TIMEOUT`, default 90s) before writing the contract file; the
+  multi-profile integration suite used to catch a consumer racing an initializing PG.
+- **Secrets are never rotated silently** — resolution order: explicit env/config → the value
+  already in the contract file → `$AIBOX_HOME/.base-secret` (600) → a fresh random value
+  (fresh installs only). The role password is ALTERed on start so DB and contract agree.
+- **Host ports bind to 127.0.0.1 by default** (`AIBOX_BASE_BIND`; consumers use the compose
+  network) — the old default published the admin DB (and an unauthenticated Redis) to every
+  interface; set `0.0.0.0` explicitly when a remote host must reach them.
+- **windmill no longer declares `base:redis`** (it never used Redis), and dify's optional
+  shared mode self-heals its two databases + slot range at start.
+- `aibox upgrade <module>` on a module that owns its upgrade verbs (base, openmaic, windmill)
+  now says so and points at `aibox <module> upgrade --help` instead of a bare "no support".
+
+### Fixed
+
+- Two fast-suite tests depended on the ambient registry cache (green as root, red as
+  non-root — caught by the docker harness's CI-parity pass): both now pin a `file://`
+  registry.
+- `base create redis` used to print "no resource creation needed" while every module shared
+  index 0; it now allocates and publishes the slot.
+
 ## [0.18.0] — 2026-09-25
 
 An instruction-system + documentation + test-infrastructure pass.
@@ -1131,6 +1197,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.19.0]: https://github.com/lichengwu/aibox/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/lichengwu/aibox/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/lichengwu/aibox/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/lichengwu/aibox/compare/v0.15.1...v0.16.0

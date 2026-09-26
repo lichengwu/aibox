@@ -47,6 +47,45 @@ consuming module's compose (--env-file base.env)
 | `AIBOX_BASE_POSTGRES_USER` | `aibox` | PG superuser |
 | `AIBOX_BASE_POSTGRES_PASSWORD` | `aibox` | loopback-default; override before binding to a non-loopback interface |
 | `AIBOX_BASE_REDIS_PORT` | `36379` | host-side Redis port |
+| `AIBOX_BASE_PG_IMAGE` | `postgres:18` | postgres image pin (float it with `aibox base upgrade --pg <tag>`; stored in the deploy-root `.env`) |
+| `AIBOX_BASE_REDIS_IMAGE` | `redis:7` | redis image pin (`aibox base upgrade --redis <tag>`) |
+| `AIBOX_BASE_REDIS_PASSWORD` | generated (persisted) | Redis auth password; published to consumers as `AIBOX_REDIS_PASSWORD` in `base.env` |
+| `AIBOX_BASE_BIND` | `127.0.0.1` | host interface the published ports bind to (`0.0.0.0` only when another host must reach them) |
+
+## Backup, restore and upgrades
+
+```bash
+aibox base dump [label]        # whole-cluster pg_dumpall + Redis snapshot → $AIBOX_HOME/backups/base[-<profile>]/
+aibox base restore [file]      # restore a dump (REPLACES all shared data; default: newest; asks nothing — print-then-run)
+aibox base upgrade --check     # current pins + the recorded rollback point + the PG-major warning
+aibox base upgrade --pg postgres:19   # dump first → pin → recreate → readiness gate → roll back the pin on failure
+aibox base upgrade --redis redis:8
+aibox base upgrade --rollback  # restore the recorded pins and start
+```
+
+The image pins live in the deploy root's `.env` (`apps/base[-<profile>]/.env`,
+`AIBOX_BASE_PG_IMAGE` / `AIBOX_BASE_REDIS_IMAGE`) — a module update never touches that file,
+so pins float and roll back cleanly. The transition is recorded in
+`$AIBOX_HOME/upgrades/base.state` (the same file the manager's upgrades use: see
+`aibox dashboard base`, `aibox upgrade base --rollback`). Exit codes follow the spec:
+`10` = failed but rolled back, `20` = manual intervention needed.
+PG MAJOR upgrades are one-way — the dump is taken automatically before any switch.
+
+## Contract & isolation (consumers)
+
+- `base.env` (mode 600) carries `AIBOX_BASE_ENV_VERSION` / `AIBOX_BASE_PROFILE` /
+  `AIBOX_BASE_MODULE_VERSION` / `AIBOX_BASE_READY` plus the PG + Redis connection info
+  (Redis runs **with auth**; the password is generated once and never rotated silently).
+  Consumers validate the version through `base_env_check` and are told how to fix a
+  mismatch instead of reading empty values into a compose file.
+- **Redis logical DB per module**: `aibox base create redis <module> [slots]` allocates a
+  slot (registry: `apps/base[-<profile>]/redis-dbs.conf`) and writes the module's
+  `redis-<profile>-<module>.env`. Modules no longer share index 0.
+- `AIBOX_BASE_READY=1` is written only after `pg_isready` + an authenticated Redis `PING`
+  succeed (`aibox base start` waits, bounded by `AIBOX_BASE_READY_TIMEOUT`, default 90s).
+- Host ports bind to `${AIBOX_BASE_BIND:-127.0.0.1}`: consumers use the compose network,
+  so the published port is for the operator only (set `AIBOX_BASE_BIND=0.0.0.0` when
+  another host must reach them — the default used to expose an admin DB to the LAN).
 
 ## Files & state
 

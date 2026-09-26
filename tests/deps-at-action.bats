@@ -178,7 +178,7 @@ _install_fixture() { # $1=repo — install base + app (markers reset afterwards)
   _deps_repo "$repo"
   _install_fixture "$repo"
   run bash "$AIBOX_BIN" app start
-  [[ "$output" != *"missing"* ]] || { echo "$output"; false; }
+  [[ "$output" != *"missing zz-nope"* ]] || { echo "$output"; false; }
 }
 
 # ---------- shared helper (module side) --------------------------------------
@@ -285,7 +285,7 @@ EOF
   run env PATH="$shim:$PATH" AIBOX_HOME="$AIBOX_HOME" AIBOX_MOD_DIR="$mods" \
     AIBOX_MODULE=xiaozhi MARKER_LOG="$SANDBOX/markers5" NET_FLAG="$SANDBOX/net5.flag" \
     bash "$mods/xiaozhi/svc.sh" start
-  [[ "$output" == *"shared base is not running — starting it"* ]] || { echo "$output"; false; }
+  [[ "$output" == *"is not running — starting it"* ]] || { echo "$output"; false; }
   [[ "$output" != *"first: aibox base start"* ]] || { echo "$output"; false; }
   grep -q '^base-start$' "$SANDBOX/markers5" || { cat "$SANDBOX/markers5"; false; }
 }

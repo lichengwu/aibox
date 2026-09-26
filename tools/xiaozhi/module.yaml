@@ -1,5 +1,5 @@
 name: xiaozhi
-version: 1.2.4
+version: 1.3.0
 description: "Xiaozhi ESP32 server (docker compose): backend for xiaozhi-esp32 AI voice devices (manager console + websocket relay + bundled MySQL)"
 platform: ""
 dir: tools/xiaozhi
@@ -28,7 +28,7 @@ files:
 # deliberately ships no MySQL, and xiaozhi's manager-api is MySQL-only
 # (Spring druid + jdbc:mysql DSN; upstream has no PG support).
 services:
-  - base:redis
+  - base:redis#xiaozhi
 
 # Shared library include (repo tools/_shared/<name>.sh → cached as
 # _<name>.sh; lib.sh sources it). common = output helpers + docker.io pool.

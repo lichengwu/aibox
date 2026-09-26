@@ -58,8 +58,8 @@ services:
       - REDIS_PORT=${AIBOX_REDIS_PORT}
       - REDIS_PASSWORD=
       - REDIS_USE_SSL=false
-      - REDIS_DB=0
-      - CELERY_BROKER_URL=redis://@${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}/1
+      - REDIS_DB=${DIFY_REDIS_DB:-0}
+      - CELERY_BROKER_URL=redis://:${AIBOX_REDIS_PASSWORD}@${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}/${DIFY_CELERY_REDIS_DB:-1}
 
   api_websocket:
     networks:
@@ -71,8 +71,8 @@ services:
       - REDIS_PORT=${AIBOX_REDIS_PORT}
       - REDIS_PASSWORD=
       - REDIS_USE_SSL=false
-      - REDIS_DB=0
-      - CELERY_BROKER_URL=redis://@${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}/1
+      - REDIS_DB=${DIFY_REDIS_DB:-0}
+      - CELERY_BROKER_URL=redis://:${AIBOX_REDIS_PASSWORD}@${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}/${DIFY_CELERY_REDIS_DB:-1}
 
   worker:
     networks:
@@ -91,8 +91,8 @@ services:
       - REDIS_PORT=${AIBOX_REDIS_PORT}
       - REDIS_PASSWORD=
       - REDIS_USE_SSL=false
-      - REDIS_DB=0
-      - CELERY_BROKER_URL=redis://@${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}/1
+      - REDIS_DB=${DIFY_REDIS_DB:-0}
+      - CELERY_BROKER_URL=redis://:${AIBOX_REDIS_PASSWORD}@${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}/${DIFY_CELERY_REDIS_DB:-1}
 
   worker_beat:
     networks:
@@ -111,8 +111,8 @@ services:
       - REDIS_PORT=${AIBOX_REDIS_PORT}
       - REDIS_PASSWORD=
       - REDIS_USE_SSL=false
-      - REDIS_DB=0
-      - CELERY_BROKER_URL=redis://@${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}/1
+      - REDIS_DB=${DIFY_REDIS_DB:-0}
+      - CELERY_BROKER_URL=redis://:${AIBOX_REDIS_PASSWORD}@${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}/${DIFY_CELERY_REDIS_DB:-1}
 
   plugin_daemon:
     networks:
@@ -134,7 +134,7 @@ services:
       - default
       - aiboxbasenet
     environment:
-      - DIFY_AGENT_REDIS_URL=redis://@${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}/2
+      - DIFY_AGENT_REDIS_URL=redis://:${AIBOX_REDIS_PASSWORD}@${AIBOX_REDIS_HOST}:${AIBOX_REDIS_PORT}/${DIFY_AGENT_REDIS_DB:-2}
 
 networks:
   aiboxbasenet:

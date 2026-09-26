@@ -93,7 +93,9 @@ FILES
   [[ "${spec}" == *"| 3 | dependency missing"* ]] || false
   [[ "${spec}" == *"| 4 | precheck failed"* ]] || false
   # …and the manager really behaves that way (spot-check the documented hints)
-  run bash "${REPO_ROOT}/bin/aibox" install nosuch-zzz
+  # a file:// registry keeps this hermetic (the ambient cache may not exist —
+  # the non-root pass has no /root/.aibox)
+  run env AIBOX_RAW="file://${REPO_ROOT}" bash "${REPO_ROOT}/bin/aibox" install nosuch-zzz
   [ "$status" -eq 2 ] || { echo "unknown-module exit=${status}"; false; }
   grep -q '_verb_help' "${REPO_ROOT}/bin/aibox" || false
 }

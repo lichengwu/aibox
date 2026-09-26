@@ -259,7 +259,9 @@ deploy_root() {
   local root
   root="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}"
   [ -n "$root" ] || die "cannot determine deploy root: HOME and AIBOX_HOME are both empty"
-  printf '%s' "$root/apps/$MODULE_NAME"
+  # profile-scoped (spec §Deploy root): two profiles must never share a deploy
+  # .env/compose — the default profile keeps the unsuffixed path
+  printf '%s' "${root}/apps/${MODULE_NAME}$(profile_suffix)"
 }
 
 # Module version — read from module.yaml next to this lib (cache and repo

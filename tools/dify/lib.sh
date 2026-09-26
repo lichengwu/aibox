@@ -34,7 +34,10 @@ deploy_root() {
   local root
   root="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}"
   [ -n "${root}" ] || die "cannot determine deploy root: HOME and AIBOX_HOME are both empty"
-  printf '%s' "${root}/apps/${MODULE_NAME}"
+  # profile-scoped (spec §Deploy root): two profiles must never share one deploy
+  # .env/compose. The default profile keeps the unsuffixed path, so existing
+  # deployments are untouched.
+  printf '%s' "${root}/apps/${MODULE_NAME}$(profile_suffix)"
 }
 
 # Load the deploy .env into the environment so hooks/svc see DIFY_WEB_PORT /
@@ -71,16 +74,30 @@ shared_base_enabled() {
 # the shared override file + --env-file base.env (the base module's connection
 # info; injected values like AIBOX_POSTGRES_HOST are referenced by the override).
 compose() {
-  local root base_env args
+  local root base_env args renv
   root="$(deploy_root)"
   [ -f "${root}/docker-compose.yml" ] || die "not installed (run: aibox install ${MODULE_NAME})"
   args=(--project-name "${COMPOSE_PROJECT}" -f "${root}/docker-compose.yml")
   if shared_base_enabled; then
     [ -f "${root}/docker-compose.shared.yml" ] || die "DIFY_SHARED_BASE=1 but docker-compose.shared.yml missing"
     args+=(-f "${root}/docker-compose.shared.yml")
-    base_env="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/base.env"
+    # profile-aware (base_env_file) — see the 2026-09 dependency review
+    base_env="$(base_env_file)"
     if [ -f "${base_env}" ]; then
       args+=(--env-file "${base_env}")
+      renv="$(redis_env_file "${MODULE_NAME}")"
+      if [ -f "${renv}" ]; then
+        args+=(--env-file "${renv}")
+        # dify uses THREE consecutive Redis indices (logic DB / celery broker /
+        # agent) — derive them from the allocated base slot so two modules can
+        # never share a keyspace
+        local base_db
+        base_db="$(sed -n 's/^AIBOX_REDIS_DB=//p' "${renv}" 2>/dev/null | head -1)"
+        case "${base_db}" in '' | *[!0-9]*) base_db=0 ;; esac
+        export DIFY_REDIS_DB="${base_db}"
+        export DIFY_CELERY_REDIS_DB=$(( base_db + 1 ))
+        export DIFY_AGENT_REDIS_DB=$(( base_db + 2 ))
+      fi
     else
       warn "DIFY_SHARED_BASE=1 but ${base_env} not found (run: aibox base start)"
     fi

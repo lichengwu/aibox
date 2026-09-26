@@ -46,6 +46,18 @@ createdb)
 profile)
   _profile_list
   ;;
+dump)
+  shift
+  cmd_dump "${1:-manual}"
+  ;;
+restore)
+  shift
+  cmd_restore "${1:-}"
+  ;;
+upgrade)
+  shift
+  cmd_upgrade "$@"
+  ;;
 doctor)
   module_doctor "base"
   ;;

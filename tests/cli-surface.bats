@@ -187,7 +187,10 @@ EOF2
     [[ "$output" == *"module:   "*"/modules/base/"* ]]
     [[ "$output" != *"Failed to fetch module list"* ]]
   done
-  # unknown module (typo): needs the registry → clean die, not a stack of noise
+  # unknown module (typo): needs a WORKING registry to prove it is unknown →
+  # clean die with a suggestion (a dead registry would fetch-fail instead; the
+  # cache is not guaranteed to exist — the non-root pass caught exactly that)
+  export AIBOX_RAW="file://$REPO_ROOT"
   run bash "$REPO_ROOT/bin/aibox" bas --help
   [ "$status" -ne 0 ]
   [[ "$output" == *"Unknown module: bas"* ]]

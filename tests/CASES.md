@@ -42,6 +42,20 @@ Run everything: `tests/docker/run.sh` (or `bats tests/*.bats` locally).
 | 0.17.0 | upgrade/rollback framework: verified rollback + exit 10/20, rollback point/history, data snapshot, marker semantics; docs/config drift (profile-derived ports, openmaic fake 5432) | `tests/upgrade-rollback.bats`, `tests/gitlab-upgrade-path.bats`, `tests/docs-config-drift.bats` |
 | 0.18.0 | instruction system: per-verb `--help`, usage-error exit 2, preflight exit 3/4, `doctor` everywhere, lifecycle aliases, `usage_die`; docs integrity (links/index/inventory/parity) | `tests/cli-consistency.bats`, `tests/docs-integrity.bats`, `tests/history-cases.bats` |
 
+## The 2026-09 shared-base dependency review
+
+| Finding | Locked by |
+| --- | --- |
+| Consumers hardcoded `base.env` → a named-profile module attached to the DEFAULT profile's instance | `tests/base-contract.bats` (profile linking, incl. the validator's hardcode rule) |
+| No `base.env` contract (no version/profile/readiness) → a base rename would be read as empty values | `tests/base-contract.bats` (contract + `base_env_check`) |
+| `base start` returned before PG/Redis were ready (consumer DB creation raced init) | `tests/base-contract.bats` (readiness wait) + `tests/integration/base-profiles.bats` |
+| Shared Redis had no auth and three modules shared index 0 | `tests/base-contract.bats` (allocation) + `tests/integration/base-profiles.bats` (real `PING`/`NOAUTH`) |
+| base had no dump/restore and no upgrade/rollback path (image pins were compose literals) | `tests/base-contract.bats` (dump/restore/upgrade, pin rollback, exit 10/20) |
+| `base stop` / `uninstall base` / `purge base` never mentioned their dependents | `tests/base-contract.bats` (reverse-dependency gate) |
+| Deploy roots were not profile-scoped → two profiles shared one deploy `.env` | `tests/base-contract.bats` (deploy root) + the validator rule |
+| Spurious `base:redis` on windmill; dify's optional mode needed manual DB creation | `tests/base-contract.bats` (declarations + self-heal ensure) |
+| Two fast-suite tests relied on the ambient registry cache (passed as root, failed as non-root) | `tests/cli-surface.bats` / `tests/docs-integrity.bats` (hermetic `file://` registry) |
+
 ## Live-caught bugs (found by building/running, not by review)
 
 | Bug | Symptom | Locked by |

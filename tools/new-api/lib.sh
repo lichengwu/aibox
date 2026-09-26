@@ -26,7 +26,9 @@ deploy_root() {
   local root
   root="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}"
   [ -n "$root" ] || die "cannot determine deploy root: HOME and AIBOX_HOME are both empty"
-  printf '%s' "$root/apps/$MODULE_NAME"
+  # profile-scoped (spec §Deploy root): two profiles must never share one deploy
+  # .env/compose. The default profile keeps the unsuffixed path (no migration).
+  printf '%s' "${root}/apps/${MODULE_NAME}$(profile_suffix)"
 }
 
 # Load the deploy .env into the environment so hooks/svc see NEW_API_PORT /
@@ -59,13 +61,18 @@ load_env() {
 # loaded into the SHELL environment by load_env() — compose interpolation
 # precedence: shell env > --env-file, so user overrides win.
 compose() {
-  local root base_env args
+  local root base_env args renv
   root="$(deploy_root)"
   [ -f "${root}/docker-compose.yml" ] || die "not installed (run: aibox install ${MODULE_NAME})"
-  base_env="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/base.env"
+  # profile-aware (base_env_file): a hardcoded base.env attached consumers to the
+  # DEFAULT profile's instance when base ran under a named profile
+  base_env="$(base_env_file)"
   args=(--project-name "${COMPOSE_PROJECT}" -f "${root}/docker-compose.yml")
   if [ -f "${base_env}" ]; then
     args+=(--env-file "${base_env}")
+    # this module's own Redis logical DB (allocated by `aibox base create redis`)
+    renv="$(redis_env_file "${MODULE_NAME}")"
+    [ -f "${renv}" ] && args+=(--env-file "${renv}")
   else
     # Not fatal at parse time (uninstall during teardown), but every real
     # lifecycle command needs the base — say so.

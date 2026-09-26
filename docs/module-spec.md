@@ -263,6 +263,67 @@ Before switching roots, verify these three constraints in order (the first two a
 > - `clash` **aligned** (deploy root `$AIBOX_HOME/apps/clash`; no `/etc` config — the subscription contains a token, so state/config/pool.yaml are all mode 600 under the deploy root; the mihomo binary is downloaded from GitHub by the install hook);
 > - `pi-web` is install-type — no deploy root, paths stay platform-conventional.
 
+## Dependency contract (consuming the shared `base`)
+
+`base` is the shared PostgreSQL 18 + Redis 7 provider. Everything about linking a module to
+it is normative here, because every one of these rules was violated by the 2026-09 review
+and each violation was silent (wrong instance, shared keyspace, no rollback path).
+
+**Linking (profile-aware — never hardcode paths).** The connection file is
+`$AIBOX_HOME/base.env` for the default profile and `$AIBOX_HOME/base-<profile>.env` for
+named ones. Use the shared helpers (`includes: [common]` is mandatory for any module that
+consumes base):
+
+```bash
+base_env_file        # the profile's connection file
+base_env_check       # version check + actionable failure (call before starting)
+base_pg_container    # aibox-base[-<profile>]-postgres
+base_network_name    # from the env file, else the derived name
+ensure_shared_base   # idempotent "provider is up" (starts it when down)
+ensure_shared_db <db>          # idempotent CREATE DATABASE (self-heal on every start)
+ensure_shared_redis_db <m> [n] # allocate/read the module's Redis slot range
+redis_env_file <module>        # AIBOX_REDIS_DB / AIBOX_REDIS_SLOTS for compose --env-file
+```
+
+**The `base.env` contract** (written by `base start`, mode 600):
+
+| Key group | Keys | Notes |
+| --- | --- | --- |
+| contract | `AIBOX_BASE_ENV_VERSION`, `AIBOX_BASE_PROFILE`, `AIBOX_BASE_MODULE_VERSION`, `AIBOX_BASE_READY` | consumers validate the version (`base_env_check`); keys are ADDITIVE only — a rename/removal bumps `AIBOX_BASE_ENV_VERSION` in BOTH `base/lib.sh` and the helpers |
+| postgres | `AIBOX_POSTGRES_HOST/PORT/USER/PASSWORD` | `HOST` is the container name, `PORT` the container-internal 5432 (consumers are on the same network) |
+| redis | `AIBOX_REDIS_HOST/PORT/PASSWORD` | Redis runs WITH auth; the password is generated once (or operator-set) and never rotated silently |
+| network | `AIBOX_BASE_NETWORK` | profile-derived; consumers must take it from here (not from a default) |
+
+`AIBOX_BASE_READY=1` is written only after `pg_isready` + an authenticated Redis `PING`
+succeed — `base start` waits (bounded, `AIBOX_BASE_READY_TIMEOUT`) instead of returning the
+moment `compose up -d` does.
+
+**Redis isolation.** One logical DB per module (`base create redis <module> [slots]` →
+`apps/<root>/redis-dbs.conf` registry + the module's `redis-env-file`). A bare `base:redis`
+declaration allocates nothing and is a validator error. `dify` reserves 3 consecutive slots
+(logic DB / celery broker / agent).
+
+**Deploy root is profile-scoped.** `deploy_root()` must end with `$(profile_suffix)`:
+two profiles sharing one deploy directory means the second install overwrites the first
+one's `.env`/compose (ports, images, DB name). The default profile keeps the unsuffixed
+path, so existing deployments do not move.
+
+**Resource declarations are contracts.** `services: base:postgres#<db>` must match what the
+module actually connects to (`/…/<db>` in its compose/CLI); the validator cross-checks.
+Declare only what you use (a spurious `base:redis` starts the provider for nothing).
+
+**Reverse direction.** The manager lists installed dependents (`_base_dependents`) and gates
+`base stop`, `uninstall base` and `purge base` behind a named warning; purge also scans
+`apps/<name>-<profile>` roots for every profile.
+
+**base's own lifecycle.** `aibox base dump|restore` (whole-cluster `pg_dumpall` + Redis
+snapshot) and `aibox base upgrade [--check|--pg <tag>|--redis <tag>|--rollback]`: the image
+pins live in the deploy root's `.env` (never in the module cache, which an update
+overwrites); the verb dumps first, rewrites the pin, recreates through the readiness gate,
+rolls the pin back on failure (exit 10, or 20 when the rollback is unhealthy too) and writes
+the SAME `$AIBOX_HOME/upgrades/base.state` the manager uses, so `aibox dashboard base` and
+`aibox upgrade base --rollback` work with it.
+
 ## Proxy
 
 Users can set a global proxy via `aibox proxy set <url>` (see the repo README). Modules consume it two ways:

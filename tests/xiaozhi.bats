@@ -312,8 +312,11 @@ teardown() {
 @test "compose: joins the external base network + injects base.env/secret vars (compose file contract)" {
   y="$REPO_ROOT/tools/xiaozhi/docker-compose.yml"
   # web: shared-base redis from base.env
-  grep -q 'SPRING_DATA_REDIS_HOST=\${AIBOX_REDIS_HOST}' "$y"
-  grep -q 'SPRING_DATA_REDIS_PORT=\${AIBOX_REDIS_PORT}' "$y"
+  grep -q 'SPRING_DATA_REDIS_HOST=\${AIBOX_REDIS_HOST}' "$y" || { echo "$output"; false; }
+  grep -q 'SPRING_DATA_REDIS_PORT=\${AIBOX_REDIS_PORT}' "$y" || false
+  # redis auth + this module's logical DB (2026-09 review: auth on, one slot each)
+  grep -q 'SPRING_DATA_REDIS_PASSWORD=\${AIBOX_REDIS_PASSWORD}' "$y" || false
+  grep -q 'SPRING_DATA_REDIS_DATABASE=\${AIBOX_REDIS_DB:-0}' "$y" || false
   grep -q 'name: \${AIBOX_BASE_NETWORK:-aibox-base}' "$y"
   grep -q 'external: true' "$y"
   # web: mysql password from the deploy .env

@@ -1,5 +1,5 @@
 name: windmill
-version: 1.5.1
+version: 1.5.2
 description: "Windmill self-host ops CLI (init/upgrade/backup/drill/doctor)"
 platform: ""
 dir: tools/windmill
@@ -18,7 +18,6 @@ files:
 
 services:
   - base:postgres#windmill
-  - base:redis
 
 # Preflight (enforced by aibox install/update; see docs/module-spec.md).
 # All windmill/caddy images come from ghcr.io — host-probed here (no canonical

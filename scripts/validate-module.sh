@@ -371,6 +371,46 @@ validate_module() {
     fi
   done
 
+  # --- S13b/S13c: the shared-base CONTRACT (2026-09 dependency review) ---
+  # A consumer of base must (a) resolve base's env file/profile paths through the
+  # shared helpers — a hardcoded base.env attached it to the DEFAULT profile's
+  # instance — (b) include the shared library that provides them, and (c) declare
+  # the resource it consumes: `base:redis` without `#<module>` used to mean "no
+  # allocation", i.e. every such module shared Redis index 0.
+  local uses_base=0 tok2
+  for tok2 in $(module_field "$m" services) $(module_field "$m" services_optional); do
+    case "$tok2" in base:*) uses_base=1 ;; esac
+  done
+  if [ "$uses_base" = "1" ]; then
+    grep -qE '^includes:' "$f" && grep -qE '^  - common$' "$f" \
+      || err "consumes base but does not declare 'includes: [common]' (needs base_env_file/base_env_check)"
+    local hf2
+    for hf2 in "$d/lib.sh" "$d/svc.sh"; do
+      [ -f "$hf2" ] || continue
+      if grep -qE 'AIBOX_HOME[^)]*[}/]/base\.env|"/base\.env"' "$hf2" 2>/dev/null; then
+        err "$(basename "$hf2"): hardcodes base.env — use base_env_file (profile-aware); a literal path breaks named profiles"
+      fi
+    done
+    for tok2 in $(module_field "$m" services) $(module_field "$m" services_optional); do
+      case "$tok2" in
+      base:redis) warn "bare 'base:redis' allocates no logical DB — use base:redis#${m} (one slot per module)" ;;
+      esac
+    done
+    # the declared PG database should appear in the module's own files (the
+    # connection string / CLI) — the declaration is the contract, the files are
+    # the implementation, and nothing else cross-checks them
+    for tok2 in $(module_field "$m" services) $(module_field "$m" services_optional); do
+      case "$tok2" in
+      base:postgres#*)
+        local want="${tok2#base:postgres#}"
+        if ! grep -rqE "/${want}([?'\"]|$)|[^a-z_]${want}([?'\"]|$)|DATABASE_URL=.*/${want}" "$d" --exclude='*.md' --exclude='module.yaml' 2>/dev/null; then
+          warn "services declares base:postgres#${want} but no module file references that database name (drift risk)"
+        fi
+        ;;
+      esac
+    done
+  fi
+
   # --- S15: checks section (mandatory preflight contract) ---
   grep -qE '^checks:' "$f" || err "missing checks: section (mandatory preflight contract — docs/module-spec.md)"
   local cg doms cmds imgs dpl
@@ -419,6 +459,16 @@ validate_module() {
     fi
     if [ "$usrc" = dockerhub-tags ]; then
       [ -n "$upat" ] || err "upgrade: dockerhub-tags needs tag_pattern (unfiltered tags pick 'latest'/rc junk)"
+    fi
+  fi
+
+  # --- S13d: profile-scoped deploy root (spec §Deploy root) ---
+  # Two profiles sharing one deploy dir means the second install overwrites the
+  # first one's .env/compose (ports/images/DB name) — live-caught while wiring
+  # the shared-base review. The suffix comes from the shared profile_suffix().
+  if grep -qE '^deploy_root\(\)' "$d/lib.sh" 2>/dev/null; then
+    if ! awk '/^deploy_root\(\)/{f=1} f{print} f&&/^}/{exit}' "$d/lib.sh" | grep -qE 'profile_suffix|AIBOX_PROFILE'; then
+      warn "lib.sh: deploy_root() is not profile-scoped — append \"\$(profile_suffix)\" (two profiles would share one deploy dir)"
     fi
   fi
 

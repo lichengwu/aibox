@@ -1,5 +1,5 @@
 name: gitlab
-version: 1.5.4
+version: 1.6.0
 description: "GitLab CE self-hosted (omnibus docker): web UI + git over SSH, embedded PG/Redis"
 platform: ""
 dir: tools/gitlab

@@ -57,6 +57,9 @@ Every regression test below was born from a real bug found in review or live tes
 | `deps-at-action.bats` — start/restart ensure declared services | live bug: `aibox xiaozhi start` died with "shared base not running — first: aibox base start" (two commands for one intent); the redis-only entry form was skipped entirely, and `base create` died with "PG not running?" instead of starting the stack |
 | `upgrade-rollback.bats` — 18 tests: recorded rollback point, verified rollback, exit 10/20, data snapshot | live review: the engine claimed "rolled back" without verifying, always returned 20 (spec says 10/20), had no rollback POINT (only an automatic one), and overwrote the module marker with the app version |
 | `docs-config-drift.bats` — 10 tests: env keys ↔ code, derived values ↔ dashboard pointer, declared ports ↔ published ports, exit-code contract | live audit: docs hardcoded profile-derived ports (base/pi-web), openmaic declared a port nothing publishes (5432 vs upstream 3000), and the docs index needed the superseded banner kept |
+| `docs-integrity.bats` — 10 tests: link resolution, docs index, test inventory, en/zh parity, per-module action docs, CASES.md coverage | live audit: two relative links 404'd, six module READMEs lacked the new standard action, and the test-suite README had no complete inventory (new suites could ship unlisted) |
+| `history-cases.bats` — 8 tests closing the historical gaps (proxy verdict, proxy persistence, multibyte frames, docker-daemon wording, 3.2 gate) | the pitfall log had four entries with no lock: #3/#5 (`%{proxy_used}` verdict), #4 (persist the proxy where the CLI reads), #6 (never slice multibyte frames), plus the live B4 wording bug |
+| `base-contract.bats` — 19 tests: profile-aware base linking, base.env contract, secret policy, readiness wait, redis slots, dump/restore/upgrade with pin rollback, reverse-dependency gate | the 2026-09 dependency review: consumers hardcoded `base.env` (named profiles attached to the DEFAULT instance), three modules shared Redis index 0 with no auth, base had no dump/upgrade/rollback path, and `base stop` never mentioned its dependents |
 | `windmill-config.bats` — 29 render/knob tests | live audit: the windmill stack's domain/HTTPS, worker sizing, log rotation and backup retention were unreachable through `config set` (hand edits to the generated compose/.env are lost at the next render); the default entry port said 8080 in three docs and was 80 in code; the `.env` renderer executed backticks in its own comments |
 | `registry.bats` — cache hit/stale, YAML escaping | GitHub-API rate-limit cache + no command injection through module.yaml values |
 | `integration/base-profiles.bats` | live scenario: two stacks coexisting, DB/network isolation, per-profile env files |
@@ -93,8 +96,9 @@ while the harness runs the static 3.2 checks (parse-compat + gotcha scanners).
 
 ## Test inventory (every suite, generated)
 
-Fast suite (`bats tests/*.bats`, no docker/network, ~seconds) — **37 files**:
+Fast suite (`bats tests/*.bats`, no docker/network, ~seconds) — **38 files**:
 
+- `base-contract.bats`
 - `base-env.bats`
 - `base-svc.bats`
 - `clash-pool.bats`

@@ -15,10 +15,17 @@ teardown() {
   [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true
 }
 
-@test "create redis <x>: generic dispatcher no-ops redis (no docker touched)" {
-  run env AIBOX_MODULE=base bash "$SVC" create redis anything
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"no resource creation needed"* ]]
+@test "create redis <x>: allocates the module's logical DB + writes its env file" {
+  # Redis auth + per-module slots (2026-09 review): redis is no longer a no-op —
+  # it reserves an index range and publishes AIBOX_REDIS_DB for the consumer.
+  run env AIBOX_MODULE=base AIBOX_HOME="$AIBOX_HOME" bash "$SVC" create redis anything
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"Redis logical DB for anything:"* ]] || { echo "$output"; false; }
+  [ -f "$AIBOX_HOME/redis-anything.env" ] || { echo "no redis env file written"; false; }
+  grep -q '^AIBOX_REDIS_DB=1$' "$AIBOX_HOME/redis-anything.env" || { cat "$AIBOX_HOME/redis-anything.env"; false; }
+  # idempotent: a second call returns the same slot
+  run env AIBOX_MODULE=base AIBOX_HOME="$AIBOX_HOME" bash "$SVC" create redis anything
+  [[ "$output" == *"anything: 1"* ]] || { echo "$output"; false; }
 }
 
 @test "create without args: usage error" {

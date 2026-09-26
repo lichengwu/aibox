@@ -56,7 +56,8 @@ services:
       - SPRING_DATASOURCE_DRUID_PASSWORD=${XIAOZHI_MYSQL_PASSWORD}
       # shared base redis (no password — base's redis runs without requirepass)
       - SPRING_DATA_REDIS_HOST=${AIBOX_REDIS_HOST}
-      - SPRING_DATA_REDIS_PASSWORD=
+      - SPRING_DATA_REDIS_PASSWORD=${AIBOX_REDIS_PASSWORD}
+      - SPRING_DATA_REDIS_DATABASE=${AIBOX_REDIS_DB:-0}
       - SPRING_DATA_REDIS_PORT=${AIBOX_REDIS_PORT}
     ports:
       # 智控台 console (nginx → Java :8003 internal)
