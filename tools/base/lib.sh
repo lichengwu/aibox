@@ -116,6 +116,13 @@ _profile_list() {
 }
 
 # ---------- paths + config ----------
+# The manager locates a module's deploy dir through `deploy_root()` (spec
+# §Component upgrades / §Residue cleanup) — base's own name is base_deploy_root,
+# so expose the contract name too (used by `aibox upgrade base --rollback` and
+# purge's residue scan).
+deploy_root() { base_deploy_root; }
+
+
 # Deploy root (module-spec deploy-type convention). Profile suffix applied for named profiles.
 base_deploy_root() {
   if [ -n "${BASE_DIR:-}" ]; then

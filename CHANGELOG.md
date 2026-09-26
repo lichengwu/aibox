@@ -7,6 +7,22 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.19.1] — 2026-09-26
+
+### Fixed
+
+- **`aibox upgrade base --rollback` died with "cannot locate base deploy root"** — base
+  exposed its deploy dir as `base_deploy_root` while the manager's upgrade engine (and
+  purge's residue scan) locate modules through the contract name `deploy_root()`. base now
+  provides both, and the validator WARNs when a module uses the manager's upgrade paths
+  (`upgrade:` stanza, or writes `$AIBOX_HOME/upgrades/…`) without defining `deploy_root()`.
+  Caught by the post-implementation review, not by the tests — the new case in
+  `tests/base-contract.bats` locks the full manager → base → pin-restore path.
+- Two validator refinements from the same review: the profile-scope rule now accepts a
+  delegating alias (`deploy_root() { base_deploy_root; }`), and the deploy-root rule only
+  applies to modules that actually use the manager's upgrade paths (dispatch CLIs keep
+  their own state and stay silent).
+
 ## [0.19.0] — 2026-09-25
 
 The shared-base dependency review, fixed end-to-end.
@@ -1197,6 +1213,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.19.1]: https://github.com/lichengwu/aibox/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/lichengwu/aibox/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/lichengwu/aibox/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/lichengwu/aibox/compare/v0.16.0...v0.17.0

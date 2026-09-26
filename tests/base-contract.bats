@@ -480,3 +480,22 @@ _dep_fixture() { # base installed + a consumer that declares base:postgres#app
   run env VALIDATE_TOOLS_DIR="$out2" bash "$REPO_ROOT/scripts/validate-module.sh" consumer4ok
   [[ "$output" != *"not profile-scoped"* ]] || { echo "$output"; false; }
 }
+
+@test "manager <-> base: 'aibox upgrade base --rollback' resolves base's deploy root and restores the pin" {
+  # base exposes the contract name deploy_root() (its own is base_deploy_root) —
+  # without it the manager died with "cannot locate base deploy root"
+  grep -qE '^deploy_root\(\)' "$REPO_ROOT/tools/base/lib.sh" || { echo "no deploy_root contract name"; false; }
+  # full manager path against a fixture cache (stub svc hook, no docker)
+  mkdir -p "$AIBOX_MOD_DIR/base" "$AIBOX_HOME/apps/base" "$AIBOX_HOME/upgrades"
+  cp "$REPO_ROOT/tools/base/lib.sh" "$REPO_ROOT/tools/base/module.yaml" "$AIBOX_MOD_DIR/base/"
+  cp "$REPO_ROOT/tools/_shared/common.sh" "$AIBOX_MOD_DIR/base/_common.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$AIBOX_MOD_DIR/base/svc.sh"
+  printf 'AIBOX_INSTALLED_base="1.5.0"\n' >"$AIBOX_INSTALLED"
+  printf 'AIBOX_BASE_PG_IMAGE=postgres:19\n' >"$AIBOX_HOME/apps/base/.env"
+  printf 'AIBOX_BASE_PG_IMAGE=postgres:18\n' >"$AIBOX_HOME/apps/base/.env.bak.1"
+  printf 'from=pg=postgres:18\nenvbak=%s/apps/base/.env.bak.1\nstatus=ok\n' "$AIBOX_HOME" >"$AIBOX_HOME/upgrades/base.state"
+  run bash "$AIBOX_BIN" upgrade base --rollback --yes
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^AIBOX_BASE_PG_IMAGE=postgres:18$' "$AIBOX_HOME/apps/base/.env" || { cat "$AIBOX_HOME/apps/base/.env"; false; }
+  [[ "$output" == *"rolled back to pg=postgres:18"* ]] || { echo "$output"; false; }
+}

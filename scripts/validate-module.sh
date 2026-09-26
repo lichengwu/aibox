@@ -462,12 +462,28 @@ validate_module() {
     fi
   fi
 
+  # --- S13e: an upgrade-capable module must expose deploy_root() ---
+  # `aibox upgrade <m>` (stanza) and `<m> upgrade --rollback` (self-owned verbs like
+  # base's) locate the deploy dir through lib.sh `deploy_root()`; base defined only
+  # `base_deploy_root` and the manager path died with "cannot locate … deploy root"
+  # (caught by the post-fix review).
+  local _needs_droot=0
+  grep -qE '^upgrade:' "$f" && _needs_droot=1
+  # …or it writes the MANAGER's upgrade state ($AIBOX_HOME/upgrades/…) from its own
+  # verb (base does) — dispatch CLIs keep their own state and are exempt
+  grep -qE 'upgrades/' "$d/lib.sh" "$d/svc.sh" 2>/dev/null && _needs_droot=1
+  if [ "${_needs_droot}" = "1" ] && ! grep -qE '^deploy_root\(\)' "$d/lib.sh" 2>/dev/null; then
+    warn "lib.sh: uses the manager's upgrade paths but defines no deploy_root() — the manager cannot locate the deploy dir (aibox upgrade <m> --rollback)"
+  fi
+
   # --- S13d: profile-scoped deploy root (spec §Deploy root) ---
   # Two profiles sharing one deploy dir means the second install overwrites the
   # first one's .env/compose (ports/images/DB name) — live-caught while wiring
   # the shared-base review. The suffix comes from the shared profile_suffix().
   if grep -qE '^deploy_root\(\)' "$d/lib.sh" 2>/dev/null; then
-    if ! awk '/^deploy_root\(\)/{f=1} f{print} f&&/^}/{exit}' "$d/lib.sh" | grep -qE 'profile_suffix|AIBOX_PROFILE'; then
+    # accepts the suffix helper, a raw AIBOX_PROFILE use, or a delegating alias
+    # (base: deploy_root() { base_deploy_root; } — the suffixed implementation)
+    if ! awk '/^deploy_root\(\)/{f=1} f{print} f&&/^}/{exit}' "$d/lib.sh" | grep -qE 'profile_suffix|AIBOX_PROFILE|_deploy_root'; then
       warn "lib.sh: deploy_root() is not profile-scoped — append \"\$(profile_suffix)\" (two profiles would share one deploy dir)"
     fi
   fi
