@@ -446,7 +446,13 @@ _pm_install() {
     n=$((n+1))
     log "  ${pm} install -y $*  (bounded ${timeout_s}s — downloads can take minutes)"
     logf="$(mktemp "${TMPDIR:-/tmp}/pm-install.XXXXXX")" || logf=""
-    if [ -n "$logf" ]; then ${pm} install -y "$@" >"$logf" 2>&1 & else ${pm} install -y "$@" & fi
+    # NO_COLOR/TERM=dumb: the log is captured and can end up in a --json detail
+    # line; brew/apt colour output injects ESC (illegal raw in a JSON string).
+    if [ -n "$logf" ]; then
+      NO_COLOR=1 TERM=dumb HOMEBREW_NO_COLOR=1 ${pm} install -y "$@" >"$logf" 2>&1 &
+    else
+      NO_COLOR=1 TERM=dumb HOMEBREW_NO_COLOR=1 ${pm} install -y "$@" &
+    fi
     pid=$!
     waited=0; timed_out=0
     while kill -0 "$pid" 2>/dev/null; do

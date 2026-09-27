@@ -11,7 +11,7 @@ json_escape() { # $1 = raw text → escaped text (no surrounding quotes)
   # sliced into invalid UTF-8 and the JSON would not parse. Byte-wise iteration
   # passes any byte >= 0x80 through untouched — valid UTF-8 either way.
   local LC_ALL=C
-  local s="${1:-}" out="" i=0 c
+  local s="${1:-}" out="" i=0 c ord
   while [ "${i}" -lt "${#s}" ]; do
     c="${s:${i}:1}"
     case "${c}" in
@@ -20,7 +20,22 @@ json_escape() { # $1 = raw text → escaped text (no surrounding quotes)
     $'\n') out="${out}\\n" ;;
     $'\r') out="${out}\\r" ;;
     $'\t') out="${out}\\t" ;;
-    *) out="${out}${c}" ;;
+    *)
+      # Any OTHER control byte (ESC from brew/apt colour output, BEL, …) is
+      # illegal raw inside a JSON string — live-caught: the macOS preflight
+      # auto-install of docker injected ESC and the whole --json envelope
+      # stopped parsing. Escape every control byte as \uXXXX (LC_ALL=C above
+      # makes c exactly one byte, so the ordinal is the byte value).
+      ord="$(printf '%d' "'${c}" 2>/dev/null)" || ord=""
+      case "${ord}" in
+      '' | *[!0-9]*) out="${out}${c}" ;;
+      *)
+        if [ "${ord}" -lt 32 ]; then
+          out="${out}\u$(printf '%04x' "${ord}")"
+        else
+          out="${out}${c}"
+        fi ;;
+      esac ;;
     esac
     i=$(( i + 1 ))
   done

@@ -123,3 +123,20 @@ tab	here'"
   grep -q '^json_escape()' "$REPO_ROOT/tools/_shared/lib/50-json.sh" || false
   [ "$(grep -rc '^json_escape()' "$REPO_ROOT"/src/aibox/*.sh | awk -F: '{s+=$2} END{print s+0}')" = "0" ] || false
 }
+
+@test "json_escape: EVERY control byte is escaped (ESC from brew/apt output)" {
+  # live-caught: the macOS preflight auto-install of docker put brew's ANSI colour
+  # (ESC) into a detail line → "Invalid control character" → the whole --json
+  # envelope stopped parsing. Raw control bytes are illegal inside JSON strings.
+  run bash -c "source '$AIBOX_BIN'; printf 'esc:%b bell:%b tab:\\t' '\033[34m' '\007'"
+  local payload="$output"
+  run bash -c "source '$AIBOX_BIN'; json_str \"\$1\"" _ "$payload"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  # no RAW control byte survives
+  if printf '%s' "$output" | grep -qP '[\x00-\x1f]' 2>/dev/null; then
+    echo "raw control byte left in: $output"; false
+  fi
+  [[ "$output" == *'\u001b'* ]] || { echo "ESC not escaped: $output"; false; }
+  [[ "$output" == *'\u0007'* ]] || { echo "BEL not escaped: $output"; false; }
+  [ "$(_json_valid <<<"{\"v\": $output}")" = "ok" ] || { printf '%s' "{\"v\": $output}" | _json_error; false; }
+}

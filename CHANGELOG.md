@@ -7,6 +7,24 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.20.4] — 2026-09-27
+
+### Fixed
+
+- **`--json` broke when a captured command line carried ANSI colour.**
+  `json_escape` only handled `\n`, `\r` and `\t`; every other control byte went
+  out raw, which is illegal inside a JSON string. The macOS lint job reproduced it
+  end to end: the preflight's auto-install of docker captured brew's coloured
+  output, the ESC byte reached a `details[]` entry, and the whole envelope failed
+  to parse (`Invalid control character at: line 10 column 6`). Every control byte
+  below 0x20 is now escaped as `\uXXXX`, and the package-manager calls that feed
+  those lines run with `NO_COLOR=1 TERM=dumb HOMEBREW_NO_COLOR=1`.
+
+### Module versions
+
+base 1.6.4 · clash 1.5.4 · dify 1.21.4 · gitlab 1.7.4 · new-api 1.4.4 ·
+openmaic 1.4.4 · pi-web 1.5.4 · windmill 1.6.4 · xiaozhi 1.4.4
+
 ## [0.20.3] — 2026-09-27
 
 ### Changed
@@ -1362,6 +1380,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.20.4]: https://github.com/lichengwu/aibox/compare/v0.20.3...v0.20.4
 [0.20.3]: https://github.com/lichengwu/aibox/compare/v0.20.2...v0.20.3
 [0.20.2]: https://github.com/lichengwu/aibox/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/lichengwu/aibox/compare/v0.20.0...v0.20.1
