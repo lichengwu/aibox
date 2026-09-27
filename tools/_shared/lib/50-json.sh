@@ -12,7 +12,6 @@ json_escape() { # $1 = raw text → escaped text (no surrounding quotes)
     case "${c}" in
     '"') out="${out}\\\"" ;;
     '\') out="${out}\\\\" ;;
-    # shellcheck disable=SC2016
     $'\n') out="${out}\\n" ;;
     $'\r') out="${out}\\r" ;;
     $'\t') out="${out}\\t" ;;

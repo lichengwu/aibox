@@ -63,28 +63,55 @@ profile_owner() { # $1=port → the profile that registered it ("" when none)
   return 0
 }
 
-# Conflicts for a profile: another profile owns a port that is currently LIVE.
-# Prints "<other-profile> <port>" per conflict (empty = clean).
-profile_conflicts() { # $1=profile name
-  local name="${1:-}" h pf other pg rd ports p
+# Which container publishes a host port ("" when docker is unavailable / nobody
+# does). This is the authoritative answer for "is this port already taken, and by
+# whose container" — the registry only knows about aibox profiles.
+_port_owner_container() { # $1=port → container name publishing it ("" = unknown)
+  command -v docker >/dev/null 2>&1 || return 0
+  # no daemon / empty answer → "" (callers fall back to the registry view)
+  docker ps --filter "publish=${1}" --format '{{.Names}}' 2>/dev/null | grep -v '^$' | head -1 || true
+}
+
+# Conflicts for a profile: a derived port is a conflict when it is LIVE and the
+# listener is not one of OUR containers (passed by the caller), whether or not it
+# belongs to a registered aibox profile. Live-caught: a fresh profile name whose
+# slot is held by another tenant's container — docker reports only
+# "Bind for 127.0.0.1:35177 failed: port is already allocated".
+# Prints "<what> <port>" per conflict (empty = clean).
+profile_conflicts() { # $1=profile name; rest = container names that belong to US
+  local name="${1:-}" h pg rd wb p other mine owner
+  shift 2>/dev/null || true
+  mine=" $* "
   [ -n "${name}" ] && [ "${name}" != "base" ] || return 0
   h="$(profile_hash "${name}")"
   pg="$(profile_port pg "${h}")"
   rd="$(profile_port redis "${h}")"
   wb="$(profile_port web "${h}")"
   for p in "${pg}" "${rd}" "${wb}"; do
-    other="$(profile_owner "${p}")"
-    [ -n "${other}" ] && [ "${other}" != "${name}" ] || continue
     port_listening "${p}" || continue
-    printf '%s %s\n' "${other}" "${p}"
+    owner="$(_port_owner_container "${p}")"
+    # only when we actually learned an owner: with owner="" the "is it ours"
+    # pattern would degenerate to two spaces and swallow every port
+    if [ -n "${owner}" ]; then
+      case "${mine}" in *" ${owner} "*) continue ;; esac
+    fi
+    other="$(profile_owner "${p}")"
+    if [ -n "${other}" ] && [ "${other}" != "${name}" ]; then
+      printf '%s %s\n' "${other}" "${p}"
+      continue
+    fi
+    if [ -n "${owner}" ]; then
+      printf '%s %s\n' "${owner}" "${p}"
+    fi
   done
   return 0
 }
 
 # Ensure the profile exists (conf file + registration) and refuse to start into a
 # LIVE port owned by another profile (exit 4 = precheck failed, spec §Exit codes).
-profile_ensure() { # $1=profile name $2=conf path
+profile_ensure() { # $1=profile name $2=conf path; rest = our own container names
   local name="${1:-}" conf="${2:-}" h conflicts
+  shift 2
   [ -n "${name}" ] && [ "${name}" != "base" ] || return 0
   h="$(profile_hash "${name}")"
   if [ ! -f "${conf}" ]; then
@@ -100,13 +127,14 @@ CONF
     _PROFILE_JUST_CREATED=1
   fi
   profile_register "${name}"
-  conflicts="$(profile_conflicts "${name}")"
+  # shellcheck disable=SC2046
+  conflicts="$(profile_conflicts "${name}" "$@")"
   if [ -n "${conflicts}" ]; then
     warn "profile '${name}' would reuse ports already in use by another profile:"
     printf '%s\n' "${conflicts}" | while read -r other p; do
-      warn "  ${p} is owned by profile '${other}' and is LISTENING (pick another name, or stop that profile)"
+      warn "  ${p} is already published by '${other}' (pick another profile name, or stop that stack)"
     done
-    die_code 4 "profile '${name}' cannot start: port collision with profile '$(printf '%s' "${conflicts}" | head -1 | cut -d' ' -f1)'"
+    die_code 4 "profile '${name}' cannot start: port collision on $(printf '%s' "${conflicts}" | head -1 | cut -d' ' -f2) (holder: $(printf '%s' "${conflicts}" | head -1 | cut -d' ' -f1))"
   fi
   return 0
 }

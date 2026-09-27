@@ -7,6 +7,30 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.20.1] — 2026-09-27
+
+### Fixed
+
+- **Profile port conflicts were only half-detected**: the "is this port ours?"
+  check compared against an empty owner and matched, so a *live* port held by
+  another tenant was silently ignored and the start died with docker's raw
+  `Bind for 127.0.0.1:35177 failed: port is already allocated`. Conflicts are now
+  decided registry-first, the docker container lookup only adds detail, and the
+  refusal names the holder (exit 4). Live-caught on a host whose real `prod`
+  profile holds the slot a fresh profile hashes to.
+- The integration suite now **picks profile names whose derived ports are free**
+  on the host (asking with an lsof-free `/dev/tcp` probe, 60 candidates) instead
+  of hardcoding `itta`/`ittb` — a test must not collide with a real deployment,
+  and the conflict gate is the feature being tested, not an obstacle.
+- `shellcheck` and the workflow YAML: a misplaced inline directive inside a
+  `case` branch is invalid (it broke the lint job); the workflow parser gate now
+  also runs the real PyYAML parse in the docker harness (the image installs it).
+
+### Module versions
+
+base 1.6.1 · clash 1.5.1 · dify 1.21.1 · gitlab 1.7.1 · new-api 1.4.1 ·
+openmaic 1.4.1 · pi-web 1.5.1 · windmill 1.6.1 · xiaozhi 1.4.1
+
 ## [0.20.0] — 2026-09-27
 
 Structural release: the project's design review (first-principles pass over the whole
@@ -1288,6 +1312,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.20.1]: https://github.com/lichengwu/aibox/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/lichengwu/aibox/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/lichengwu/aibox/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/lichengwu/aibox/compare/v0.18.0...v0.19.0

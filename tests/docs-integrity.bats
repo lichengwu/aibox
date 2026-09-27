@@ -126,7 +126,8 @@ FILES
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"workflows:"* ]] || { echo "$output"; false; }
   # teeth: a planted unquoted colon is caught without any parser
-  local fx="$AIBOX_HOME/wfcheck"
+  local fx
+  fx="$(mktemp -d)"
   mkdir -p "$fx/.github/workflows" "$fx/src/aibox" "$fx/tools/_shared/lib" "$fx/scripts"
   cp "$REPO_ROOT/scripts/check-sources.sh" "$fx/scripts/"
   printf 'ok() { :; }\n' >"$fx/tools/_shared/lib/00-out.sh"
@@ -135,4 +136,5 @@ FILES
   run bash "$fx/scripts/check-sources.sh"
   [ "$status" -eq 1 ] || { echo "expected rc=1, got $status: $output"; false; }
   [[ "$output" == *"unquoted"* ]] || { echo "$output"; false; }
+  rm -rf "$fx"
 }

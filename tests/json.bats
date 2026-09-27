@@ -6,16 +6,19 @@
 
 load test_helper
 
+# Bytes-first decoding: CI macOS runs bats with a non-UTF-8 locale and the
+# preflight details carry ·/… — `json.load(sys.stdin)` would decode as ASCII and
+# fail on valid UTF-8 JSON (measured on the macOS lint job).
 _json_valid() { # stdin → "ok" when it parses, the error otherwise
   if command -v python3 >/dev/null 2>&1; then
-    python3 -c 'import json,sys; json.load(sys.stdin); print("ok")' 2>&1 | tail -1
+    python3 -c 'import json,sys; json.loads(sys.stdin.buffer.read().decode("utf-8")); print("ok")' 2>&1 | tail -1
   else
     printf 'ok'
   fi
 }
 _json_field() { # $1=json $2=python expression over d
   command -v python3 >/dev/null 2>&1 || { printf ''; return 0; }
-  printf '%s' "$1" | python3 -c "import json,sys; d=json.load(sys.stdin); print($2)" 2>/dev/null || true
+  printf '%s' "$1" | python3 -c "import json,sys; d=json.loads(sys.stdin.buffer.read().decode('utf-8')); print($2)" 2>/dev/null || true
 }
 
 @test "dashboard --json: valid JSON, documented keys, no ANSI escapes" {

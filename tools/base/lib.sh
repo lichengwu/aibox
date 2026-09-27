@@ -33,7 +33,8 @@ _profile_load() {
   [ "$AIBOX_PROFILE" = "base" ] && return 0
 
   local pf="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/profiles/${AIBOX_PROFILE}.conf"
-  profile_ensure "$AIBOX_PROFILE" "$pf"
+  # our own containers are not a conflict (idempotent re-start)
+  profile_ensure "$AIBOX_PROFILE" "$pf" "$(base_pg_container)" "$(base_redis_container)"
   # Parsed, not executed: a profile conf is data (cfg_kv_load in the shared lib)
   cfg_kv_load "$pf" PROFILE_
   if [ -z "${PROFILE_HASH:-}" ] && [ -z "${PROFILE_NAME:-}" ]; then

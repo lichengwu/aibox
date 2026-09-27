@@ -17,7 +17,8 @@ load test_helper
     wc -l <'$AIBOX_HOME/ports.conf'
     grep -c '^prod ' '$AIBOX_HOME/ports.conf'
   "
-  [ "$output" = "2
+  # BSD wc pads the count with spaces; compare normalised
+  [ "${output// /}" = "2
 1" ] || { echo "got: $output"; false; }
   grep -q '^stage pg=35327 redis=36260 web=37155$' "$AIBOX_HOME/ports.conf" || { cat "$AIBOX_HOME/ports.conf"; false; }
 }
@@ -82,7 +83,7 @@ load test_helper
   [ "$status" -eq 4 ] || { echo "expected exit 4, got $status: $output"; false; }
   [[ "$output" == *"port collision"* ]] || { echo "$output"; false; }
   # and it REFUSES rather than silently starting into a busy port
-  [[ "$output" == *"pick another name"* ]] || { echo "$output"; false; }
+  [[ "$output" == *"pick another profile name"* ]] || { echo "$output"; false; }
 }
 
 @test "the DEFAULT profile is exempt (keeps the module's declared ports)" {
