@@ -106,7 +106,8 @@ _upgrade_multi_hop() {
   _upgrade_log_append "${name}" "${cur_ver} → ${hop_list[$((n_hops - 1))]} path-started ($((n_hops - 1)) stops)${rp_snap:+ snapshot=${rp_snap}}"
 
   log "hop path: ${cur_ver} → ${hop_list[*]} ($((n_hops - 1)) required stop(s); omnibus boots 3-5 min each)"
-  for hop_spec in "${hop_list[@]}"; do
+  # bash 3.2: empty-array-safe expansion (the caller passes 2+ hops, but be safe)
+  for hop_spec in ${hop_list[@]+"${hop_list[@]}"}; do
     i=$((i + 1))
     # intermediate stops arrive as "major.minor" — resolve the latest patch; the
     # final hop is the user's/target full version.

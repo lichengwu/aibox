@@ -228,7 +228,8 @@ _upg_check_report() { # $1=module $2=current $3=target $4=rb-from $5=rb-ts $6=n_
       if [ "${n_hops}" -gt 1 ]; then
         log "path    : $((n_hops - 1)) required upgrade stop(s) — official rule: every stop between current and target, each hop on the minor's latest patch, migrations must finish before the next hop"
         i=0
-        for hop_ver in "${hop_list[@]}"; do
+        # bash 3.2: "\${a[@]}" on an EMPTY array is an unbound variable under set -u
+        for hop_ver in ${hop_list[@]+"${hop_list[@]}"}; do
           i=$((i + 1))
           if [ "${i}" -eq "${n_hops}" ]; then
             log "  hop ${i}/${n_hops}  ${hop_ver}    target"
@@ -286,7 +287,7 @@ _upgrade_state_set "${name}" envbak "${bak}"
 _upgrade_state_set "${name}" databak "${snap}"
 _upgrade_state_set "${name}" status started
 _upgrade_log_append "${name}" "${cur_ver} → ${target} started${snap:+ snapshot=${snap}}"
-upgrade_env_rewrite "${envf}" "${newvals[@]}"
+upgrade_env_rewrite "${envf}" ${newvals[@]+"${newvals[@]}"}
 log "rewrote image tags in ${envf} (${cur_ver} → ${target})"
 
 if ! AIBOX_MODULE="${name}" AIBOX_MODULE_VERSION="${prog_module_ver:-}" bash "${svc}" start; then
@@ -470,7 +471,9 @@ HOPSLIST
   rb_ts="$(_upgrade_state_get "${name}" ts)"
 
   if [ "${check_only}" = 1 ]; then
-    _upg_check_report "${name}" "${cur_ver}" "${target}" "${rb_from}" "${rb_ts}" "${n_hops}" "${hop_list[@]}"
+    # bash 3.2: an empty hop list must not expand to an unbound variable (the
+    # --check path of a single-hop module has none)
+    _upg_check_report "${name}" "${cur_ver}" "${target}" "${rb_from}" "${rb_ts}" "${n_hops}" ${hop_list[@]+"${hop_list[@]}"}
     return $?
   fi
 
@@ -489,7 +492,7 @@ HOPSLIST
 
   # ---- multi-hop execution: gitlab-style required upgrade stops ----
   if [ "${n_hops}" -gt 1 ]; then
-    _upgrade_multi_hop "${name}" "${cur_ver}" "${envf}" "${svc}" "${images}" "${pattern}" "${repo}" "${src}" "${no_backup}" "${hop_list[@]}"
+    _upgrade_multi_hop "${name}" "${cur_ver}" "${envf}" "${svc}" "${images}" "${pattern}" "${repo}" "${src}" "${no_backup}" ${hop_list[@]+"${hop_list[@]}"}
     return $?
   fi
 
@@ -499,9 +502,9 @@ HOPSLIST
   done <<NEWVALS
 $(_upg_build_newvals "${target}" "${mapping}" "${images}")
 NEWVALS
-  _upg_pull_images "${newvals[@]}"
+  _upg_pull_images ${newvals[@]+"${newvals[@]}"}
 
-  _upg_apply "${name}" "${envf}" "${svc}" "${target}" "${cur_ver}" "${prog_module_ver:-}" "${newvals[@]}"
+  _upg_apply "${name}" "${envf}" "${svc}" "${target}" "${cur_ver}" "${prog_module_ver:-}" ${newvals[@]+"${newvals[@]}"}
   return $?
 }
 
