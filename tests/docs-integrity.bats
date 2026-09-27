@@ -120,3 +120,19 @@ FILES
   [[ "${cases}" == *"tests/cli-consistency.bats"* ]] || false
   [[ "${cases}" == *"tests/docker"* ]] || grep -q 'docker/run.sh' "${REPO_ROOT}/tests/CASES.md" || false
 }
+
+@test "CI workflows parse as YAML (an unquoted ': ' in a step name breaks them)" {
+  run bash "$REPO_ROOT/scripts/check-sources.sh"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"workflows:"* ]] || { echo "$output"; false; }
+  # teeth: a planted unquoted colon is caught without any parser
+  local fx="$AIBOX_HOME/wfcheck"
+  mkdir -p "$fx/.github/workflows" "$fx/src/aibox" "$fx/tools/_shared/lib" "$fx/scripts"
+  cp "$REPO_ROOT/scripts/check-sources.sh" "$fx/scripts/"
+  printf 'ok() { :; }\n' >"$fx/tools/_shared/lib/00-out.sh"
+  printf '#!/usr/bin/env bash\n' >"$fx/src/aibox/00-head.sh"
+  printf 'jobs:\n  a:\n    steps:\n      - name: bad (oops: here)\n        run: echo hi\n' >"$fx/.github/workflows/x.yml"
+  run bash "$fx/scripts/check-sources.sh"
+  [ "$status" -eq 1 ] || { echo "expected rc=1, got $status: $output"; false; }
+  [[ "$output" == *"unquoted"* ]] || { echo "$output"; false; }
+}

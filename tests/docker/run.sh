@@ -82,6 +82,22 @@ scripts/bundle.sh --check
 scripts/check-sources.sh
 scripts/manifest.sh --check
 scripts/gen-docs.sh --check
+# CI workflow files are code too: an unquoted ": " in a step name broke the whole
+# lint workflow once ("workflow file issue") with no local signal — parse them.
+if command -v python3 >/dev/null 2>&1; then
+  python3 - <<'PYCHK' || fail=1
+import glob, sys, yaml
+bad = []
+for f in sorted(glob.glob(".github/workflows/*.yml")):
+    try:
+        yaml.safe_load(open(f))
+    except Exception as e:
+        bad.append(f"{f}: {e}")
+if bad:
+    print("\n".join(bad)); sys.exit(1)
+print("workflow yaml: OK")
+PYCHK
+fi
 scripts/validate-module.sh --all
 exit $fail
 '

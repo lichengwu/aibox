@@ -43,10 +43,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - name: bundle freshness (bin/aibox == src/aibox/*.sh)
+      - name: bundle freshness — bin/aibox == src/aibox/*.sh
         run: scripts/bundle.sh --check
 
-      - name: source hygiene (anti-twin: shared lib owns shared helpers)
+      - name: source hygiene — anti-twin (one implementation per shared helper)
         run: scripts/check-sources.sh
 
       - name: module content manifest freshness

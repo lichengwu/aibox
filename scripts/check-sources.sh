@@ -15,7 +15,9 @@ _root="$(cd "${_here}/.." && pwd)"
 fail=0
 
 _defs() { # file → top-level function names (one per line, sorted -u)
-  grep -hoE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$@" 2>/dev/null | sed 's/()$//' | sort -u
+  # `|| true`: an empty file list makes grep exit 1 and, with pipefail + set -e,
+  # a bare call would kill the whole gate (caught by the planted-fixture test)
+  { grep -hoE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$@" 2>/dev/null || true; } | sed 's/()$//' | sort -u
 }
 shared_defs="$(mktemp)"; mgr_defs="$(mktemp)"
 _defs "${_root}"/tools/_shared/lib/*.sh >"${shared_defs}"
@@ -51,6 +53,41 @@ if [ -n "${src_hits}" ]; then
   fail=1
 else
   printf '✓  data stores: parsed, never sourced\n'
+fi
+
+# CI workflow files are code: a step name with an unquoted ": " is YAML-invalid
+# ("mapping values are not allowed here") and GitHub reports only "workflow file
+# issue" — the whole lint suite stops running with no local signal. Heuristic (no
+# parser needed): a `- name:` value containing ": " that is not quoted.
+wf_hits=""
+for f in "${_root}"/.github/workflows/*.yml; do
+  [ -f "${f}" ] || continue
+  h="$(grep -nE '^[[:space:]]*-[[:space:]]+name:[[:space:]]+[^"'"'"']*: ' "${f}" 2>/dev/null || true)"
+  [ -n "${h}" ] && wf_hits="${wf_hits}${f}: ${h}
+"
+done
+if [ -n "${wf_hits}" ]; then
+  printf '✗  unquoted ": " in a workflow step name breaks the YAML:\n%s' "${wf_hits}" >&2
+  fail=1
+elif command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1; then
+  if ! python3 -c "
+import glob, sys, yaml
+bad = []
+for f in sorted(glob.glob('${_root}/.github/workflows/*.yml')):
+    try:
+        yaml.safe_load(open(f))
+    except Exception as e:
+        bad.append('%s: %s' % (f, e))
+if bad:
+    print(chr(10).join(bad)); sys.exit(1)
+" ; then
+    printf '✗  a workflow file does not parse as YAML (see above)\n' >&2
+    fail=1
+  else
+    printf '✓  workflows: parse as YAML, no unquoted colons\n'
+  fi
+else
+  printf '✓  workflows: no unquoted colons (pyyaml absent — parser check skipped)\n'
 fi
 
 # numeric prefix, unique
