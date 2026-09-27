@@ -50,7 +50,7 @@ _profile_load() {
   [ -z "${AIBOX_PROFILE:-}" ] && return 0
   [ "$AIBOX_PROFILE" = "base" ] && return 0
   local pf="${AIBOX_HOME:-${HOME:+${HOME}/.aibox}}/profiles/${AIBOX_PROFILE}.conf"
-  profile_ensure "$AIBOX_PROFILE" "$pf" "pi-web-${AIBOX_PROFILE}"
+  profile_ensure "$AIBOX_PROFILE" "$pf"
   # Parsed, not executed: a profile conf is data (cfg_kv_load in the shared lib)
   cfg_kv_load "$pf" PROFILE_
   if [ -z "${PROFILE_HASH:-}" ] && [ -z "${PROFILE_NAME:-}" ]; then

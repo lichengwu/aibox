@@ -9,12 +9,27 @@ load test_helper
 # Bytes-first decoding: CI macOS runs bats with a non-UTF-8 locale and the
 # preflight details carry ·/… — `json.load(sys.stdin)` would decode as ASCII and
 # fail on valid UTF-8 JSON (measured on the macOS lint job).
-_json_valid() { # stdin → "ok" when it parses, the error otherwise
+_json_valid() { # stdin → "ok" when it parses, "" otherwise (stderr is NOT the verdict)
+  # 2>/dev/null matters: with 2>&1 a python warning on stderr would replace the
+  # "ok" answer (measured on the macOS runner) and turn a valid payload into a
+  # failure. Diagnostics live in _json_error.
   if command -v python3 >/dev/null 2>&1; then
-    python3 -c 'import json,sys; json.loads(sys.stdin.buffer.read().decode("utf-8")); print("ok")' 2>&1 | tail -1
+    python3 -c 'import json,sys; json.loads(sys.stdin.buffer.read().decode("utf-8")); print("ok")' 2>/dev/null | tail -1
   else
     printf 'ok'
   fi
+}
+
+_json_error() { # stdin → why it did not parse
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 -c 'import json,sys
+raw = sys.stdin.buffer.read()
+try:
+    json.loads(raw.decode("utf-8")); print("valid")
+except Exception as e:
+    print("ERR:", e)
+    i = getattr(e, "pos", 0)
+    print("near:", raw[max(0, i - 60):i + 60])' 2>&1 | tail -3
 }
 _json_field() { # $1=json $2=python expression over d
   command -v python3 >/dev/null 2>&1 || { printf ''; return 0; }
@@ -24,7 +39,7 @@ _json_field() { # $1=json $2=python expression over d
 @test "dashboard --json: valid JSON, documented keys, no ANSI escapes" {
   run bash -c "export AIBOX_HOME='$AIBOX_HOME'; source '$AIBOX_BIN'; cmd_dashboard_json"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [ "$(_json_valid <<<"$output")" = "ok" ] || { echo "$output" | head -5; false; }
+  [ "$(_json_valid <<<"$output")" = "ok" ] || { printf '%s\n' "$output" | _json_error; false; }
   [ "$(_json_field "$output" 'sorted(d.keys())')" = "['aibox_version', 'modules', 'profile']" ] || { echo "$output" | head -3; false; }
   [ "$(_json_field "$output" 'd["profile"]')" = "base" ] || false
   ! printf '%s' "$output" | grep -q $'\033' || false
@@ -35,7 +50,7 @@ _json_field() { # $1=json $2=python expression over d
   cp "$REPO_ROOT/tools/new-api/module.yaml" "$AIBOX_MOD_DIR/new-api/"
   printf 'AIBOX_INSTALLED_new_api="1.3.0"\n' >"$AIBOX_INSTALLED"
   run bash -c "export AIBOX_HOME='$AIBOX_HOME'; source '$AIBOX_BIN'; cmd_dashboard_json"
-  [ "$(_json_valid <<<"$output")" = "ok" ] || { echo "$output" | head -5; false; }
+  [ "$(_json_valid <<<"$output")" = "ok" ] || { printf '%s\n' "$output" | _json_error; false; }
   [ "$(_json_field "$output" 'len(d["modules"])')" = "1" ] || false
   [ "$(_json_field "$output" 'd["modules"][0]["name"]')" = "new-api" ] || false
   [ "$(_json_field "$output" 'd["modules"][0]["module_version"]')" = "1.3.0" ] || false
@@ -66,7 +81,7 @@ _json_field() { # $1=json $2=python expression over d
   cp "$REPO_ROOT/tools/new-api/module.yaml" "$AIBOX_MOD_DIR/new-api/"
   run bash -c "export AIBOX_HOME='$AIBOX_HOME' AIBOX_RAW='file://$REPO_ROOT'; source '$AIBOX_BIN'; cmd_check new-api --json 2>/dev/null"
   [ "$status" -eq 3 ] || [ "$status" -eq 4 ] || { echo "unexpected rc=$status: $output"; false; }
-  [ "$(_json_valid <<<"$output")" = "ok" ] || { echo "$output" | head -5; false; }
+  [ "$(_json_valid <<<"$output")" = "ok" ] || { printf '%s\n' "$output" | _json_error; false; }
   [ "$(_json_field "$output" 'd["module"]')" = "new-api" ] || false
   [ "$(_json_field "$output" 'd["ok"]')" = "False" ] || false
   [ "$(_json_field "$output" 'd["exit"]')" = "$status" ] || { echo "$output"; false; }

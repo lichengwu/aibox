@@ -1423,29 +1423,26 @@ profile_owner() { # $1=port → the profile that registered it ("" when none)
   return 0
 }
 
-# Which container publishes a host port ("" when docker is unavailable / nobody
-# does). This is the authoritative answer for "is this port already taken, and by
-# whose container" — the registry only knows about aibox profiles.
-_port_owner_container() { # $1=port → aibox container publishing it ("" = unknown)
-  command -v docker >/dev/null 2>&1 || return 0
-  # TWO filters on purpose: `publish=` alone is unreliable across daemon versions
-  # (measured on a CI runner: unrelated containers came back as the "owner" of
-  # 35177), and only aibox-named containers can be a profile conflict anyway.
-  # No daemon / empty answer → "" (callers fall back to the registry view).
-  docker ps --filter "name=aibox-" --filter "publish=${1}" --format '{{.Names}}' 2>/dev/null |
-    grep -v '^$' | head -1 || true
-}
-
-# Conflicts for a profile: a derived port is a conflict when it is LIVE and the
-# listener is not one of OUR containers (passed by the caller), whether or not it
-# belongs to a registered aibox profile. Live-caught: a fresh profile name whose
-# slot is held by another tenant's container — docker reports only
-# "Bind for 127.0.0.1:35177 failed: port is already allocated".
-# Prints "<what> <port>" per conflict (empty = clean).
-profile_conflicts() { # $1=profile name; rest = container names that belong to US
-  local name="${1:-}" h pg rd wb p other mine owner
-  shift 2>/dev/null || true
-  mine=" $* "
+# Conflicts for a profile: a derived port is a conflict when it is LIVE and NOT
+# registered to this profile.
+#
+#   registry says another profile → conflict, that profile is named
+#   registry says this profile    → fine (idempotent re-start of a running stack)
+#   registry says nothing         → conflict with an "unknown" holder: the port is
+#                                   held by something we cannot attribute, and the
+#                                   stack could not bind anyway. This is the case
+#                                   that used to surface as docker's raw
+#                                   "Bind for 127.0.0.1:35177 failed: port is
+#                                   already allocated" (a real deployment on the
+#                                   same host holding the slot).
+#
+# Ownership comes from the registry + the live listener probe ONLY. It used to ask
+# `docker ps --filter publish=<port>`, which returned UNRELATED containers as the
+# owner on two different machines (CI runner, dev host) — a wrong "owner" is worse
+# than no owner.
+# Prints "<holder> <port>" per conflict ("" = clean).
+profile_conflicts() { # $1=profile name
+  local name="${1:-}" h pg rd wb p other
   [ -n "${name}" ] && [ "${name}" != "base" ] || return 0
   h="$(profile_hash "${name}")"
   pg="$(profile_port pg "${h}")"
@@ -1453,29 +1450,17 @@ profile_conflicts() { # $1=profile name; rest = container names that belong to U
   wb="$(profile_port web "${h}")"
   for p in "${pg}" "${rd}" "${wb}"; do
     port_listening "${p}" || continue
-    owner="$(_port_owner_container "${p}")"
-    # only when we actually learned an owner: with owner="" the "is it ours"
-    # pattern would degenerate to two spaces and swallow every port
-    if [ -n "${owner}" ]; then
-      case "${mine}" in *" ${owner} "*) continue ;; esac
-    fi
     other="$(profile_owner "${p}")"
-    if [ -n "${other}" ] && [ "${other}" != "${name}" ]; then
-      printf '%s %s\n' "${other}" "${p}"
-      continue
-    fi
-    if [ -n "${owner}" ]; then
-      printf '%s %s\n' "${owner}" "${p}"
-    fi
+    [ "${other}" = "${name}" ] && continue
+    printf '%s %s\n' "${other:-unknown}" "${p}"
   done
   return 0
 }
 
 # Ensure the profile exists (conf file + registration) and refuse to start into a
 # LIVE port owned by another profile (exit 4 = precheck failed, spec §Exit codes).
-profile_ensure() { # $1=profile name $2=conf path; rest = our own container names
+profile_ensure() { # $1=profile name $2=conf path
   local name="${1:-}" conf="${2:-}" h conflicts
-  shift 2
   [ -n "${name}" ] && [ "${name}" != "base" ] || return 0
   h="$(profile_hash "${name}")"
   if [ ! -f "${conf}" ]; then
@@ -1490,15 +1475,21 @@ CONF
     log "Created profile '${name}' (hash=${h})"
     _PROFILE_JUST_CREATED=1
   fi
-  profile_register "${name}"
-  # shellcheck disable=SC2046
-  conflicts="$(profile_conflicts "${name}" "$@")"
+  # Check BEFORE registering: a squatted port must not look like "ours" just
+  # because we are about to claim it. A re-start of an already-registered profile
+  # still sees its own entry (owner == us) and stays clean.
+  conflicts="$(profile_conflicts "${name}")"
   if [ -n "${conflicts}" ]; then
-    warn "profile '${name}' would reuse ports already in use by another profile:"
+    warn "profile '${name}' cannot use its derived ports — they are already taken:"
     printf '%s\n' "${conflicts}" | while read -r other p; do
-      warn "  ${p} is already published by '${other}' (pick another profile name, or stop that stack)"
+      if [ "${other}" = "unknown" ]; then
+        warn "  ${p} is in use, but no aibox profile registered it (another service? pick another profile name)"
+      else
+        warn "  ${p} belongs to profile '${other}' (pick another profile name, or stop that stack)"
+      fi
     done
     die_code 4 "profile '${name}' cannot start: port collision on $(printf '%s' "${conflicts}" | head -1 | cut -d' ' -f2) (holder: $(printf '%s' "${conflicts}" | head -1 | cut -d' ' -f1))"
   fi
+  profile_register "${name}"
   return 0
 }

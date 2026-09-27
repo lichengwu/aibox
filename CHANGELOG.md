@@ -7,6 +7,34 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.20.3] — 2026-09-27
+
+### Changed
+
+- **Profile port conflicts are decided from aibox's own knowledge only.** The
+  `docker ps --filter publish=<port>` lookup was removed: on two different
+  machines (CI runner and a dev host, both with real daemons) it returned
+  *unrelated* containers as the port's owner, and a wrong owner is worse than no
+  owner. The rule is now: a live derived port that the registry does not attribute
+  to THIS profile is a conflict — the holder is named when another profile
+  registered it, otherwise reported as `unknown` (the case that used to surface as
+  docker's raw `Bind for 127.0.0.1:35177 failed: port is already allocated`).
+  The check runs BEFORE the profile registers itself (a squatted port must not
+  look like "ours" just because we are about to claim it); a re-start of an
+  already-registered profile stays clean.
+
+### Fixed
+
+- `_json_valid` merged stderr into its verdict: a python warning on the macOS
+  runner replaced the `ok` answer and turned a valid `--json` payload into a test
+  failure. The verdict is parse-only now, and the failure path prints the actual
+  decoder error (stderr-free) for diagnosis.
+
+### Module versions
+
+base 1.6.3 · clash 1.5.3 · dify 1.21.3 · gitlab 1.7.3 · new-api 1.4.3 ·
+openmaic 1.4.3 · pi-web 1.5.3 · windmill 1.6.3 · xiaozhi 1.4.3
+
 ## [0.20.2] — 2026-09-27
 
 ### Fixed
@@ -1334,6 +1362,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.20.3]: https://github.com/lichengwu/aibox/compare/v0.20.2...v0.20.3
 [0.20.2]: https://github.com/lichengwu/aibox/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/lichengwu/aibox/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/lichengwu/aibox/compare/v0.19.1...v0.20.0
