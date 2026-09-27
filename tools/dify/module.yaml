@@ -34,6 +34,8 @@ files:
   - ssrf_proxy/squid.conf.template
   - ssrf_proxy/squid-common.conf.template
   - ssrf_proxy/docker-entrypoint.sh
+state_files:
+  - .env
 
 # Shared library include (repo tools/_shared/<name>.sh → cached as
 # _<name>.sh; lib.sh sources it). common = output helpers + docker.io pool.

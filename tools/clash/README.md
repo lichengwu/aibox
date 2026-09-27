@@ -140,3 +140,26 @@ high-priority candidates (raced, not pinned — the fastest route serves).
 `aibox clash start|stop|restart|status|logs` — the shared lifecycle; `dashboard` is the
 rich view (alias of `status`), and `doctor` is the standard diagnostic (deps, docker,
 state, declared ports; see below).
+
+<!-- BEGIN GENERATED: actions (scripts/gen-docs.sh) -->
+| action | what it does |
+| --- | --- |
+| `start` | Start the mihomo kernel + switch aibox egress |
+| `stop` | Stop the kernel (egress falls back) |
+| `restart` | Stop + start |
+| `status` | Kernel + subscription state + node latency table |
+| `dashboard` | Alias of status |
+| `refresh` | Force-refresh the subscription (auto: 1 week) |
+| `set` | <subscription-url> — store the subscription + generate config |
+| `select` | <node-name> — switch the active node |
+| `test` | [url] — probe connectivity via the current node |
+| `logs` | Follow the mihomo log |
+| `doctor` | Self-check (binary/config/subscription/kernel) |
+| `use-external` | [port] — reuse a local clash client (Verge etc.) as the aibox egress |
+| `internal` | Revert to aibox-managed mihomo (from external mode) |
+<!-- END GENERATED: actions -->
+<!-- BEGIN GENERATED: config (scripts/gen-docs.sh) -->
+| key | default | notes |
+| --- | --- | --- |
+| — | — | no declared config keys |
+<!-- END GENERATED: config -->

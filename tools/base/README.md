@@ -185,3 +185,36 @@ state, declared ports; see below).
 reported state (`dashboard_info`) and its declared port listeners. Shared
 implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
 exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.
+
+<!-- BEGIN GENERATED: actions (scripts/gen-docs.sh) -->
+| action | what it does |
+| --- | --- |
+| `start` | Start shared PG + Redis |
+| `stop` | Stop containers (data preserved) |
+| `restart` | Stop + start |
+| `status` | Container states + PG/Redis rich view |
+| `dashboard` | Alias of status |
+| `doctor` | Deep diagnostics: deps, docker, state, declared ports |
+| `logs` | Container logs |
+| `create` | <component> <resource> — create a resource (e.g. create postgres dify) |
+| `dump` | Full pg_dumpall + Redis snapshot of the shared data (safety net before upgrades) |
+| `restore` | <file> — restore a dump (REPLACES all shared data; default: newest) |
+| `upgrade` | [--check | --pg <tag> | --redis <tag> | --rollback] — float the infra image pins (dump → pin → health gate → rollback), state shared with `aibox upgrade base` |
+| `profile` | List named profiles |
+| `config` | Show/set config keys (store: base.env) |
+<!-- END GENERATED: actions -->
+<!-- BEGIN GENERATED: config (scripts/gen-docs.sh) -->
+| key | default | notes |
+| --- | --- | --- |
+| `AIBOX_BASE_POSTGRES_PORT` | `35432` | host PostgreSQL port |
+| `AIBOX_BASE_POSTGRES_USER` | `aibox` | PG superuser (consuming modules get it via base.env) |
+| `AIBOX_BASE_POSTGRES_PASSWORD` | `aibox` | PG password (override via this key; consumers read base.env) (secret) |
+| `AIBOX_BASE_PG_IMAGE` | `postgres:18` | postgres image pin (floated by `aibox base upgrade --pg`; written to the deploy-root .env) |
+| `AIBOX_BASE_REDIS_IMAGE` | `redis:7` | redis image pin (floated by `aibox base upgrade --redis`) |
+| `AIBOX_BASE_REDIS_PASSWORD` | `(generated)` | Redis auth password (published in base.env as AIBOX_REDIS_PASSWORD) |
+| `AIBOX_BASE_BIND` | `127.0.0.1` | host interface the ports bind to (use 0.0.0.0 only when a remote host must reach them) |
+| `AIBOX_BASE_REDIS_PORT` | `36379` | host Redis port |
+| `AIBOX_DOCKER_POOL` | `shipped pool` | docker.io mirror list override (direct = off) (knob) |
+| `AIBOX_DOCKER_MIRROR` | `(unset)` | user mirror, tried first (knob) |
+| `AIBOX_DOCKER_FORCE_POOL` | `0` | 1 = skip the direct probe, always engage the pool (knob) |
+<!-- END GENERATED: config -->

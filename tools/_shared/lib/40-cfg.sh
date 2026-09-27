@@ -213,3 +213,70 @@ cfg_kv_load_export() { # $1=file [$2=key prefix]
   done < "${f}"
   return 0
 }
+
+# ---------- managed vs state files (update must not clobber user edits) ----------
+# A deploy root holds two kinds of files:
+#   MANAGED (templates/code shipped by the module: compose files, conf templates)
+#     — safe to refresh on update, as long as the user has not edited them
+#   STATE (`.env`, data, anything the user owns: `state_files:` in module.yaml)
+#     — never overwritten
+# Historically install hooks did a plain `cp`, so an edited compose file was
+# silently replaced by the next `aibox update`. install_managed_file records the
+# hash of what it installed and keeps a user-modified copy (writing the new
+# version next to it as `<name>.new`).
+
+managed_manifest() { # $1=deploy root → the hash manifest path
+  printf '%s/.managed.sha256' "${1:-}"
+}
+
+# Install/refresh one managed file (always 0 when it did its job — keeping the
+# user's edit included; only a real copy failure is fatal).
+install_managed_file() { # $1=source $2=destination
+  local src="${1:-}" dst="${2:-}" root mf want have tmp
+  [ -n "${src}" ] && [ -f "${src}" ] || return 0
+  [ -n "${dst}" ] || return 0
+  root="$(dirname "${dst}")"
+  mkdir -p "${root}"
+  mf="$(managed_manifest "${root}")"
+  want="$(sha256_of "${src}")"
+  if [ -f "${dst}" ]; then
+    have="$(sha256_of "${dst}")"
+    if [ "${have}" != "${want}" ]; then
+      # the file on disk differs from what we ship: is it OUR previous version
+      # (safe to refresh) or the user's edit (keep it)?
+      if [ "$(manifest_digest "${mf}" "${dst}")" = "${have}" ]; then
+        cp "${src}" "${dst}"
+        _managed_record "${mf}" "${dst}" "${want}"
+        return 0
+      fi
+      # accepted-update path: the file currently equals the "<dst>.new" we shipped
+      # last time (the user took the update) — safe to refresh
+      if [ "$(manifest_digest "${mf}" "${dst}.new")" = "${have}" ]; then
+        cp "${src}" "${dst}"
+        _managed_record "${mf}" "${dst}" "${want}"
+        return 0
+      fi
+      cp "${src}" "${dst}.new"
+      _managed_record "${mf}" "${dst}.new" "${want}"
+      warn "$(basename "${dst}") was modified by you — kept it; the updated version is $(basename "${dst}").new"
+      # 0: keeping the user's file IS the success case (a hook must not abort)
+      return 0
+    fi
+    _managed_record "${mf}" "${dst}" "${have}"
+    return 0
+  fi
+  cp "${src}" "${dst}"
+  _managed_record "${mf}" "${dst}" "${want}"
+  return 0
+}
+
+_managed_record() { # $1=manifest $2=path $3=sha256
+  local mf="${1:-}" p="${2:-}" h="${3:-}" tmp
+  [ -n "${mf}" ] && [ -n "${h}" ] || return 0
+  tmp="$(mktemp)"
+  [ -f "${mf}" ] && grep -v "  ${p}\$" "${mf}" >"${tmp}" 2>/dev/null || true
+  printf '%s  %s\n' "${h}" "${p}" >>"${tmp}"
+  sort -o "${tmp}" "${tmp}"
+  mv "${tmp}" "${mf}"
+  return 0
+}

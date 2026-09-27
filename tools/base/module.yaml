@@ -18,6 +18,8 @@ ports:
 
 files:
   - docker-compose.yml
+state_files:
+  - .env
 
 # Preflight (enforced by aibox install/update; see docs/module-spec.md).
 # Images are pulled by the docker DAEMON (whose egress differs from the host's —

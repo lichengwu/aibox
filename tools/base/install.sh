@@ -7,7 +7,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log "Installing the base module (shared PG 18 + Redis 7)..."
 mkdir -p "$(base_deploy_root)"
-cp "$DIR/docker-compose.yml" "$COMPOSE_FILE"
+install_managed_file "$DIR/docker-compose.yml" "$COMPOSE_FILE"
 log "compose placed: ${COMPOSE_FILE}"
 echo
 log "Start:    aibox base start"

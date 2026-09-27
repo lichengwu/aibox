@@ -18,6 +18,8 @@ ports:
 
 files:
   - cli/openmaic
+state_files:
+  - .env
 
 services:
   - base:postgres#openmaic

@@ -151,3 +151,47 @@ Cross-platform: installation is copying a single file; the CLI is bash 3.2 compa
 `aibox openmaic start|stop|restart|status|logs` — the shared lifecycle; `dashboard` is the
 rich view (alias of `status`), and `doctor` is the standard diagnostic (deps, docker,
 state, declared ports; see below).
+
+<!-- BEGIN GENERATED: actions (scripts/gen-docs.sh) -->
+| action | what it does |
+| --- | --- |
+| `start` | Alias of up (standard lifecycle) |
+| `stop` | Alias of down (standard lifecycle) |
+| `status` | Version / health / containers / resources overview |
+| `dashboard` | Same as status (dispatched to the CLI) |
+| `health` | [--wait N] — health check (exit code is probe-friendly) |
+| `doctor` | Environment self-check |
+| `version` | [--check] — version info / upstream release check |
+| `up` | Start the stack |
+| `down` | Stop the stack |
+| `restart` | Restart the stack |
+| `logs` | Container logs |
+| `render` | Regenerate app config (secrets unchanged) |
+| `upgrade` | Pull latest images + redeploy (auto-backup) |
+| `rollback` | Restore the auto-backup taken before upgrade |
+| `backup` | Snapshot data volumes to a tar archive |
+| `restore` | Restore volumes from a backup archive |
+| `db` | Shell into the app database (psql) |
+| `config` | Edit the openmaic.conf (vi/nano) |
+| `models` | Model catalog management (list/enable) |
+| `install` | (Dispatched) Bootstrap components on the deploy host |
+| `clean` | Remove stopped containers + dangling images |
+| `powerlog` | Power-log query/analysis tools |
+| `url` | Print the web entry points |
+<!-- END GENERATED: actions -->
+<!-- BEGIN GENERATED: config (scripts/gen-docs.sh) -->
+| key | default | notes |
+| --- | --- | --- |
+| `OPENMAIC_PROXY_URL` | `(unset)` | proxy for pulling source (synced by aibox proxy set; store: /etc/openmaic/openmaic.conf) |
+| `OPENMAIC_BIN_DIR` | `${AIBOX_BIN_DIR:-~/.local/bin}` | install target of the dispatched CLI (knob) |
+| `OPENMAIC_CONF_DIR` | `/etc/openmaic` | conf file location (knob) |
+| `OPENMAIC_BASE_DIR` | `$AIBOX_HOME/apps/openmaic` | deploy root (knob) |
+| `OPENMAIC_HEALTH_URL` | `http://127.0.0.1:3000/api/health` | health probe URL (knob) |
+| `OPENMAIC_HEALTH_TIMEOUT` | `300` | health-wait seconds (knob) |
+| `OPENMAIC_BACKUP_KEEP` | `14` | backup retention count (knob) |
+| `OPENMAIC_RENDER_ENABLED` | `1` | render component switch (knob) |
+| `OPENMAIC_SHARED_PG` | `0` | 1 = use the aibox shared base PG (knob) |
+| `OPENMAIC_PROXY_HOST` | `(unset)` | proxy host for build-time source pulls (knob) |
+| `OPENMAIC_BUILD_TIMEOUT_MAIN` | `3600` | main image build timeout seconds (knob) |
+| `OPENMAIC_BUILD_TIMEOUT_RENDER` | `2400` | render image build timeout seconds (knob) |
+<!-- END GENERATED: config -->

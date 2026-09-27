@@ -21,6 +21,8 @@ ports:
 # shared aibox base via the external aiboxbasenet network + base.env).
 files:
   - docker-compose.yml
+state_files:
+  - .env
 
 # Shared-base consumers: aibox ensure_services auto-starts base and creates
 # the `new_api` database before install.sh runs (see module-spec §services).

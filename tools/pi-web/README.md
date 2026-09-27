@@ -100,3 +100,29 @@ Cross-platform: macOS uses launchd (`~/Library/LaunchAgents` plist + `KeepAlive`
 reported state (`dashboard_info`) and its declared port listeners. Shared
 implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
 exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.
+
+<!-- BEGIN GENERATED: actions (scripts/gen-docs.sh) -->
+| action | what it does |
+| --- | --- |
+| `start` | Start the launchd/systemd service |
+| `stop` | Stop the service |
+| `restart` | Recreate the service (applies config changes) |
+| `status` | Service + HTTP health + rich view |
+| `dashboard` | Alias of status |
+| `doctor` | Deep diagnostics: deps, docker, state, declared ports |
+| `logs` | Follow the app log |
+| `diagnose` | Self-check (port/auth/process/log) |
+| `config` | Show/set config keys (store: the plist/unit) |
+<!-- END GENERATED: actions -->
+<!-- BEGIN GENERATED: config (scripts/gen-docs.sh) -->
+| key | default | notes |
+| --- | --- | --- |
+| `PI_WEB_PASSWORD` | `random` | HTTP Basic Auth password (user pi; the installed plist/unit value is the truth after install) (secret) |
+| `PI_WEB_BIND` | `0.0.0.0` | listen address (127.0.0.1 = localhost only) |
+| `PI_WEB_PORT` | `30141` | listen port |
+| `AIBOX_NPM_REGISTRY` | `(unset)` | hard-pin one npm registry (knob) |
+| `AIBOX_NPM_REGISTRIES` | `shipped list` | candidate registries override (knob) |
+| `AIBOX_NPM_TIMEOUT` | `240` | npm install watchdog seconds (knob) |
+| `AIBOX_NPM_PROBE_TIMEOUT` | `6` | registry probe timeout (knob) |
+| `PI_WEB_PI_UPDATE_TIMEOUT` | `240` | pi update --all watchdog seconds (aibox update pi-web also refreshes the pi CLI) (knob) |
+<!-- END GENERATED: config -->

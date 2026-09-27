@@ -16,6 +16,8 @@ ports:
 
 files:
   - docker-compose.yml
+state_files:
+  - .env
 
 # Shared library include (repo tools/_shared/<name>.sh → cached as
 # _<name>.sh; lib.sh sources it). common = output helpers + docker.io pool.

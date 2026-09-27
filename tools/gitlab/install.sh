@@ -10,7 +10,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(deploy_root)"
 mkdir -p "$ROOT"
 
-cp "$DIR/docker-compose.yml" "$ROOT/docker-compose.yml"
+install_managed_file "$DIR/docker-compose.yml" "$ROOT/docker-compose.yml"
 log "compose placed: $ROOT/docker-compose.yml"
 
 if [ ! -f "$ROOT/.env" ]; then

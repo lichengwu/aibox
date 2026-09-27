@@ -96,3 +96,31 @@ refuses auto-jumps; `--to` pins. Auto-rollback on failed health check.
 reported state (`dashboard_info`) and its declared port listeners. Shared
 implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
 exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.
+
+<!-- BEGIN GENERATED: actions (scripts/gen-docs.sh) -->
+| action | what it does |
+| --- | --- |
+| `start` | Staged start: MySQL + console → secret → ws server (health-wait) |
+| `stop` | Stop containers |
+| `restart` | Recreate containers (applies .env changes) |
+| `status` | Container + console + ws + secret state + rich view |
+| `dashboard` | Alias of status |
+| `doctor` | Deep diagnostics: deps, docker, state, declared ports |
+| `logs` | Container logs |
+| `credentials` | Admin login + secret location |
+| `secret` | <value> — manually set the server.secret (console 参数管理) |
+| `config` | Show/set config keys (store: apps/xiaozhi/.env) |
+<!-- END GENERATED: actions -->
+<!-- BEGIN GENERATED: config (scripts/gen-docs.sh) -->
+| key | default | notes |
+| --- | --- | --- |
+| `XIAOZHI_WS_PORT` | `8000` | websocket server port |
+| `XIAOZHI_CONSOLE_PORT` | `8002` | manager console port |
+| `XIAOZHI_HTTP_PORT` | `8003` | http API port |
+| `XIAOZHI_SERVER_IMAGE` | `ghcr …:server_0.9.6` | server image (aibox upgrade floats it) |
+| `XIAOZHI_WEB_IMAGE` | `ghcr …:web_0.9.6` | console image |
+| `XIAOZHI_MYSQL_IMAGE` | `mysql:8.0` | bundled MySQL image |
+| `XIAOZHI_MYSQL_PASSWORD` | `generated` | bundled MySQL root password (secret) |
+| `XIAOZHI_START_TIMEOUT` | `300` | staged-start health-wait seconds |
+| `XIAOZHI_LOG_TAIL` | `200` | log tail lines |
+<!-- END GENERATED: config -->

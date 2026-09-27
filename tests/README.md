@@ -43,6 +43,7 @@ Every regression test below was born from a real bug found in review or live tes
 | `config.bats` — save_config parseable / no leaked output | `save_config` heredoc backticks executed `aibox proxy` into the config file (P0) |
 | `base-env.bats` — write_base_env only KEY=VALUE | same class regressed in `write_base_env` (`$(aibox base start)` recursion → empty `base-<profile>.env`, found live) |
 | `base-env.bats` — prod path/host + hash 1073 | profile derivation is a cross-machine contract (same name → same ports everywhere) |
+| `managed-files.bats` — 7 tests: fresh install, untouched refresh, user-edited file kept (+`.new`), accepted-update path, every compose module uses the helper, `state_files:` declarations, validator overlap ERROR | the ownership review: a plain `cp` in install hooks silently replaced a user's edited compose on the next update |
 | `profile.bats` — pinned ports/labels for "prod" | changing the hash algorithm or ranges silently breaks every deployed profile |
 | `profile.bats` — range invariants (12 names) | derived ports must exclude well-known ports (<35000) and the defaults (35432/36379/30141) |
 | `profile.bats` — cross-module single config | base and pi-web must share ONE `profiles/<name>.conf` |
@@ -134,6 +135,8 @@ Fast suite (`bats tests/*.bats`, no docker/network, ~seconds) — **38 files**:
 - `pi-web-npm.bats`
 - `preflight.bats`
 - `profile.bats`
+- `managed-files.bats`
+- `docs-gen.bats`
 - `proxy-fallback.bats`
 - `proxy.bats`
 - `purge.bats`

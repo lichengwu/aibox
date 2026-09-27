@@ -468,6 +468,21 @@ validate_module() {
     fi
   fi
 
+  # --- S13g: file ownership (managed vs state) ---
+  # A deploy root holds MANAGED files (refreshed on update, user edits kept) and
+  # STATE files (`.env`, user-owned, never overwritten). Modules must say which
+  # are theirs, and a file cannot be both.
+  local _state _sf
+  _state="$(awk '/^state_files:/{f=1;next} /^[a-z_]+:/{f=0} f&&/^  - /{sub(/^  - /,""); gsub(/^"|"$/,""); print}' "$f" 2>/dev/null)"
+  for _sf in $_state; do
+    if printf '%s\n' "$(awk '/^files:/{f=1;next} /^[a-z_]+:/{f=0} f&&/^  - /{sub(/^  - /,""); gsub(/^"|"$/,""); print}' "$f" 2>/dev/null)" | grep -qx "${_sf}"; then
+      err "state_files entry '${_sf}' is also listed in files: — a file is either managed or state, not both"
+    fi
+  done
+  if [ -f "$d/install.sh" ] && grep -qE '\.env\b' "$d/install.sh" 2>/dev/null && ! grep -qE '^state_files:' "$f"; then
+    warn "install.sh touches .env but module.yaml declares no state_files: — declare what the user owns (never overwritten)"
+  fi
+
   # --- S13f: one reader for the module.yaml dialect (spec §Manager source layout) ---
   # A module's own sed/awk/grep over module.yaml is a second implementation of
   # the dialect: use the shared readers (meta_version / meta_field /

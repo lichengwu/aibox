@@ -38,6 +38,34 @@ with the owning profile named); a registered-but-dead owner is not a conflict.
 
 The default profile (`base`) is exempt: it keeps the module's declared ports.
 
+### File ownership in a deploy root (managed vs state)
+
+| kind | declared as | update behaviour |
+| --- | --- | --- |
+| **managed** | `files:` (shipped templates/code: compose files, conf templates) | refreshed by `install_managed_file`; if the on-disk copy differs from what the module installed (i.e. the user edited it), the edit is KEPT and the new version lands as `<name>.new` (with a warning) |
+| **state** | `state_files:` (`.env`, user-owned data) | never overwritten by any hook or by `aibox update` |
+
+Hooks must copy shipped files with `install_managed_file <src> <dst>` (shared
+library), not `cp` — the manifest in `<deploy-root>/.managed.sha256` is what lets
+the next update tell "our previous version" from "the user's edit". A file may
+not be listed in both `files:` and `state_files:` (validator ERROR); an install
+hook that touches `.env` without declaring `state_files:` gets a WARN.
+
+### Generated README blocks (actions + config keys)
+
+A module README's action table and config-key table are the same facts as
+`module.yaml` (`actions:`/`usage:`/`env:`), so they are GENERATED:
+
+```
+<!-- BEGIN GENERATED: actions (scripts/gen-docs.sh) -->
+<!-- END GENERATED: actions -->
+<!-- BEGIN GENERATED: config (scripts/gen-docs.sh) -->
+<!-- END GENERATED: config -->
+```
+
+`scripts/gen-docs.sh` (re)writes the blocks; `--check` is a CI gate, so a README
+can no longer drift from the contract. Prose stays hand-written around them.
+
 ### State model (three layers, parsed never sourced)
 
 | layer | where | who owns it | examples |

@@ -79,3 +79,28 @@ refuses auto-jumping 0.13.x → 1.0.0-rc). Auto-rollback on failed health check.
 reported state (`dashboard_info`) and its declared port listeners. Shared
 implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
 exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.
+
+<!-- BEGIN GENERATED: actions (scripts/gen-docs.sh) -->
+| action | what it does |
+| --- | --- |
+| `start` | Start the container (source pool pulls; health-wait) |
+| `stop` | Stop the container |
+| `restart` | Recreate the container |
+| `status` | Container + API health + rich view |
+| `dashboard` | Alias of status |
+| `doctor` | Deep diagnostics: deps, docker, state, declared ports |
+| `logs` | Container logs |
+| `credentials` | First login hint + secret location |
+| `config` | Show/set config keys (store: apps/new-api/.env) |
+<!-- END GENERATED: actions -->
+<!-- BEGIN GENERATED: config (scripts/gen-docs.sh) -->
+| key | default | notes |
+| --- | --- | --- |
+| `NEW_API_PORT` | `30300` | host port (upstream default 3000; the aibox port registry avoids collisions) |
+| `NEW_API_IMAGE` | `calciumion/new-api:v0.13.2` | deployed image tag (aibox upgrade floats it) |
+| `NODE_NAME` | `aibox-new-api` | node name shown in the admin console |
+| `SESSION_SECRET` | `generated` | session signing key, pinned once at install (multi-node REQUIRES a shared value) (secret) |
+| `TZ` | `Asia/Shanghai` | container timezone |
+| `NEW_API_START_TIMEOUT` | `120` | health-wait seconds at start |
+| `NEW_API_LOG_TAIL` | `200` | log tail lines |
+<!-- END GENERATED: config -->

@@ -165,3 +165,33 @@ the matching service + env (model the block on dify's upstream compose).
 reported state (`dashboard_info`) and its declared port listeners. Shared
 implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
 exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.
+
+<!-- BEGIN GENERATED: actions (scripts/gen-docs.sh) -->
+| action | what it does |
+| --- | --- |
+| `start` | Start the stack (source pool pulls images; 1-2 min first boot) |
+| `stop` | Stop containers |
+| `restart` | Recreate containers (applies .env changes) |
+| `status` | Container + web health + stack rich view |
+| `dashboard` | Alias of status |
+| `doctor` | Deep diagnostics: deps, docker, state, declared ports |
+| `logs` | Container logs |
+| `credentials` | Show the admin INIT_PASSWORD |
+| `config` | Show/set config keys (store: apps/dify/.env) |
+<!-- END GENERATED: actions -->
+<!-- BEGIN GENERATED: config (scripts/gen-docs.sh) -->
+| key | default | notes |
+| --- | --- | --- |
+| `DIFY_PORT` | `8088` | host port (EXPOSE_NGINX_PORT; upstream default 80 collides) |
+| `SECRET_KEY` | `auto-generated (hex 32)` | session signing (secret) |
+| `INIT_PASSWORD` | `auto-generated (24 chars)` | admin initial password (secret) |
+| `DIFY_API_IMAGE` | `pinned 1.17.1 tag` | api image (pairs with _WEB/_SANDBOX/_PLUGIN_DAEMON/_AGENT_BACKEND/_DB/_REDIS/_WEAVIATE) |
+| `MIGRATION_ENABLED` | `true` | api runs alembic migrations on boot |
+| `VECTOR_STORE` | `weaviate` | vector store selection |
+| `DIFY_SHARED_BASE` | `0` | 1 = use the aibox shared base PG18/Redis7 (services_optional) |
+| `NGINX_HTTPS_ENABLED` | `false` | enable HTTPS (needs manual cert setup) |
+| `SSRF_PROXY_ALLOW_PRIVATE_IPS` | `(empty)` | CIDRs the SSRF proxy may reach despite deny-private |
+| `AIBOX_DOCKER_POOL` | `shipped pool` | docker.io mirror list override (knob) |
+| `AIBOX_DOCKER_MIRROR` | `(unset)` | user mirror, tried first (knob) |
+| `AIBOX_DOCKER_FORCE_POOL` | `0` | 1 = skip the direct probe, always engage the pool (knob) |
+<!-- END GENERATED: config -->

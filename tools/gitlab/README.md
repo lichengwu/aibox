@@ -125,3 +125,30 @@ aibox check gitlab
 reported state (`dashboard_info`) and its declared port listeners. Shared
 implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
 exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.
+
+<!-- BEGIN GENERATED: actions (scripts/gen-docs.sh) -->
+| action | what it does |
+| --- | --- |
+| `start` | Start the container (source pool pulls; 3-5 min first boot) |
+| `stop` | Stop the container |
+| `restart` | Recreate the container |
+| `status` | Container + web health + rich view |
+| `dashboard` | Alias of status |
+| `doctor` | Deep diagnostics: deps, docker, state, declared ports |
+| `logs` | Container logs |
+| `credentials` | Show the seeded root password + verify it against the live account |
+| `config` | Show/set config keys (store: apps/gitlab/.env) |
+<!-- END GENERATED: actions -->
+<!-- BEGIN GENERATED: config (scripts/gen-docs.sh) -->
+| key | default | notes |
+| --- | --- | --- |
+| `GITLAB_EXTERNAL_URL` | `http://localhost:8929` | external URL GitLab renders in links |
+| `GITLAB_HTTP_PORT` | `8929` | host HTTP port (upstream default 80 collides) |
+| `GITLAB_SSH_PORT` | `8922` | host SSH clone port |
+| `GITLAB_ROOT_PASSWORD` | `random` | root password seeded at install; applies at first boot with fresh volumes (verify: aibox gitlab credentials) (secret) |
+| `GITLAB_PUMA_WORKERS` | `2` | rails workers |
+| `GITLAB_SIDEKIQ_CONCURRENCY` | `10` | background job workers |
+| `AIBOX_DOCKER_POOL` | `shipped pool` | docker.io mirror list override (knob) |
+| `AIBOX_DOCKER_MIRROR` | `(unset)` | user mirror, tried first (knob) |
+| `AIBOX_DOCKER_FORCE_POOL` | `0` | 1 = skip the direct probe, always engage the pool (knob) |
+<!-- END GENERATED: config -->

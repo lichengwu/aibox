@@ -22,6 +22,8 @@ ports:
 # from the shared aibox base via the external aiboxbasenet network + base.env.
 files:
   - docker-compose.yml
+state_files:
+  - .env
 
 # Shared-base Redis consumer: aibox ensure_services auto-starts base before
 # install.sh runs (see module-spec §services). MySQL is BUNDLED — the base

@@ -89,3 +89,49 @@ For a complete teardown use `windmill --yes destroy --all` (it first relocates b
 `aibox windmill start|stop|restart|status|logs` — the shared lifecycle; `dashboard` is the
 rich view (alias of `status`), and `doctor` is the standard diagnostic (deps, docker,
 state, declared ports; see below).
+
+<!-- BEGIN GENERATED: actions (scripts/gen-docs.sh) -->
+| action | what it does |
+| --- | --- |
+| `start` | Start the stack (docker compose up -d) |
+| `stop` | Stop the stack |
+| `restart` | Recreate containers |
+| `status` | Stack health + version info |
+| `dashboard` | Same as status (dispatched to the CLI) |
+| `doctor` | Deep diagnostics (the CLI\'s check) |
+| `logs` | Container logs |
+| `shell` | Open a shell in the server container |
+| `credentials` | Show admin + database credentials |
+| `systemd` | Manage the systemd backup/update timers |
+| `destroy` | Tear down the deployment (dangerous; needs confirm) |
+| `backup` | Snapshot data volumes |
+| `upgrade` | Pull latest + redeploy with auto-backup |
+| `rollback` | Restore the pre-upgrade backup |
+| `check` | Readiness / consistency self-check |
+| `deploy` | Deploy a specific tag (rollback pointer) |
+| `restore` | Restore volumes from a backup |
+| `drill` | Practice the disaster-recovery path (no-op run) |
+| `snapshots` | List / manage volume snapshots |
+| `init` | First-time init (secrets + config generation + --base-url/--port) |
+| `config` | Show/set config keys (store: /etc/windmill/windmill.conf; stack knobs apply at the next up/deploy) |
+<!-- END GENERATED: actions -->
+<!-- BEGIN GENERATED: config (scripts/gen-docs.sh) -->
+| key | default | notes |
+| --- | --- | --- |
+| `PROXY_URL` | `(unset)` | proxy for pulling source (store: /etc/windmill/windmill.conf) |
+| `WM_GHCR_MIRROR` | `(unset)` | ghcr.io mirror for image pulls |
+| `WM_HUB_MIRROR` | `(unset)` | docker.io mirror for image pulls |
+| `HTTP_PORT` | `8080` | the stack's HTTP port |
+| `BASE_URL` | `(unset)` | external URL, scheme+host only (no port, no path). https + a domain = automatic HTTPS and publishes 443; https + a bare IP = self-signed; empty = http on the detected IP + HTTP_PORT |
+| `WM_WORKER_REPLICAS` | `3` | default-group worker replicas |
+| `WM_WORKER_MEMORY` | `1536M` | default-group worker memory cap |
+| `WM_NATIVE_REPLICAS` | `1` | native worker replicas |
+| `WM_NATIVE_MEMORY` | `1024M` | native worker memory cap |
+| `WM_INDEXER_REPLICAS` | `0` | 1 enables full-text job/log search (EE) |
+| `LOG_MAX_SIZE` | `20m` | docker json-file rotate size |
+| `LOG_MAX_FILE` | `10` | docker json-file files kept |
+| `KEEP` | `7` | daily backups kept by the systemd timer (re-run `windmill systemd install` after a change) |
+| `ENABLE_LSP` | `true` | windmill_extra code intelligence |
+| `ENABLE_MULTIPLAYER` | `false` | real-time collaboration (EE) |
+| `ENABLE_DEBUGGER` | `true` | DAP debugger (keep REQUIRE_SIGNED_DEBUG_REQUESTS=true on any reachable host) |
+<!-- END GENERATED: config -->

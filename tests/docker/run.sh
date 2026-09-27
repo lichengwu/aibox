@@ -81,6 +81,7 @@ grep -nP "\$[A-Za-z_][A-Za-z0-9_]*[，。、；：！？（）「」]" $(git ls-
 scripts/bundle.sh --check
 scripts/check-sources.sh
 scripts/manifest.sh --check
+scripts/gen-docs.sh --check
 scripts/validate-module.sh --all
 exit $fail
 '
