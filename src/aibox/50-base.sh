@@ -3,49 +3,11 @@
 # base_profile_suffix/base_env_file/base_network_name/base_env_check there. Keep
 # them in sync — they are the reason a consumer can never look at the DEFAULT
 # profile's base.env while base runs under a named profile.
-_aibox_profile_suffix() {
-  case "${AIBOX_PROFILE:-base}" in
-  '' | base) printf '' ;;
-  *)        printf '%s' "-${AIBOX_PROFILE}" ;;
-  esac
-}
 
-_base_env_file() { printf '%s/base%s.env' "${AIBOX_HOME:-${HOME:+$HOME/.aibox}}" "$(_aibox_profile_suffix)"; }
 
-_base_network_name() {
-  local env net
-  env="$(_base_env_file)"
-  net="$(grep -E '^AIBOX_BASE_NETWORK=' "${env}" 2>/dev/null | cut -d= -f2- | head -1 || true)"
-  [ -n "${net}" ] || net="aibox-base$(_aibox_profile_suffix)"
-  printf '%s' "${net}"
-}
 
-BASE_ENV_VERSION_SUPPORTED="1"
 
-_base_env_check() { # 0 = usable; warns with a fix hint otherwise
-  local env ver
-  env="$(_base_env_file)"
-  [ -f "${env}" ] || { warn "shared base env missing: ${env} (run: aibox base start)"; return 1; }
-  ver="$(grep -E '^AIBOX_BASE_ENV_VERSION=' "${env}" 2>/dev/null | cut -d= -f2- | head -1 || true)"
-  if [ -n "${ver}" ] && [ "${ver}" != "${BASE_ENV_VERSION_SUPPORTED}" ]; then
-    warn "shared base env contract mismatch: ${env} declares v${ver}, the manager expects v${BASE_ENV_VERSION_SUPPORTED}"
-    warn "  fix: aibox update base && aibox base restart   (or update aibox itself: aibox update self)"
-    return 1
-  fi
-  return 0
-}
 
-_base_stack_up() {
-  local env net
-  env="$(_base_env_file)"
-  # the contract file is part of "up": a running network without base.env leaves
-  # consumers interpolating empty values (and the network falls back to the
-  # default name) — require both
-  [ -f "$env" ] || return 1
-  command -v docker >/dev/null 2>&1 || return 1
-  net="$(_base_network_name)"
-  docker network inspect "${net}" >/dev/null 2>&1
-}
 
 # Installed modules that declare a HARD base dependency (services: base:*) — the
 # reverse direction of the install-time guarantee, used to warn before
@@ -96,11 +58,11 @@ cmd_uninstall() {
       --purge)  purge=1 ;;
       --yes|-y) ASSUME_YES=1 ;;
       -h|--help) _verb_help uninstall; exit 0 ;;
-      -*)       die_usage "unknown option for uninstall: $a (usage: aibox uninstall <module>|self [--purge] [--yes])" ;;
+      -*)       usage_die "unknown option for uninstall: $a (usage: aibox uninstall <module>|self [--purge] [--yes])" ;;
       *)        [ -z "$name" ] && name="$a" ;;
     esac
   done
-  [ -n "$name" ] || die_usage "Usage: aibox uninstall <module>|self [--purge] [--yes]"
+  [ -n "$name" ] || usage_die "Usage: aibox uninstall <module>|self [--purge] [--yes]"
   if [ "$name" = self ]; then
     # 'self' = the manager module (one grammar, no self sub-family)
     if [ "$purge" = 1 ]; then cmd_self_uninstall --purge; else cmd_self_uninstall; fi
@@ -202,7 +164,7 @@ cmd_update() {
       --skip-checks)          PREFLIGHT_SKIP=1 ;;
       --yes|-y)               ASSUME_YES=1 ;;
       -h|--help)              _verb_help update; exit 0 ;;
-      -*)                     die_usage "unknown option for update: $a (usage: aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks])" ;;
+      -*)                     usage_die "unknown option for update: $a (usage: aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks])" ;;
       *)                      [ -z "$name" ] && name="$a" ;;
     esac
   done
@@ -276,7 +238,7 @@ cmd_update() {
     done
     [ -n "${failed_list}" ] && bad "update --all: FAILED for:${failed_list} (see each module's output above)"
   else
-    die_usage "Usage: aibox update <module> [--restart|--no-restart] [--all] | --all"
+    usage_die "Usage: aibox update <module> [--restart|--no-restart] [--all] | --all"
   fi
 
   if [ "$self_flag" = "1" ]; then

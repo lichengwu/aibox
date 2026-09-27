@@ -9,7 +9,7 @@ load test_helper
 @test "artifact is up to date with src/aibox/*.sh" {
   run bash "$REPO_ROOT/scripts/bundle.sh" --check
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [[ "$output" == *"up to date"* ]] || false
+  [[ "$output" == *"fresh:"* ]] || false
 }
 
 @test "artifact equals the concatenation byte-for-byte" {
@@ -23,6 +23,34 @@ load test_helper
   run bash "$REPO_ROOT/scripts/bundle.sh" --check --out "$AIBOX_HOME/fake-aibox"
   [ "$status" -eq 1 ] || { echo "expected stale rc=1, got $status"; false; }
   [[ "$output" == *"STALE"* ]] || { echo "$output"; false; }
+}
+
+@test "the module-side include is the same concatenation as the manager's shared part" {
+  bash "$REPO_ROOT/scripts/bundle.sh" --check >/dev/null || false
+  cmp -s <(cat "$REPO_ROOT"/tools/_shared/lib/*.sh) "$REPO_ROOT/tools/_shared/common.sh" || { echo "common.sh drifted from lib/*.sh"; false; }
+  # one injection, in the right place: after 05-env.sh (colours), before the UI file
+  local sh_pos ui_pos
+  sh_pos="$(grep -n 'shared base linking (profile-aware)' "$REPO_ROOT/bin/aibox" | head -1 | cut -d: -f1)"
+  ui_pos="$(grep -n 'unknown-argument UX' "$REPO_ROOT/bin/aibox" | head -1 | cut -d: -f1)"
+  [ -n "$sh_pos" ] && [ -n "$ui_pos" ] && [ "$sh_pos" -lt "$ui_pos" ] || { echo "sh=$sh_pos ui=$ui_pos"; false; }
+}
+
+@test "no helper is defined twice (anti-twin gate)" {
+  run bash "$REPO_ROOT/scripts/check-sources.sh"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"anti-twin"* ]] || false
+}
+
+@test "anti-twin gate has teeth: a planted duplicate is caught" {
+  # hermetic twin fixture: same function in the shared lib and in the manager
+  local fx="$AIBOX_HOME/twinfix"
+  mkdir -p "$fx/src/aibox" "$fx/tools/_shared/lib" "$fx/scripts"
+  cp "$REPO_ROOT/scripts/check-sources.sh" "$fx/scripts/"
+  printf 'log() { printf "%%s\n" "$*"; }\n' >"$fx/tools/_shared/lib/00-out.sh"
+  printf 'log() { printf "%%s\n" "$*"; }\n' >"$fx/src/aibox/10-ui.sh"
+  run bash "$fx/scripts/check-sources.sh"
+  [ "$status" -eq 1 ] || { echo "expected rc=1, got $status: $output"; false; }
+  [[ "$output" == *"ANTI-TWIN"* ]] || { echo "$output"; false; }
 }
 
 @test "artifact carries the GENERATED marker on an early line" {

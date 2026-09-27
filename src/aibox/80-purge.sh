@@ -266,7 +266,7 @@ cmd_purge() {
       --stop)  stop=1 ;;
       --yes|-y) ASSUME_YES=1 ;;   # the global flag loop stops at 'purge'; accept it here too
       -h|--help) _verb_help purge; return 0 ;;
-      -*) die_usage "unknown option for purge: $1 (usage: aibox purge [<module>...|self] [--apply] [--stop] [--yes])" ;;
+      -*) usage_die "unknown option for purge: $1 (usage: aibox purge [<module>...|self] [--apply] [--stop] [--yes])" ;;
       *)  scope="${scope} $1" ;;
     esac
     shift
@@ -507,7 +507,7 @@ cmd_self_uninstall() {
       --purge)   purge=1 ;;
       --yes|-y)  ASSUME_YES=1 ;;
       -h|--help) _verb_help uninstall; return 0 ;;
-      *)         die_usage "unknown option: $1 (usage: aibox uninstall self [--purge] [--yes])" ;;
+      *)         usage_die "unknown option: $1 (usage: aibox uninstall self [--purge] [--yes])" ;;
     esac
     shift
   done

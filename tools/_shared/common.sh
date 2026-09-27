@@ -43,6 +43,12 @@ shared_base_svc_path() {
   printf '%s/../base/svc.sh' "${d}"
 }
 
+# Usage errors are exit 2 everywhere (manager and module hooks) — automation can
+# tell "you called it wrong" (2) from "it ran and failed" (1).
+usage_die() { printf '%s✗%s  %s\n' "${C_RED:-}" "${C_RST:-}" "$*" >&2; exit 2; }
+# Arbitrary stable exit codes are part of the hook contract (3 deps missing /
+# 4 precheck failed / 10 rolled back / 20 manual / 30/40/50) — spec §Exit codes.
+die_code() { local _c="$1"; shift; printf '%s✗%s  %s\n' "${C_RED:-}" "${C_RST:-}" "$*" >&2; exit "${_c}"; }
 # ---------- shared base linking (profile-aware) ----------
 # base writes ONE connection env file per profile: `base.env` for the default
 # "base" profile, `base-<profile>.env` for named ones (base/lib.sh
@@ -153,7 +159,7 @@ ensure_shared_base() {
   env="$(base_env_file)"
   net="$(base_network_name)"
   # fast path: the env file exists AND its network is up (both written by base start)
-  if [ -f "${env}" ] && docker network inspect "${net}" >/dev/null 2>&1; then
+  if shared_base_up; then
     base_env_check || die "shared base env is unusable — see the hint above"
     return 0
   fi
@@ -171,6 +177,17 @@ ensure_shared_base() {
   die "the shared base did not become ready within ${timeout_s}s — check: aibox base status"
 }
 
+# Quiet predicate: "the profile's base is UP" — the contract file exists AND its
+# docker network is up (both written by `base start`). Action takers call
+# ensure_shared_base (which starts it when needed); observers call this.
+shared_base_up() {
+  local env net
+  env="$(base_env_file)"
+  [ -f "${env}" ] || return 1
+  command -v docker >/dev/null 2>&1 || return 1
+  net="$(base_network_name)"
+  docker network inspect "${net}" >/dev/null 2>&1
+}
 # ---------- shared diagnostics (`doctor`) ----------
 # Every module exposes a `doctor` action with the SAME shape (the audit found
 # doctor/check/diagnose/-none across modules and a hint pointing at a
@@ -254,7 +271,6 @@ module_doctor() { # $1=module name (defaults to $AIBOX_MODULE)
 }
 
 # Usage errors in module hooks are exit 2 (same convention as the manager).
-usage_die() { printf '%s✗%s  %s\n' "${C_RED:-}" "${C_RST:-}" "$*" >&2; exit 2; }
 
 # ---------- dashboard keyline template (spec §Dashboard template) ----------
 
@@ -616,6 +632,116 @@ docker_pool_prepull() { # $@ = image refs
   return "${rc_all}"
 }
 
+# ---------- docker hub tag resolution (the TAGS family) ----------
+# Shared: both the manager (component upgrades, dashboards) and module hooks
+# (upgrade stanzas) resolve a repo's tag list through the same direct →
+# local-mirror → pool order the image pulls use, with the sticky winner cached
+# in $AIBOX_HOME/dockerpool.cache.
+DK_TAGS_POOL_DEFAULT="docker.1ms.run hub.rat.dev docker.1panel.live hub.1panel.dev proxy.vvvv.ee docker.m.daocloud.io hub3.nat.tf hub4.nat.tf docker.367231.xyz docker.apiba.cn"
+
+dockerhub_tags_fetch() { # $1=repo (e.g. gitlab/gitlab-ce) → tag names, one per line
+  local repo="$1" cached order m tags seen_direct=0 pool
+  local tmo="${AIBOX_DOCKER_TAGS_TIMEOUT:-8}"
+  pool=""
+  case "${AIBOX_DOCKER_POOL:-}" in
+  direct | none | off) ;;
+  *) pool="${AIBOX_DOCKER_POOL:-${DK_TAGS_POOL_DEFAULT}}" ;;
+  esac
+  # 1. walk the cached order (failover; demote a dead official route)
+  cached="$(_dkcache_read TAGS)"
+  if [ -n "${cached}" ]; then
+    for m in ${cached}; do
+      if [ "${m}" = "direct" ]; then
+        seen_direct=1
+        if tags="$(_dk_tags_direct "${repo}")"; then
+          _dkcache_write TAGS "direct"
+          printf '%s\n' "${tags}"
+          return 0
+        fi
+        continue
+      fi
+      if tags="$(_dk_tags_mirror "${m}" "${repo}")"; then
+        # death-cache: an official route that failed in front of the winner is
+        # dropped from the order until the TTL re-probes it
+        if [ "${seen_direct}" = "1" ]; then
+          _dkcache_write TAGS "$(printf '%s\n' ${cached} | awk -v m="${m}" '$0==m {f=1; print; next} f {print}' | tr '\n' ' ')"
+        fi
+        printf '%s\n' "${tags}"
+        return 0
+      fi
+    done
+    _dkcache_write TAGS ""   # everything failed → self-heal: re-resolve now
+  fi
+  # 2. ① the default address (hub.docker.com direct)
+  if tags="$(_dk_tags_direct "${repo}")"; then
+    _dkcache_write TAGS "direct"
+    printf '%s\n' "${tags}"
+    return 0
+  fi
+  # 3. ② local addresses: the user knob + the daemon's registry-mirrors
+  local locals=""
+  [ -n "${AIBOX_DOCKER_MIRROR:-}" ] && locals="${AIBOX_DOCKER_MIRROR}"
+  locals="${locals}${locals:+ }$(_dk_tags_local_mirrors)"
+  # shellcheck disable=SC2086
+  for m in ${locals}; do
+    if tags="$(_dk_tags_mirror "${m}" "${repo}")"; then
+      _dkcache_write TAGS "${m}"
+      printf '%s\n' "${tags}"
+      return 0
+    fi
+  done
+  # 4. ③ the acceleration pool: concurrent race on the ACTUAL repo (the same
+  #    t bounds each candidate), rank by measured response time
+  [ -n "${pool}" ] || return 1
+  local tmpd pid pids="" i=0
+  tmpd="$(mktemp -d "${TMPDIR:-/tmp}/dktags.XXXXXX")" || return 1
+  # shellcheck disable=SC2086
+  for m in ${pool}; do
+    i=$(( i + 1 ))
+    (
+      t="$(curl -fsSL --max-time "${tmo}" -o /dev/null -w '%{time_total}' \
+        "https://${m}/v2/${repo}/tags/list" 2>/dev/null)" || exit 0
+      printf '%s %s\n' "${t}" "${m}" >"${tmpd}/r${i}.res"
+    ) &
+    pids="${pids} $!"
+  done
+  # shellcheck disable=SC2086
+  for pid in ${pids}; do wait "${pid}" 2>/dev/null || true; done
+  order="$(cat "${tmpd}"/r*.res 2>/dev/null | sort -n | awk '{print $2}' | tr '\n' ' ' || true)"
+  rm -rf "${tmpd}" 2>/dev/null || true
+  [ -n "${order}" ] || return 1
+  _dkcache_write TAGS "${order}"
+  # the winner serves this fetch (one bounded re-fetch — simpler than wiring
+  # the race bodies through; ~0.3s on the measured mirrors)
+  if tags="$(_dk_tags_mirror "${order%% *}" "${repo}")"; then
+    printf '%s\n' "${tags}"
+    return 0
+  fi
+  return 1
+}
+
+_dk_tags_direct() { # $1=repo → tags on stdout; rc 1 when dead/empty
+  local body
+  body="$(curl -fsSL --max-time "${AIBOX_DOCKER_TAGS_TIMEOUT:-8}" \
+    "https://hub.docker.com/v2/repositories/${1}/tags?page_size=100&ordering=last_updated" 2>/dev/null)" || return 1
+  printf '%s' "${body}" | grep -oE '"name": *"[^"]+"' | cut -d'"' -f4 | grep -v '^$' || return 1
+}
+
+_dk_tags_mirror() { # $1=mirror-host $2=repo → tags on stdout; rc 1 when dead/empty
+  local body
+  body="$(curl -fsSL --max-time "${AIBOX_DOCKER_TAGS_TIMEOUT:-8}" \
+    "https://${1}/v2/${2}/tags/list" 2>/dev/null)" || return 1
+  printf '%s' "${body}" | sed -e 's/.*"tags": *\[//' -e 's/\].*//' \
+    | tr ',' '\n' | tr -d ' "[]' | grep -v '^$' || return 1
+}
+
+_dk_tags_local_mirrors() {
+  local out
+  command -v docker >/dev/null 2>&1 || return 0
+  out="$(docker info --format '{{.RegistryConfig.Mirrors}}' 2>/dev/null || true)"
+  printf '%s\n' "${out}" | tr ' ' '\n' | tr -d '[]' \
+    | sed -E 's#^https?://##; s#/$##' | grep -v '^$' || true
+}
 # ---------- docker source selector: GHCR family (ghcr.io, pull-via-mirror + tag) ----------
 # Migrated from tools/xiaozhi/lib.sh (spec §Docker source selector — one
 # selector, per-family transport). ghcr.io is a DIFFERENT registry family

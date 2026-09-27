@@ -118,11 +118,11 @@ cmd_upgrade() {
       -h|--help)    _verb_help upgrade; exit 0 ;;
       --to)         target="${2:-}"; [ -n "${target}" ] || die "--to needs a version (e.g. --to 1.17.2)"; pinned=1; shift 2 ;;
       --yes | -y)   ASSUME_YES=1; shift ;;
-      -*)           die_usage "unknown option for upgrade: $1 (usage: aibox upgrade <module> [--check|--rollback|--history] [--to <version>] [--no-backup] [--yes])" ;;
+      -*)           usage_die "unknown option for upgrade: $1 (usage: aibox upgrade <module> [--check|--rollback|--history] [--to <version>] [--no-backup] [--yes])" ;;
       *)            [ -z "${name}" ] && name="$1"; shift ;;
     esac
   done
-  [ -n "${name}" ] || die_usage "Usage: aibox upgrade <module> [--check|--rollback|--history] [--to <version>] [--no-backup] [--yes] — upstream component upgrade, independent of aibox releases (vs: aibox update = re-fetch module scripts)"
+  [ -n "${name}" ] || usage_die "Usage: aibox upgrade <module> [--check|--rollback|--history] [--to <version>] [--no-backup] [--yes] — upstream component upgrade, independent of aibox releases (vs: aibox update = re-fetch module scripts)"
   # --history / --rollback are LOCAL-ONLY (state file + deploy .env) and must work
   # offline, like the rest of the local-first surface; every other path resolves a
   # TARGET version and therefore needs the registry (and its stanza).

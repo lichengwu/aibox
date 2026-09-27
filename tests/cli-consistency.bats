@@ -164,7 +164,8 @@ YAML
   grep -q '| 2 | usage error' "$REPO_ROOT/docs/module-spec.md" || false
   grep -q '| 3 | dependency missing' "$REPO_ROOT/docs/module-spec.md" || false
   grep -q '| 4 | precheck failed' "$REPO_ROOT/docs/module-spec.md" || false
-  grep -q 'die_usage()' "$REPO_ROOT/bin/aibox" || false
+  grep -q 'usage_die()' "$REPO_ROOT/bin/aibox" || false
+  grep -q 'die_code()' "$REPO_ROOT/bin/aibox" || false
   grep -q 'return 3$' "$REPO_ROOT/bin/aibox" || false
   grep -q 'return 4$' "$REPO_ROOT/bin/aibox" || false
 }

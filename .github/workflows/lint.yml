@@ -46,6 +46,9 @@ jobs:
       - name: bundle freshness (bin/aibox == src/aibox/*.sh)
         run: scripts/bundle.sh --check
 
+      - name: source hygiene (anti-twin: shared lib owns shared helpers)
+        run: scripts/check-sources.sh
+
       - name: shellcheck
         run: |
           set -e

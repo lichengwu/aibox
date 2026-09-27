@@ -1,21 +1,4 @@
 # ---------- commands ----------
-# Is a TCP port being listened on? lsof → ss fallback (minimal Linux installs
-# like Alibaba Cloud Linux 4 ship no lsof; ss/iproute2 is ubiquitous).
-_port_is_listening() {
-  local port="$1"
-  # macOS lsof / Linux ss live in sbin dirs that minimal PATHs can miss
-  # (measured: a sandboxed shell without /usr/sbin → false "not listening");
-  # absolute-path fallbacks keep the probe honest.
-  local lsof="$(command -v lsof 2>/dev/null || true)"; [ -x "${lsof}" ] || lsof="/usr/sbin/lsof"
-  local ss="$(command -v ss 2>/dev/null || true)";     [ -x "${ss}" ] || ss="/usr/sbin/ss"
-  if [ -x "${lsof}" ]; then
-    "${lsof}" -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
-  elif [ -x "${ss}" ]; then
-    [ -n "$("${ss}" -Htln "sport = :$port" 2>/dev/null)" ]
-  else
-    return 1
-  fi
-}
 
 # Probe declared ports for external occupation (lsof/ss) at install time; warn if taken (env-overridable).
 check_ports() {
@@ -25,7 +8,7 @@ check_ports() {
   command -v lsof >/dev/null 2>&1 || command -v ss >/dev/null 2>&1 || return 0
   for p in $ports; do
     port="${p%%/*}"
-    _port_is_listening "$port" || continue
+    port_listening "$port" || continue
     pid=""
     if command -v lsof >/dev/null 2>&1; then
       pid="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | head -1)"
@@ -81,7 +64,7 @@ cmd_install() {
       *) [ -z "$name" ] && name="$a" ;;
     esac
   done
-  [ -n "$name" ] || die_usage "Usage: aibox install <module> [--skip-checks]"
+  [ -n "$name" ] || usage_die "Usage: aibox install <module> [--skip-checks]"
   # analyze + install declared service deps FIRST (recursive, cycle-guarded)
   _install_ensure_deps "$name"
   download_module "$name"
@@ -168,15 +151,15 @@ ensure_services() { # $1=module [$2=--action]
     # --action and the base is already up → nothing to do (quiet). NOTE: the
     # fast path now also requires the CONTRACT env file (profile-aware) — a live
     # network with a missing base.env used to leave consumers with empty values.
-    if [ "${mode}" = "--action" ] && [ "${started}" = "0" ] && _base_stack_up; then
-      _base_env_check || true
+    if [ "${mode}" = "--action" ] && [ "${started}" = "0" ] && shared_base_up; then
+      base_env_check || true
       continue
     fi
     if [ "${started}" = "0" ]; then
       info "Starting shared base (${name} needs it)…"
       AIBOX_MODULE=base bash "$AIBOX_MOD_DIR/base/svc.sh" start || { warn "base start failed (start manually: aibox base start)"; rc=1; continue; }
       started=1
-      _base_env_check || true
+      base_env_check || true
     fi
     [ -n "${resource}" ] || continue
     info "Creating ${component} resource '${resource}' (shared base)…"

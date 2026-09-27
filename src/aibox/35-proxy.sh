@@ -11,7 +11,7 @@ cmd_proxy() {
     check) shift; if [ $# -gt 0 ]; then cmd_proxy_test "$@"; else cmd_proxy_check; fi ;;
     test)  die "'proxy test' merged into: aibox proxy check <target-url> (single target + direct-connection control)" ;;
     env)   shift; cmd_proxy_env "$@" ;;
-    *)     die_usage "Usage: aibox proxy {show|set <url>|unset|on|off|check [url]|env [--remote]}   (aibox proxy --help)" ;;
+    *)     usage_die "Usage: aibox proxy {show|set <url>|unset|on|off|check [url]|env [--remote]}   (aibox proxy --help)" ;;
   esac
 }
 
@@ -62,7 +62,7 @@ cmd_proxy_set() {
   if [ "$no_test" = "1" ]; then no_check=1; fi
 
   url=$(normalize_proxy_url "$raw")
-  [ -n "$url" ] || die_usage "Usage: aibox proxy set <url>   e.g. aibox proxy set http://10.0.0.2:7897"
+  [ -n "$url" ] || usage_die "Usage: aibox proxy set <url>   e.g. aibox proxy set http://10.0.0.2:7897"
 
   scheme="${url%%://*}"
   case "$scheme" in

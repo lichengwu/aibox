@@ -340,7 +340,7 @@ preflight_module() {
 cmd_check() {
   local target="${1:-}"
   case "${target}" in -h|--help) _verb_help check; return 0 ;; esac
-  [ -n "$target" ] || die_usage "Usage: aibox check <module>|self   (self = environment check)"
+  [ -n "$target" ] || usage_die "Usage: aibox check <module>|self   (self = environment check)"
   if [ "$target" = self ]; then cmd_self_check; return $?; fi
   load_registry
   module_exists "$target" || die_unknown_module "$target"

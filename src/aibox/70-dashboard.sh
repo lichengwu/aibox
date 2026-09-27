@@ -99,52 +99,6 @@ _dash_probe_latest() { # $1=module → prints the latest version
 # check runs in the function's own body — never inside $(…) (command
 # substitution turns stdout into a pipe; the branch would be dead code —
 # live-caught by review).
-_dash_w() { # $1 = stdout-is-tty flag ("1"/"0") → prints the width
-  local w=64
-  if [ "${1:-0}" = "1" ]; then
-    # stty via /dev/tty — works inside $(…); tput's stdout would be the pipe
-    # and ncurses would fall back to terminfo cols (measured: 80 on a 50-col pty)
-    local sz
-    sz="$(stty size </dev/tty 2>/dev/null || true)"
-    case "${sz}" in
-    *" "*) w="${sz##* }" ;;
-    esac
-  fi
-  case "${w}" in '' | *[!0-9]*) w=64 ;; esac
-  [ "${w}" -lt 40 ] && w=40
-  [ "${w}" -gt 72 ] && w=72
-  printf '%s' "${w}"
-}
-_dash_rule_line() {
-  local w i=0 out=""
-  if [ -t 1 ] 2>/dev/null; then
-    w="$(_dash_w 1)"
-  else
-    w=64
-  fi
-  while [ "${i}" -lt "${w}" ]; do
-    out="${out}─"
-    i=$(( i + 1 ))
-  done
-  printf '%s%s%s\n' "${C_DIM}" "${out}" "${C_RST}"
-}
-_dash_secheader() { # $1=title (ASCII) → "── title ───…" (dim dashes, bold-cyan title)
-  local w n i=0 out=""
-  if [ -t 1 ] 2>/dev/null; then
-    w="$(_dash_w 1)"
-  else
-    w=64
-  fi
-  n=$(( w - ${#1} - 6 ))
-  [ "${n}" -lt 3 ] && n=3
-  while [ "${i}" -lt "${n}" ]; do
-    out="${out}─"
-    i=$(( i + 1 ))
-  done
-  printf '\n%s%s── %s%s%s %s%s%s\n' \
-    "${C_DIM}" "" "${C_BOLD}${C_CYA}" "${1}" "${C_RST}" \
-    "${C_DIM}" "${out}" "${C_RST}"
-}
 
 # Render ONE module block from LOCAL data (cache lib.sh dashboard_info +
 # cache module.yaml ports) — keyline template (spec §Dashboard template).
@@ -183,7 +137,7 @@ _dash_block() { # $1=module $2=module-version $3=cur-upstream-outfile $4=profile
     *)
       if [ -n "${ports}" ] && [ "${prof}" = "base" ]; then
         for entry in ${ports}; do
-          _port_is_listening "${entry%%/*}" && running="1"
+          port_listening "${entry%%/*}" && running="1"
         done
         if [ "${running}" = "1" ]; then
           sym="${C_GRN}✓${C_RST}"
@@ -227,7 +181,7 @@ _dash_block() { # $1=module $2=module-version $3=cur-upstream-outfile $4=profile
     local plist="" mark
     for entry in ${ports}; do
       port="${entry%%/*}"
-      if _port_is_listening "${port}"; then mark="${C_GRN}✓${C_RST}"; else mark="${C_DIM}—${C_RST}"; fi
+      if port_listening "${port}"; then mark="${C_GRN}✓${C_RST}"; else mark="${C_DIM}—${C_RST}"; fi
       plist="${plist:+${plist}  }${entry} ${mark}"
     done
     printf '     %s%-10s%s %s\n' "${C_DIM}" "ports" "${C_RST}" "${plist}"
@@ -297,7 +251,7 @@ DASHPROFS
   for p in ${dash_profiles}; do
     local tag=""
     [ "${p}" = "${AIBOX_PROFILE:-base}" ] && tag=" (active)"
-    _dash_secheader "profile ${p}${tag}"
+    dash_secheader "profile ${p}${tag}"
     while read -r m prof ver; do
       [ "${prof}" = "${p}" ] || continue
       _dash_block "${m}" "${ver}" "${tmpd}/${m}.cur"
@@ -316,7 +270,7 @@ DASHBLOCKS
     done
     for m2 in ${scan_list}; do _purge_scan_module "${m2}" 2>/dev/null || true; done
     if [ "${PURGE_COUNT}" -gt 0 ]; then
-      _dash_secheader "residue"
+      dash_secheader "residue"
       printf '%s' "${PURGE_FINDINGS}" | awk -F'\t' -v inst=" ${installed_names} " '
         $1 != "" && index(inst, " " $1 " ") == 0 { cnt[$1]++ }
         END { for (s in cnt) printf "  · %s — %d item(s) · aibox purge %s\n", s, cnt[s], s }
@@ -353,7 +307,7 @@ DASHBLOCKS
       fi
     done
     if [ -n "${upd_out}" ]; then
-      _dash_secheader "updates"
+      dash_secheader "updates"
       printf '%b' "${upd_out}"
     fi
     rm -rf "${tmpd}"
@@ -407,7 +361,7 @@ cmd_dashboard_detail() {
   fi
   [ -n "$sym" ] && printf ' %s·%s %s' "$C_DIM" "$C_RST" "$sym"
   printf '\n'
-  _dash_rule_line
+  dash_rule
   # endpoint row: live HTTP probe verdict merged (same 3s curl the old view
   # ran — local-first holds); non-http endpoints use the module's health=
   if [ -n "$endpoint" ]; then
@@ -435,7 +389,7 @@ cmd_dashboard_detail() {
   if [ -n "$ports" ]; then
     for entry in ${ports}; do
       port="${entry%%/*}"
-      if _port_is_listening "${port}"; then mark="${C_GRN}✓${C_RST}"; else mark="${C_DIM}—${C_RST}"; fi
+      if port_listening "${port}"; then mark="${C_GRN}✓${C_RST}"; else mark="${C_DIM}—${C_RST}"; fi
       plist="${plist:+${plist}  }${entry} ${mark}"
     done
     printf '  %s%-10s%s %s\n' "$C_DIM" "ports" "$C_RST" "$plist"
@@ -627,7 +581,7 @@ cmd_dev_guide() {
 # named by hooks.svc receives (action, args...)", nothing more. See docs/module-spec.md.
 cmd_module_action() {
   local name="${1:-}"
-  [ -n "$name" ] || die_usage "Usage: aibox <module> <action>  or  aibox help"
+  [ -n "$name" ] || usage_die "Usage: aibox <module> <action>  or  aibox help"
   shift
   local action="${1:-}" next
   # Per-module help: bare, help, -h, --help all route to it (aligned with the

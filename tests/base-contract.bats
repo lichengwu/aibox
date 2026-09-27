@@ -57,13 +57,24 @@ teardown() { [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true; }
   [[ "$output" == *"DERIVED=$AIBOX_HOME/base-prod.env|aibox-base-prod-postgres|aibox-base-prod"* ]] || { echo "got: $output"; false; }
 }
 
-@test "profile linking: the manager resolves the same profile paths" {
+@test "profile linking: the manager bundle resolves profile paths through the shared helper" {
   run bash -c "
     export AIBOX_HOME='$AIBOX_HOME' AIBOX_PROFILE=prod
     source '$AIBOX_BIN'
-    printf '%s|%s' \"\$(_base_env_file)\" \"\$(_base_network_name)\"
+    printf '%s|%s' \"\$(base_env_file)\" \"\$(base_network_name)\"
   "
   [ "$output" = "$AIBOX_HOME/base-prod.env|aibox-base-prod" ] || { echo "got: $output"; false; }
+}
+
+@test "profile linking: ONE implementation — the shared lib is injected into the bundle" {
+  # the manager used to keep hand-written 'twins' of the shared helpers; the
+  # bundler now injects tools/_shared/lib/*.sh into bin/aibox, so both sides run
+  # the same bytes. Assert both directions: present once, and no second copy.
+  grep -q 'shared base linking (profile-aware)' "$AIBOX_BIN" || false
+  [ "$(grep -c '^base_env_file()' "$AIBOX_BIN")" = "1" ] || { grep -c '^base_env_file()' "$AIBOX_BIN"; false; }
+  [ "$(grep -c '^shared_base_up()' "$AIBOX_BIN")" = "1" ] || false
+  # and the module-side include is the very same concatenation
+  cmp -s <(cat "$REPO_ROOT"/tools/_shared/lib/*.sh) "$REPO_ROOT/tools/_shared/common.sh" || false
 }
 
 @test "profile linking: no consumer hardcodes base.env any more" {
@@ -117,15 +128,18 @@ teardown() { [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true; }
   [[ "$output" == *"aibox update base"* ]] || { echo "$output"; false; }
 }
 
-@test "contract: the manager twin agrees with the shared lib (version + paths)" {
+@test "contract: manager and module hooks read the SAME contract version constant" {
   run bash -c "
     export AIBOX_HOME='$AIBOX_HOME' AIBOX_PROFILE=prod
     source '$AIBOX_BIN'
-    printf '%s|%s' \"\$BASE_ENV_VERSION_SUPPORTED\" \"\$(_base_env_file)\"
+    printf '%s|%s' \"\$BASE_ENV_VERSION_SUPPORTED\" \"\$(base_env_file)\"
     . '$REPO_ROOT/tools/_shared/common.sh'
     printf '|%s|%s' \"\$BASE_ENV_VERSION_SUPPORTED\" \"\$(base_env_file)\"
   "
   [ "$output" = "1|$AIBOX_HOME/base-prod.env|1|$AIBOX_HOME/base-prod.env" ] || { echo "got: $output"; false; }
+  # one definition, not a twin: exactly one BASE_ENV_VERSION_SUPPORTED assignment
+  [ "$(grep -c '^BASE_ENV_VERSION_SUPPORTED=' "$REPO_ROOT/tools/_shared/lib/10-base.sh")" = "1" ] || false
+  [ "$(grep -rc '^BASE_ENV_VERSION_SUPPORTED=' "$REPO_ROOT"/src/aibox/*.sh | awk -F: '{s+=$2} END{print s+0}')" = "0" ] || false
 }
 
 @test "readiness: cmd_start waits for pg_isready + redis PING before writing the contract" {

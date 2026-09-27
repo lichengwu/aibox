@@ -41,13 +41,13 @@ die_unknown_module() { # $1=typed name
   local n="$1" sug
   sug="$(_suggest_word "$n" ${AIBOX_VERBS} || true)"
   if [ -n "$sug" ]; then
-    die_usage "Unknown command or module: ${n} — did you mean: aibox ${sug}?  (verbs: aibox help · modules: aibox dashboard --available)"
+    usage_die "Unknown command or module: ${n} — did you mean: aibox ${sug}?  (verbs: aibox help · modules: aibox dashboard --available)"
   fi
   sug="$(_suggest_word "$n" ${AIBOX_MODULES:-} || true)"
   if [ -n "$sug" ]; then
-    die_usage "Unknown module: ${n} — did you mean: aibox ${sug}?  (catalog: aibox dashboard --available)"
+    usage_die "Unknown module: ${n} — did you mean: aibox ${sug}?  (catalog: aibox dashboard --available)"
   fi
-  die_usage "Unknown module: ${n} (aibox dashboard --available shows available modules)"
+  usage_die "Unknown module: ${n} (aibox dashboard --available shows available modules)"
 }
 
 # Installed-module version ("" when absent) — for the re-install note.
@@ -83,18 +83,11 @@ _needed_note() { # $1=dep command
 # TUI helpers — formal, clean, consistent (design ref: gh CLI / kubectl).
 # Three visual levels: action (plain), success/warning/error (symbol prefix),
 # sub-detail (dim, indented). No bracket prefixes; symbols carry the semantics.
-log()  { printf '%s\n' "$*"; }
-warn() { printf '%s⚠%s  %s\n' "$C_YEL" "$C_RST" "$*" >&2; }
-die()  { printf '%s✗%s  %s\n' "$C_RED" "$C_RST" "$*" >&2; exit 1; }
-# Usage errors are exit 2; preconditions 3/4 (docs/module-spec.md §Exit code
-# convention) — automation can tell "you called it wrong" (2) from "it ran and
-# failed" (1) and from "the environment isn't ready" (3 deps / 4 precheck).
-die_usage() { printf '%s✗%s  %s\n' "$C_RED" "$C_RST" "$*" >&2; exit 2; }
-die_code()  { local _c="$1"; shift; printf '%s✗%s  %s\n' "$C_RED" "$C_RST" "$*" >&2; exit "$_c"; }
-ok()   { printf '%s✓%s  %s\n' "$C_GRN" "$C_RST" "$*"; }
-bad()  { printf '%s✗%s  %s\n' "$C_RED" "$C_RST" "$*"; }
-# Sub-detail: 2-space indent, dim — aligns under the action line above.
-info() { printf '%s  %s%s\n' "$C_DIM" "$*" "$C_RST"; }
+# log/warn/ok/info/die/usage_die/die_code live in the shared library
+# (tools/_shared/lib/00-out.sh, injected into this bundle by scripts/bundle.sh):
+# ONE definition for the manager and for module hooks. The old "manager twin"
+# copies drifted by definition (help text, exit codes, colour fallbacks).
+bad() { printf '%s✗%s  %s\n' "$C_RED" "$C_RST" "$*"; }
 
 # Per-verb help — the manager's twin of `aibox <module> --help`, reachable as
 # `aibox <verb> --help|-h` (any argument position) and `aibox help <verb>`.
