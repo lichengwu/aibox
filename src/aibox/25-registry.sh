@@ -148,6 +148,24 @@ download_module() {
   [ -n "$dir" ] || die "Module $name is missing the dir field"
   AIBOX_LAST_DEST="$AIBOX_MOD_DIR/$name"
   mkdir -p "$AIBOX_LAST_DEST"
+  # Content manifest (modules.SHA256SUMS): module scripts are code that runs as
+  # the user, so verify what we fetched. A missing manifest (older branch, plain
+  # mirror, AIBOX_VERIFY=0) degrades to "downloaded, unverified" — loudly, once.
+  local mf="" rel=""
+  if [ "${AIBOX_VERIFY:-1}" != "0" ]; then
+    mf="$(mktemp)"
+    if ! gh_pool_fetch "${AIBOX_RAW%/}/modules.SHA256SUMS" >"${mf}" 2>/dev/null || [ ! -s "${mf}" ]; then
+      info "content manifest unavailable (modules.SHA256SUMS) — module files are downloaded unverified"
+      rm -f "${mf}"; mf=""
+    fi
+  fi
+  _verify_one() { # $1 = local file, $2 = repo-relative path in the manifest
+    [ -n "${mf}" ] || return 0
+    if ! verify_download "$1" "${mf}" "$2"; then
+      die "content verification failed for $2 — the download does not match modules.SHA256SUMS (retry; bypass with AIBOX_VERIFY=0)"
+    fi
+    return 0
+  }
   # Shared includes FIRST (repo-level tools/_shared/<inc>.sh → cache _<inc>.sh):
   # single source in the repo, per-module copy in the cache (self-containment
   # preserved). Fetched before the standard set so a failed include download
@@ -158,6 +176,7 @@ download_module() {
       rm -f "$AIBOX_LAST_DEST/_${inc}.sh"
       die "Download tools/_shared/${inc}.sh failed (module ${name} declares includes: [${inc}])"
     fi
+    _verify_one "$AIBOX_LAST_DEST/_${inc}.sh" "tools/_shared/${inc}.sh"
   done
   # Standard set (module.yaml + lib.sh/install.sh/uninstall.sh/update.sh/svc.sh)
   # is implicitly downloaded — module.yaml rides along so the LOCAL cache carries
@@ -174,6 +193,7 @@ download_module() {
       die "Download $dir/$f failed (check branch/path; the source pool was tried)"
     fi
     chmod +x "$AIBOX_LAST_DEST/$f" 2>/dev/null || true
+    _verify_one "$AIBOX_LAST_DEST/$f" "$dir/$f"
   done
   # capture the residue declaration while module.yaml is on disk: `aibox purge`
   # must work after the cache is gone and offline (rescue case)

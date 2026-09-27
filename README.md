@@ -103,6 +103,21 @@ command works immediately) → `~/.local/bin`.
 `aibox check self` reports the environment (egress route, docker, node/npm, disk)
 before you install anything.
 
+## Verification (what you download is what runs)
+
+Every module file is verified against `modules.SHA256SUMS` while it is downloaded:
+
+```bash
+aibox install new-api                 # verified automatically
+AIBOX_VERIFY=0 aibox install new-api  # explicit bypass (unverified, warned)
+```
+
+A mismatch stops the install and names the offending file; a missing manifest
+(older branch, plain mirror, no `shasum` on the host) degrades to a loud
+"downloaded unverified" notice — never a silent pass. The bootstrap keeps its own
+optional check for the CLI itself: `curl … | AIBOX_SHA256=<hex> bash` (or
+`AIBOX_VERIFY=1` in `install.sh`).
+
 ## Quick Start
 
 ```bash

@@ -80,6 +80,7 @@ fi
 grep -nP "\$[A-Za-z_][A-Za-z0-9_]*[，。、；：！？（）「」]" $(git ls-files "*.sh" bin/aibox) | grep -vE "^[^:]+:[0-9]+:[[:space:]]*#" && { echo "gotcha #1 found"; fail=1; } || echo "gotcha #1: clean"
 scripts/bundle.sh --check
 scripts/check-sources.sh
+scripts/manifest.sh --check
 scripts/validate-module.sh --all
 exit $fail
 '

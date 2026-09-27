@@ -91,6 +91,19 @@ bin 目录的选定顺序是固定的（管理器与引导脚本用同一套规�
 
 装任何东西之前，可用 `aibox check self` 查看环境（出口路由、docker、node/npm、磁盘）。
 
+## 校验（下载即校验）
+
+每次安装都会按 `modules.SHA256SUMS` 校验下载到的每个模块文件：
+
+```bash
+aibox install new-api                 # 自动校验
+AIBOX_VERIFY=0 aibox install new-api  # 显式跳过（会提示未校验）
+```
+
+校验不通过会指出具体文件并中止安装；清单缺失（旧分支 / 普通镜像 / 主机无 `shasum`）时
+只提示"未校验"，不会静默通过。CLI 自身的引导脚本仍支持可选的
+`curl … | AIBOX_SHA256=<hex> bash`。
+
 ## 快速上手
 
 ```bash

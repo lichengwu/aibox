@@ -1316,6 +1316,42 @@ json_arr() { # $1 = key, rest = items
   done
   printf ']'
 }
+# ---------- content checksums (supply-chain) ----------
+# Module scripts are code that runs as the user. The release publishes
+# modules.SHA256SUMS (scripts/manifest.sh) covering every fetched file; the
+# downloader verifies against it unless AIBOX_VERIFY=0.
+
+# sha256 of a file — shasum (macOS) or sha256sum (Linux); empty when neither exists.
+sha256_of() { # $1 = file → hex digest ("" when unavailable)
+  local f="${1:-}"
+  [ -n "${f}" ] && [ -f "${f}" ] || return 0
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "${f}" 2>/dev/null | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${f}" 2>/dev/null | awk '{print $1}'
+  fi
+}
+
+# The digest recorded for one repo-relative path in a manifest ("" when absent).
+manifest_digest() { # $1 = manifest file, $2 = repo-relative path
+  local mf="${1:-}" p="${2:-}"
+  [ -n "${mf}" ] && [ -f "${mf}" ] && [ -n "${p}" ] || return 0
+  awk -v p="${p}" '$2 == p { print $1; exit }' "${mf}" 2>/dev/null
+}
+
+# Verify one downloaded file. 0 = ok/skipped, 1 = mismatch (caller decides).
+verify_download() { # $1 = file, $2 = manifest ("" = skip), $3 = repo-relative path
+  local f="${1:-}" mf="${2:-}" rel="${3:-}" want got
+  [ "${AIBOX_VERIFY:-1}" = "0" ] && return 0
+  [ -n "${mf}" ] && [ -f "${mf}" ] || return 0
+  want="$(manifest_digest "${mf}" "${rel}")"
+  [ -n "${want}" ] || return 0        # not covered (new file, branch ahead): nothing to check
+  got="$(sha256_of "${f}")"
+  [ -n "${got}" ] || return 0         # no sha tool on this host: nothing to check with
+  [ "${want}" = "${got}" ] && return 0
+  printf '%s' "sha256 mismatch for ${rel}: manifest ${want}, downloaded ${got}" >&2
+  return 1
+}
 # ---------- unknown-argument UX (suggestions + one consistent hint) ----------
 # Verbs the dispatcher understands (typo suggestions for the first arg).
 AIBOX_VERBS="install uninstall update upgrade check dashboard purge proxy clash help version self list ports"
@@ -2041,6 +2077,24 @@ download_module() {
   [ -n "$dir" ] || die "Module $name is missing the dir field"
   AIBOX_LAST_DEST="$AIBOX_MOD_DIR/$name"
   mkdir -p "$AIBOX_LAST_DEST"
+  # Content manifest (modules.SHA256SUMS): module scripts are code that runs as
+  # the user, so verify what we fetched. A missing manifest (older branch, plain
+  # mirror, AIBOX_VERIFY=0) degrades to "downloaded, unverified" — loudly, once.
+  local mf="" rel=""
+  if [ "${AIBOX_VERIFY:-1}" != "0" ]; then
+    mf="$(mktemp)"
+    if ! gh_pool_fetch "${AIBOX_RAW%/}/modules.SHA256SUMS" >"${mf}" 2>/dev/null || [ ! -s "${mf}" ]; then
+      info "content manifest unavailable (modules.SHA256SUMS) — module files are downloaded unverified"
+      rm -f "${mf}"; mf=""
+    fi
+  fi
+  _verify_one() { # $1 = local file, $2 = repo-relative path in the manifest
+    [ -n "${mf}" ] || return 0
+    if ! verify_download "$1" "${mf}" "$2"; then
+      die "content verification failed for $2 — the download does not match modules.SHA256SUMS (retry; bypass with AIBOX_VERIFY=0)"
+    fi
+    return 0
+  }
   # Shared includes FIRST (repo-level tools/_shared/<inc>.sh → cache _<inc>.sh):
   # single source in the repo, per-module copy in the cache (self-containment
   # preserved). Fetched before the standard set so a failed include download
@@ -2051,6 +2105,7 @@ download_module() {
       rm -f "$AIBOX_LAST_DEST/_${inc}.sh"
       die "Download tools/_shared/${inc}.sh failed (module ${name} declares includes: [${inc}])"
     fi
+    _verify_one "$AIBOX_LAST_DEST/_${inc}.sh" "tools/_shared/${inc}.sh"
   done
   # Standard set (module.yaml + lib.sh/install.sh/uninstall.sh/update.sh/svc.sh)
   # is implicitly downloaded — module.yaml rides along so the LOCAL cache carries
@@ -2067,6 +2122,7 @@ download_module() {
       die "Download $dir/$f failed (check branch/path; the source pool was tried)"
     fi
     chmod +x "$AIBOX_LAST_DEST/$f" 2>/dev/null || true
+    _verify_one "$AIBOX_LAST_DEST/$f" "$dir/$f"
   done
   # capture the residue declaration while module.yaml is on disk: `aibox purge`
   # must work after the cache is gone and offline (rescue case)

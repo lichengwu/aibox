@@ -49,6 +49,9 @@ jobs:
       - name: source hygiene (anti-twin: shared lib owns shared helpers)
         run: scripts/check-sources.sh
 
+      - name: module content manifest freshness
+        run: scripts/manifest.sh --check
+
       - name: shellcheck
         run: |
           set -e

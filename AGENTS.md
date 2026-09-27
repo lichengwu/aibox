@@ -65,6 +65,14 @@ fragment has a shebang, artifact == concatenation).
 6. **No `jq` / `python`**: the registry is shell-sourceable; the main CLI sources it directly, bash 3.2 compatible. (Since v0.4.0 the registry is auto-discovered from `tools/*/module.yaml` via a zero-dependency awk subset parser; yq validates the subset in CI.)
 7. **Keep full-width punctuation in Chinese copy** (README.zh.md), but always separate variable boundaries with `${VAR}`.
 
+### Content manifest (mandatory)
+
+Any change under `tools/**` (hooks, `lib.sh`, `module.yaml`, compose files, `cli/**`,
+`tools/_shared/**`) changes what hosts download — regenerate `modules.SHA256SUMS`
+with `scripts/manifest.sh` in the same commit. CI runs `scripts/manifest.sh --check`
+and fails on drift; `download_module` verifies every fetched file against it
+(`AIBOX_VERIFY=0` is the explicit bypass).
+
 ### commit style
 
 Conventional Commits: `fix:` / `feat:` / `docs:` / `style:` / `chore:`.
