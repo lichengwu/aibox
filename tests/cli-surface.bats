@@ -16,19 +16,24 @@ teardown() {
   [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true
 }
 
-@test "merged commands leave migration guidance (list / ports / self family / proxy test)" {
+@test "retired words fall through to the normal unknown-verb path (no migration shims)" {
+  # the v2.1 migration messages were removed with the rest of the legacy surface:
+  # an unknown first word is treated like any typo/module name
   run bash "$REPO_ROOT/bin/aibox" list
   [ "$status" -ne 0 ]
-  [[ "$output" == *"'list' merged into dashboard"* ]]
+  [[ "$output" != *"merged into"* ]] || false
+  [[ "$output" == *"Unknown"* ]] || { echo "$output"; false; }
+  # the retired words are not offered as verb suggestions any more
+  [[ "$output" != *"did you mean: aibox list"* ]] || { echo "$output"; false; }
 
   run bash "$REPO_ROOT/bin/aibox" ports
   [ "$status" -ne 0 ]
-  [[ "$output" == *"'ports' merged into dashboard"* ]]
+  [[ "$output" != *"merged into"* ]] || false
+  [[ "$output" == *"Unknown"* ]] || { echo "$output"; false; }
 
   run bash "$REPO_ROOT/bin/aibox" self update
   [ "$status" -ne 0 ]
-  [[ "$output" == *"merged into the standard verbs"* ]]
-  [[ "$output" == *"aibox uninstall self"* ]]
+  [[ "$output" != *"merged into"* ]] || false
 
   run bash "$REPO_ROOT/bin/aibox" proxy test
   [ "$status" -ne 0 ]

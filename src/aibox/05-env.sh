@@ -18,7 +18,7 @@ esac
 # Injected into module hooks (hook contract: docs/module-spec.md).
 # Previously only documented as injected; actually only AIBOX_MODULE was. Fixed.
 # AIBOX_BIN_DIR is exported so modules install into the same dir as the main CLI.
-export AIBOX_HOME AIBOX_RAW AIBOX_BIN_DIR
+export AIBOX_HOME AIBOX_RAW AIBOX_BIN_DIR AIBOX_IFACE_SUPPORTED
 
 # ---------- output / colors ----------
 # Colors only on a TTY and when NO_COLOR is unset — no leakage into pipes/scripts,

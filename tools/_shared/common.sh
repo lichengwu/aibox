@@ -146,7 +146,8 @@ ensure_shared_redis_db() { # $1=module [$2=slots]
 }
 
 # Idempotent "the shared base must be UP for this action" — the action-time
-# twin of the manager's ensure_services. Live-caught: `aibox xiaozhi start`
+# the action-time counterpart of the manager's ensure_services (both use the
+# shared helpers). Live-caught: `aibox xiaozhi start`
 # died with "shared base not running … first: aibox base start" — two commands
 # for one intent. base already up → silent no-op; installed but down → start it
 # (compose up -d is idempotent) and wait for the network; not installed or not
@@ -382,7 +383,7 @@ dash_secheader() { # $1=title (ASCII) → "── title ───…" to the rul
 # names (mirrors proxy IDENTICAL digests — the windmill WM_HUB_MIRROR
 # technique), so `compose up` finds them cached.
 # The ranking survives runs: $AIBOX_HOME/dockerpool.cache (families PULL/GHCR
-# shared with the manager's TAGS twin), TTL AIBOX_DOCKER_POOL_TTL (600s),
+# shared with the TAGS family in 32-docker-tags.sh), TTL AIBOX_DOCKER_POOL_TTL (600s),
 # self-healing (all-fail → invalidate → re-race; mirrors die and revive,
 # networks change — dockerproxy.net measured swinging within one day).
 # Other registries (cr.weaviate.io …) stay direct-only — the mirrors proxy
@@ -466,7 +467,7 @@ _dk_bounded() { # $1=timeout_s, rest = docker args
 # lines "FAMILY<TAB>token token …", mode 600, TTL AIBOX_DOCKER_POOL_TTL
 # (default 600s). Families: PULL (daemon-side docker.io), GHCR (daemon-side
 # ghcr.io), TAGS (host-side dockerhub tag resolution — the manager inlines a
-# twin of these helpers; SAME file, SAME grammar). Token grammar: "direct" =
+# counterpart of these helpers; SAME file, SAME grammar). Token grammar: "direct" =
 # the official/default route is known good (probe it when reached — honest
 # priority); a mirror host = try that mirror (failover down the list); the
 # ABSENCE of "direct" = the official route is known dead within this TTL —
@@ -501,7 +502,7 @@ _dkcache_write() { # $1=family $2=candidates ("" = invalidate the entry)
   # normalize the token line: squeeze/trim spaces (builders like `tr '\n' ' '
   # append a trailing space; the readers do exact matching)
   line="$(printf '%s' "${2}" | tr -s ' ' | sed 's/^ //; s/ $//')"
-  # awk on a MISSING file exits 2 — guarded like the gh-pool twin (an unguarded
+  # awk on a MISSING file exits 2 — guarded the same way as the gh-pool reader (an unguarded
   # call under set -e kills this function with status 2).
   others=""
   if [ -f "${f}" ]; then
@@ -1164,6 +1165,13 @@ _managed_record() { # $1=manifest $2=path $3=sha256
 #   meta_field <yaml> <field>      scalar value, else flat list joined by spaces
 #   meta_map_value <yaml> <k> <c>  two-space map member (e.g. usage.<action>)
 #   meta_version <yaml>            the version field (module libs / display)
+
+# Capability version of the manager↔module CONTRACT SURFACE: the dashboard_info
+# keys, the residue: stanza, the upgrade: stanza and the hook behaviour. Bump it
+# on any RENAME/REMOVAL in that surface (additions do not need a bump); a module
+# declares the version it targets via module_iface in module.yaml. The manager
+# exports this to hooks and warns when a module targets something newer.
+AIBOX_IFACE_SUPPORTED="1"
 #
 parse_yaml_module_stdin() {
   awk -v NAME="$1" '
@@ -1507,4 +1515,100 @@ CONF
   fi
   profile_register "${name}"
   return 0
+}
+# ---------- platform service units (one implementation of the shapes) ----------
+# Two modules (pi-web, windmill) generate launchd plists and systemd units. The
+# CONTENT differs per module (user-level UI vs system-level oneshot/timer), but
+# the SHAPES — plist keys, systemd section order, the quoting of Environment= —
+# are the same knowledge written twice, which is exactly what drifts. These
+# renderers own the shapes; callers supply the content.
+
+# launchd plist for a user agent.
+#   $1=label $2=workdir $3=log dir $4=log name $5=throttle seconds
+#   $6=run-at-load (0|1) $7=keep-alive (0|1) $8=program path, $9...=program args
+#   env pairs come through the ENV_PAIRS variable ("K=V K=V"; values are quoted
+#   for the plist — keep them shell-safe, the caller builds them from conf).
+svc_render_launchd_plist() {
+  local label="$1" workdir="$2" logdir="$3" logname="$4" throttle="$5"
+  local run_at_load="$6" keep_alive="$7" program="$8"
+  shift 8
+  local arg pair k v
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+    '<plist version="1.0">' '<dict>'
+  printf '    <key>Label</key><string>%s</string>\n' "${label}"
+  printf '%s\n' '    <key>ProgramArguments</key>' '    <array>'
+  printf '        <string>%s</string>\n' "${program}"
+  for arg in "$@"; do
+    printf '        <string>%s</string>\n' "${arg}"
+  done
+  printf '%s\n' '    </array>'
+  if [ -n "${ENV_PAIRS:-}" ]; then
+    printf '%s\n' '    <key>EnvironmentVariables</key>' '    <dict>'
+    for pair in ${ENV_PAIRS}; do
+      k="${pair%%=*}"
+      v="${pair#*=}"
+      printf '        <key>%s</key><string>%s</string>\n' "${k}" "${v}"
+    done
+    printf '%s\n' '    </dict>'
+  fi
+  printf '    <key>WorkingDirectory</key><string>%s</string>\n' "${workdir}"
+  [ "${run_at_load}" = "1" ] && printf '%s\n' '    <key>RunAtLoad</key><true/>'
+  [ "${keep_alive}" = "1" ] && printf '%s\n' '    <key>KeepAlive</key><true/>'
+  [ -n "${throttle}" ] && [ "${throttle}" != "0" ] &&
+    printf '    <key>ThrottleInterval</key><integer>%s</integer>\n' "${throttle}"
+  printf '    <key>StandardOutPath</key><string>%s/%s.log</string>\n' "${logdir}" "${logname}"
+  printf '    <key>StandardErrorPath</key><string>%s/%s.err.log</string>\n' "${logdir}" "${logname}"
+  printf '%s\n' '</dict>' '</plist>'
+}
+
+# systemd unit.
+#   $1=scope (user|system) $2=description $3=exec line $4=workdir $5=log dir
+#   $6=log name $7=type (simple|oneshot) $8=restart secs ("" = none)
+#   $9=extra [Service] lines ("" = none; may contain newlines)
+#   $10=extra [Unit] lines ("" = none) $11=install target ("" = scope default)
+#   $12... argv to append to the exec line (one per argument)
+#   env pairs come through the ENV_PAIRS variable ("K=V K=V").
+svc_render_systemd_unit() {
+  local scope="$1" desc="$2" exec_line="$3" workdir="$4" logdir="$5" logname="$6"
+  local type="$7" restart="$8" extra_service="$9" extra_unit="${10}" install_target="${11}"
+  shift 11 2>/dev/null || shift $#
+  local arg pair k v target
+  # the install target follows the SCOPE unless the caller overrides it
+  if [ -n "${install_target}" ]; then
+    target="${install_target}"
+  elif [ "${scope}" = "user" ]; then
+    target="default.target"
+  else
+    target="multi-user.target"
+  fi
+  printf '%s\n' '[Unit]'
+  printf 'Description=%s\n' "${desc}"
+  [ -n "${extra_unit}" ] && printf '%s\n' "${extra_unit}"
+  printf '\n%s\n' '[Service]'
+  printf 'Type=%s\n' "${type}"
+  if [ "${scope}" = "system" ]; then printf '%s\n' 'User=root'; fi
+  if [ -n "${ENV_PAIRS:-}" ]; then
+    for pair in ${ENV_PAIRS}; do
+      k="${pair%%=*}"
+      v="${pair#*=}"
+      printf 'Environment="%s=%s"\n' "${k}" "${v}"
+    done
+  fi
+  printf 'ExecStart=%s' "${exec_line}"
+  for arg in "$@"; do
+    printf ' %s' "${arg}"
+  done
+  printf '\n'
+  [ -n "${workdir}" ] && printf 'WorkingDirectory=%s\n' "${workdir}"
+  if [ -n "${restart}" ]; then
+    printf 'Restart=always\nRestartSec=%s\n' "${restart}"
+  fi
+  if [ -n "${logdir}" ]; then
+    printf 'StandardOutput=append:%s/%s.log\n' "${logdir}" "${logname}"
+    printf 'StandardError=append:%s/%s.err.log\n' "${logdir}" "${logname}"
+  fi
+  [ -n "${extra_service}" ] && printf '%s\n' "${extra_service}"
+  printf '\n%s\n' '[Install]'
+  printf 'WantedBy=%s\n' "${target}"
 }

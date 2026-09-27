@@ -19,8 +19,31 @@ when it drifts from the sources.
   (`includes: [common]`) and is the same bytes concatenated into the manager, so
   "manager twin of the shared lib" no longer exists as a concept
 
+A module may split its own library by domain (`lib.sh` + `lib-<domain>.sh`, sourced
+by lib.sh, declared in `files:` and downloaded with the rest); those files are
+libraries, not hooks — no shebang, no strict-mode line (same rule as `lib.sh`).
+
 Rule: a helper that both the manager and modules need lives in `tools/_shared/lib/` — never
 as a second copy inside `src/aibox/`.
+
+### Contract capability version (`module_iface`)
+
+The manager and a module share a CONTRACT SURFACE beyond the hook names: the
+`dashboard_info` keys, the `residue:` stanza, the `upgrade:` stanza and the hook
+behaviour. Modules declare the surface they target:
+
+```yaml
+module_iface: 1     # module.yaml
+```
+
+- `AIBOX_IFACE_SUPPORTED` (shared library) is the manager's side of the contract
+  and is exported to every hook, so a module can refuse politely.
+- Bump the number on any **RENAME or REMOVAL** in that surface; pure additions do
+  not need a bump (absent/unknown = 1, which is how pre-contract modules keep
+  working).
+- The manager warns ONCE per run when a module targets something newer than it
+  supports, pointing at `aibox update self`; the validator WARNs when a module
+  omits the field and ERRORs when it is not an integer.
 
 ### Profiles and port allocation
 
@@ -302,7 +325,10 @@ uninstalled and **offline**. The knowledge therefore belongs to the module:
    variant, `$AIBOX_HOME/modules/<name>`, `/etc/<name>`, the declared `bin`
 
 There is no per-module residue map in the manager any more (that map was module-internal
-knowledge living in the manager — every new path needed a manager edit).
+knowledge living in the manager — every new path needed a manager edit). The list of
+modules the "scan everything" path visits is DERIVED as well (module cache dirs +
+installed markers + the registry cache + `residue.conf` keys), so a newly added module
+is scanned without touching the manager.
 
 aibox purge                          # dry-run scan: categorized residue report (default)
 aibox purge <module>... --apply      # clean specific modules' residue
@@ -728,7 +754,8 @@ One selector concept, per-family transports, shared state. Applies to every
 Docker-touching download: **image pulls** (compose `up`/`update`, family PULL
 + family GHCR in `tools/_shared/common.sh`) and **version resolution**
 (`aibox upgrade`'s dockerhub-tags + the dashboard's async update probes,
-family TAGS in `bin/aibox`, the single-file manager's inline twin).
+family TAGS in `tools/_shared/lib/32-docker-tags.sh`; the bundler injects it
+into `bin/aibox`, so the manager and module hooks run the SAME code).
 
 Strict priority (user-pinned):
 
@@ -750,8 +777,10 @@ mode 600, TTL `AIBOX_DOCKER_POOL_TTL` 600s). Token `direct` = the official
 route is known good; its ABSENCE = known dead within the TTL (skip the
 timeout tax — mirrors die AND revive, networks change; dockerproxy.net
 measured swinging within one day). All-fail → invalidate → re-resolve
-(self-heal). The manager and common.sh use the SAME file/grammar (the manager
-never sources the include — inline twins, kept in sync via this section).
+(self-heal). The manager and `common.sh` use the SAME file/grammar: the cache
+file is shared, and the code that reads it is one implementation in
+`tools/_shared/lib/30-dockerio.sh` which `scripts/bundle.sh` injects into
+`bin/aibox` (module caches get the same fragment as `_common.sh`).
 
 Default pool (live-verified DIRECT, no proxy, 2026-09-23; multi-source
 authoritative: 1panel status monitor / juejin measured / DaoCloud docs;
@@ -988,7 +1017,8 @@ Spec source: `docs/superpowers/specs/2026-09-23-dashboard-app-version-keyline-de
 Every dashboard surface (module rich view via `render_dashboard`, manager
 overview, manager detail view) renders the SAME keyline template, from shared
 helpers in `tools/_shared/common.sh` (`dash_header` / `dash_row` /
-`dash_module_row` / `dash_rule` / `dash_secheader`; bin/aibox inlines twins):
+`dash_module_row` / `dash_rule` / `dash_secheader`; the bundler injects the same
+fragment into bin/aibox, so both views run identical code):
 
 ```text
 pi-web 0.9.3 · ✓ running

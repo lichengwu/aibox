@@ -524,3 +524,70 @@ _dep_fixture() { # base installed + a consumer that declares base:postgres#app
   [ "$status" -eq 1 ] || { echo "$output"; false; }
   [[ "$output" == *"hand-parses module.yaml"* ]] || { echo "$output"; false; }
 }
+
+# ---------- contract capability version (D6) -----------------------------------
+
+@test "iface: every module declares module_iface: 1 (the surface it targets)" {
+  local f m
+  for f in "$REPO_ROOT"/tools/*/module.yaml; do
+    m="$(basename "$(dirname "$f")")"
+    grep -qE '^module_iface: 1$' "$f" || { echo "$m: module_iface missing or not 1"; false; }
+  done
+  grep -q '^AIBOX_IFACE_SUPPORTED="1"' "$REPO_ROOT/tools/_shared/lib/45-meta.sh" || false
+}
+
+@test "iface: a module targeting a NEWER contract warns once, with the fix hint" {
+  mkdir -p "$AIBOX_MOD_DIR/futuremod"
+  printf 'name: futuremod\nversion: 1.0.0\nmodule_iface: 99\nactions:\n  - start\n' >"$AIBOX_MOD_DIR/futuremod/module.yaml"
+  run bash -c "
+    export AIBOX_HOME='$AIBOX_HOME' AIBOX_RAW='file://$REPO_ROOT'
+    source '$AIBOX_BIN'
+    _iface_check futuremod
+    _iface_check futuremod
+  "
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(printf '%s' "$output" | grep -c 'targets contract iface 99')" = "1" ] || { echo "expected exactly one warning: $output"; false; }
+  [[ "$output" == *"aibox update self"* ]] || { echo "$output"; false; }
+}
+
+@test "iface: a supported or absent version stays silent" {
+  mkdir -p "$AIBOX_MOD_DIR/okmod" "$AIBOX_MOD_DIR/nomod"
+  printf 'name: okmod\nversion: 1.0.0\nmodule_iface: 1\n' >"$AIBOX_MOD_DIR/okmod/module.yaml"
+  printf 'name: nomod\nversion: 1.0.0\n' >"$AIBOX_MOD_DIR/nomod/module.yaml"
+  run bash -c "
+    export AIBOX_HOME='$AIBOX_HOME' AIBOX_RAW='file://$REPO_ROOT'
+    source '$AIBOX_BIN'
+    _iface_check okmod
+    _iface_check nomod
+    echo done
+  "
+  [[ "$output" != *"targets contract iface"* ]] || { echo "$output"; false; }
+}
+
+@test "iface: the supported constant is exported to module hooks" {
+  run bash -c "
+    export AIBOX_HOME='$AIBOX_HOME'
+    source '$AIBOX_BIN'
+    printf '%s' "\$AIBOX_IFACE_SUPPORTED"
+  "
+  [ "$output" = "1" ] || { echo "got: $output"; false; }
+}
+
+@test "validator: a missing module_iface is a WARN, a non-integer is an ERROR" {
+  local out="$SANDBOX/iface"
+  mkdir -p "$out"
+  bash "$REPO_ROOT/scripts/new-module.sh" ifaced --out "$out" >/dev/null 2>&1
+  local y="$out/ifaced/module.yaml"
+  # the scaffold declares it → clean
+  run env VALIDATE_TOOLS_DIR="$out" bash "$REPO_ROOT/scripts/validate-module.sh" ifaced
+  [[ "$output" != *"no module_iface declared"* ]] || { echo "$output"; false; }
+  # drop it → WARN
+  sed -i.bak '/^module_iface:/d' "$y" 2>/dev/null || true
+  run env VALIDATE_TOOLS_DIR="$out" bash "$REPO_ROOT/scripts/validate-module.sh" ifaced
+  [[ "$output" == *"no module_iface declared"* ]] || { echo "$output"; false; }
+  # a non-integer → ERROR
+  printf 'module_iface: one\n' >>"$y"
+  run env VALIDATE_TOOLS_DIR="$out" bash "$REPO_ROOT/scripts/validate-module.sh" ifaced
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"module_iface must be an integer"* ]] || { echo "$output"; false; }
+}

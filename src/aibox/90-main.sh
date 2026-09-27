@@ -56,14 +56,6 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     # instant failure); a fresh process runs the pool exactly like any CLI
     # invocation. Not in help; harmless if invoked directly.
     __dash-probe)     shift; _dash_probe_cmd "$@" ;;
-    # v2.1 merges — friendly migration guidance instead of "Unknown module":
-    list)             die "'list' merged into dashboard: aibox dashboard (installed) / aibox dashboard --available (catalog)" ;;
-    ports)            die "'ports' merged into dashboard: aibox dashboard (the overview includes the port table)" ;;
-    self)             die "the 'self' family merged into the standard verbs:
-  aibox check self                  environment check
-  aibox update self                 update aibox itself (--all includes self)
-  aibox uninstall self [--purge] [--yes]
-  aibox version" ;;
     version|-v|--version) echo "aibox $AIBOX_VERSION" ;;
     help|-h|--help)   usage ;;
     *)

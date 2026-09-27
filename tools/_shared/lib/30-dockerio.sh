@@ -13,7 +13,7 @@
 # names (mirrors proxy IDENTICAL digests — the windmill WM_HUB_MIRROR
 # technique), so `compose up` finds them cached.
 # The ranking survives runs: $AIBOX_HOME/dockerpool.cache (families PULL/GHCR
-# shared with the manager's TAGS twin), TTL AIBOX_DOCKER_POOL_TTL (600s),
+# shared with the TAGS family in 32-docker-tags.sh), TTL AIBOX_DOCKER_POOL_TTL (600s),
 # self-healing (all-fail → invalidate → re-race; mirrors die and revive,
 # networks change — dockerproxy.net measured swinging within one day).
 # Other registries (cr.weaviate.io …) stay direct-only — the mirrors proxy
@@ -97,7 +97,7 @@ _dk_bounded() { # $1=timeout_s, rest = docker args
 # lines "FAMILY<TAB>token token …", mode 600, TTL AIBOX_DOCKER_POOL_TTL
 # (default 600s). Families: PULL (daemon-side docker.io), GHCR (daemon-side
 # ghcr.io), TAGS (host-side dockerhub tag resolution — the manager inlines a
-# twin of these helpers; SAME file, SAME grammar). Token grammar: "direct" =
+# counterpart of these helpers; SAME file, SAME grammar). Token grammar: "direct" =
 # the official/default route is known good (probe it when reached — honest
 # priority); a mirror host = try that mirror (failover down the list); the
 # ABSENCE of "direct" = the official route is known dead within this TTL —
@@ -132,7 +132,7 @@ _dkcache_write() { # $1=family $2=candidates ("" = invalidate the entry)
   # normalize the token line: squeeze/trim spaces (builders like `tr '\n' ' '
   # append a trailing space; the readers do exact matching)
   line="$(printf '%s' "${2}" | tr -s ' ' | sed 's/^ //; s/ $//')"
-  # awk on a MISSING file exits 2 — guarded like the gh-pool twin (an unguarded
+  # awk on a MISSING file exits 2 — guarded the same way as the gh-pool reader (an unguarded
   # call under set -e kills this function with status 2).
   others=""
   if [ -f "${f}" ]; then

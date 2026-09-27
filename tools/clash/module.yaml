@@ -1,5 +1,6 @@
 name: clash
-version: 1.5.4
+version: 1.6.0
+module_iface: 1
 description: "Clash subscription proxy pool — mihomo kernel orchestration (auto speed-test/switch/failover)"
 platform: ""
 dir: tools/clash
@@ -47,6 +48,8 @@ actions:
 residue:
   bin: mihomo
   process: mihomo
+files:
+  - lib-kernel.sh
 usage:
   start: "Start the mihomo kernel + switch aibox egress"
   stop: "Stop the kernel (egress falls back)"

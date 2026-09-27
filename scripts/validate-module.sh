@@ -286,11 +286,11 @@ validate_module() {
         vwarn "cli/$base_s: no shebang (non-script file? skipping)"
         continue
       fi
-    elif [ "$base_s" != "lib.sh" ]; then
+    elif ! printf '%s' "$base_s" | grep -qE '^lib(-[a-z0-9]+)?\.sh$'; then
       head -1 "$s" | grep -qE '^#!/usr/bin/env bash|^#!/bin/bash' || err "$base_s: line 1 must be a bash shebang"
     fi
-    # lib.sh is a sourced library: no shebang and no strict-mode line required
-    if [ "$base_s" != "lib.sh" ]; then
+    # lib.sh / lib-<domain>.sh are sourced libraries: no shebang and no strict-mode line
+    if ! printf '%s' "$base_s" | grep -qE '^lib(-[a-z0-9]+)?\.sh$'; then
       if [ "$in_cli" = 1 ]; then
         has_strict_set "$s" 0 || err "$base_s: missing strict mode (set -[E]euo pipefail / set -uo pipefail)"
         has_strict_set "$s" 1 || vwarn "$base_s: runs without -e (acceptable for aggregation CLIs with explicit exit-code handling; verify deliberate)"
@@ -481,6 +481,18 @@ validate_module() {
   done
   if [ -f "$d/install.sh" ] && grep -qE '\.env\b' "$d/install.sh" 2>/dev/null && ! grep -qE '^state_files:' "$f"; then
     warn "install.sh touches .env but module.yaml declares no state_files: — declare what the user owns (never overwritten)"
+  fi
+
+  # --- S13h: contract capability version (spec §Contract capability version) ---
+  # module_iface declares which manager↔module contract surface the module targets
+  # (dashboard_info keys, residue:/upgrade: stanzas, hook behaviour). RENAME/REMOVAL
+  # in that surface bumps the number; the manager warns when a module is newer.
+  local _iface
+  _iface="$(awk '/^module_iface:/{gsub(/^module_iface:[ ]*/,""); gsub(/[ \t\r]/,""); print; exit}' "$f" 2>/dev/null)"
+  if [ -z "${_iface}" ]; then
+    warn "no module_iface declared — state the contract surface this module targets (currently 1)"
+  elif ! printf '%s' "${_iface}" | grep -qE '^[0-9]+$'; then
+    err "module_iface must be an integer (got '${_iface}')"
   fi
 
   # --- S13f: one reader for the module.yaml dialect (spec §Manager source layout) ---

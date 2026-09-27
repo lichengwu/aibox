@@ -83,6 +83,11 @@ Run everything: `tests/docker/run.sh` (or `bats tests/*.bats` locally).
 | automation scraping human output | scripts/CI had to parse prose for state/versions | `tests/json.bats` (`--json` dashboards + checks) |
 | a shared helper with two implementations | manager/`tools/_shared` twins drifted (base-env checks, profile suffix, exit codes, help) | `tests/bundle.bats` (artifact == sources; one source per helper) |
 
+| a module list hardcoded in the manager | `aibox purge`/dashboard carried `PURGE_MODULES_KNOWN`; a new module was never scanned, with no gate to notice | `tests/purge.bats` (derived candidates) |
+| docs describing a build that no longer exists | the normative spec still said the manager "inlines twins" after the bundler refactor — contradicting its own §Source layout | `tests/bundle.bats`, `tests/docs-integrity.bats` |
+| an unversioned cross-boundary contract | `dashboard_info`/`residue:`/`upgrade:` shapes had no version, so a newer module could silently lose behaviour | `tests/base-contract.bats` (`module_iface`) |
+| a 342-line function | `cmd_upgrade` mixed parsing, resolution, backup, apply and reporting | `tests/upgrade*.bats` (unchanged behaviour after the split) |
+| duplicated platform-service shapes | launchd/systemd unit knowledge existed in pi-web and windmill | `tests/service-units.bats` (shared renderers) |
 ## Adding a case
 
 1. Reproduce the bug in a test FIRST (this repo's suite is the bug's memory).

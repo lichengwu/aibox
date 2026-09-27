@@ -1,5 +1,7 @@
 # ---------- docker source selector: TAGS family (dockerhub version resolution) ----------
-# Manager-side twin of common.sh's PULL/GHCR families (the manager never
+# The PULL/GHCR pool families live in tools/_shared/lib (30-dockerio.sh,
+# 35-ghcr.sh) and are injected into this bundle; the manager is no longer a copy
+# (the old comment here claimed a twin — the manager never
 # sources the shared include — SAME cache file $AIBOX_HOME/dockerpool.cache,
 # SAME grammar "TAGS<TAB>token…", TTL AIBOX_DOCKER_POOL_TTL). Resolves the tag
 # list of a dockerhub repo with STRICT priority (spec §Docker source selector,

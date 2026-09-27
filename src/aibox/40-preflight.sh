@@ -313,6 +313,7 @@ preflight_module() {
     warn "Preflight skipped for ${name} (--skip-checks)"
     return 0
   fi
+  _iface_check "${name}"
   log "Preflight: ${name}"
   # hard = not bypassable (missing deps/commands/services); soft = environment
   # conditions (disk/network/pull) where --skip-checks is a real option. The

@@ -84,7 +84,8 @@ _dash_probe_latest() { # $1=module → prints the latest version
   [ -n "${out}" ] && printf '%s\n' "${out}"
 }
 
-# keyline template inline twins (spec §Dashboard template) — same shapes as
+# keyline template: the shared helpers (spec §Dashboard template) are injected
+# into this bundle by scripts/bundle.sh — same code, not a copy of
 # tools/_shared/common.sh's dash_* helpers; keep in sync via the spec. The
 # manager is the single-file CLI: it does NOT source the shared include, so it
 # inlines the same formats (as it already does for the yaml parsers).
@@ -313,11 +314,10 @@ DASHBLOCKS
   # residue: NOT-installed modules with leftover artifacts (local scan)
   PURGE_FINDINGS=""; PURGE_COUNT=0
   if command -v docker >/dev/null 2>&1; then
-    local scan_list="" m2
-    for m2 in ${PURGE_MODULES_KNOWN} ${installed_names}; do
-      case " ${scan_list} " in *" ${m2} "*) ;; *) scan_list="${scan_list} ${m2}" ;; esac
-    done
-    for m2 in ${scan_list}; do _purge_scan_module "${m2}" 2>/dev/null || true; done
+    local m2
+    # derived list (cache dirs + installed + registry cache + residue.conf):
+    # a new module shows up here without touching the manager
+    for m2 in $(_purge_candidate_modules); do _purge_scan_module "${m2}" 2>/dev/null || true; done
     if [ "${PURGE_COUNT}" -gt 0 ]; then
       dash_secheader "residue"
       printf '%s' "${PURGE_FINDINGS}" | awk -F'\t' -v inst=" ${installed_names} " '
@@ -629,6 +629,7 @@ cmd_dev_guide() {
 # through to the dispatched CLI; base implements `create postgres` here. The contract is "the file
 # named by hooks.svc receives (action, args...)", nothing more. See docs/module-spec.md.
 cmd_module_action() {
+  [ $# -gt 0 ] && _iface_check "$1"
   local name="${1:-}"
   [ -n "$name" ] || usage_die "Usage: aibox <module> <action>  or  aibox help"
   shift

@@ -1,5 +1,6 @@
 name: pi-web
-version: 1.5.4
+version: 1.6.0
+module_iface: 1
 description: "Deploy @agegr/pi-web as a launchd/systemd service (HTTP Basic auth, auto-restart)"
 platform: ""
 dir: tools/pi-web
@@ -28,6 +29,8 @@ checks:
 # _<name>.sh; lib.sh sources it). common = output helpers + docker.io pool.
 includes:
   - common
+files:
+  - lib-npm.sh
 
 hooks:
   install: install.sh

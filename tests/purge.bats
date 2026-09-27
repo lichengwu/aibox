@@ -257,3 +257,47 @@ SH
   "
   [[ "$output" == *"apps/dify-prod"* ]] || { echo "$output"; false; }
 }
+
+# ---------- the candidate list is DERIVED (no module list in the manager) ------
+
+@test "derived: a module known ONLY from residue.conf is still scanned (rescue)" {
+  # post-uninstall + offline: no cache, no marker, no registry cache entry
+  rm -rf "$AIBOX_HOME/modules" "$AIBOX_HOME/installed.sh"
+  mkdir -p "$AIBOX_HOME/apps/orphanmod"
+  printf 'orphanmod_residue_containers=^orphan-$
+orphanmod_residue_paths=$HOME/orphan-data
+' >"$AIBOX_HOME/residue.conf"
+  mkdir -p "$HOME/orphan-data"
+  run bash "$AIBOX" purge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"[orphanmod]"* ]] || { echo "$output"; false; }
+  [[ "$output" == *"orphan-data"* ]] || { echo "$output"; false; }
+}
+
+@test "derived: a module known only as a cache dir is listed" {
+  rm -rf "$AIBOX_HOME/modules" "$AIBOX_HOME/installed.sh" "$AIBOX_HOME/residue.conf"
+  mkdir -p "$AIBOX_HOME/modules/cachedmod" "$AIBOX_HOME/apps/cachedmod"
+  printf 'name: cachedmod\nversion: 1.0.0\n' >"$AIBOX_HOME/modules/cachedmod/module.yaml"
+  run bash "$AIBOX" purge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"[cachedmod]"* ]] || { echo "$output"; false; }
+}
+
+@test "derived: registry cache module names are candidates too (offline host)" {
+  rm -rf "$AIBOX_HOME/modules" "$AIBOX_HOME/installed.sh" "$AIBOX_HOME/residue.conf"
+  mkdir -p "$AIBOX_HOME/apps/registrymod"
+  printf 'AIBOX_MODULES="registrymod"\nAIBOX_MODULE_registrymod_version="1.0.0"\n' >"$AIBOX_HOME/registry.cache"
+  run bash "$AIBOX" purge
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"[registrymod]"* ]] || { echo "$output"; false; }
+}
+
+@test "no module-name list literal exists in the manager sources (D1)" {
+  ! grep -rq 'PURGE_MODULES_KNOWN' "$REPO_ROOT/src/aibox" || { echo "PURGE_MODULES_KNOWN is back"; false; }
+  # a hand-maintained list would show >= 3 module names adjacent on one line
+  run bash -c "grep -rnE 'base clash|clash pi-web|pi-web openmaic|openmaic windmill|windmill gitlab|gitlab dify|dify new-api|new-api xiaozhi' '$REPO_ROOT/src/aibox/*.sh' '$REPO_ROOT/src/aibox'"
+  [ "$status" -ne 0 ] || { echo "a module list literal is back: $output"; false; }
+  # the derivation itself must exist and be used on both paths
+  grep -q '^_purge_candidate_modules()' "$AIBOX" || false
+  [ "$(grep -c '_purge_candidate_modules' "$AIBOX")" -ge 3 ] || { echo "helper defined but not used on both paths"; false; }
+}

@@ -7,6 +7,63 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.21.0] — 2026-09-27
+
+The maintainability batch from the architecture review: every item with its own test
+and, where behaviour could have shifted, a mechanical equivalence check.
+
+### Added
+
+- **Contract capability version (`module_iface`)** — the manager↔module contract surface
+  (dashboard_info keys, `residue:` / `upgrade:` stanzas, hook behaviour) is now versioned
+  like `base.env`: modules declare what they target, `AIBOX_IFACE_SUPPORTED` is exported
+  to hooks, and the manager warns once when a module is newer (fix: `aibox update self`).
+  Validator WARNs when the field is missing and ERRORs on a non-integer.
+- **Shared platform-service renderers** (`tools/_shared/lib/70-service.sh`): the shapes of
+  a launchd plist and a systemd unit (sections, Environment= quoting, logging keys,
+  install target per scope) live in one place; pi-web supplies content and renders through
+  them. Equivalence to the previous template was verified line by line (the only change is
+  cosmetic: two `<string>` elements move onto separate lines).
+- `lib-<domain>.sh` is now a first-class module library convention (sourced by `lib.sh`,
+  declared in `files:`, downloaded with the module, no shebang/strict line).
+
+### Changed
+
+- **`aibox purge` and the dashboard derive their candidate module list** (module cache
+  dirs + installed markers + registry cache + `residue.conf` keys) instead of the
+  manager's hardcoded list — a newly added module is scanned, cleaned and displayed
+  without touching the manager. Profile deploy roots (`apps/<name>-<profile>`) are folded
+  back onto the module name via the known profile set.
+- **`cmd_upgrade` (342 lines) split into named phases** — `_upg_show_history`,
+  `_upg_do_rollback`, `_upg_build_newvals`, `_upg_pull_images`, `_upg_check_report`,
+  `_upg_apply` — same flags, same messages, same exit codes (0/10/20), verified against
+  the pre-split statement set and the upgrade suites.
+- **Three module libraries split by domain**: base → `lib-upgrade.sh`,
+  clash → `lib-kernel.sh`, pi-web → `lib-npm.sh`. Function inventory is byte-for-byte the
+  same set as before (39/39, 39/39, 18/18 — nothing lost, nothing invented).
+- **Docs tell the truth again**: the normative spec no longer describes the pre-bundler
+  "inline twins" build (three passages contradicted its own §Source layout), the stale
+  twin comments in `src/aibox` and the shared library are gone, and the v2.1 migration
+  shims (`aibox list` / `ports` / `self`) were deleted — unknown first words take the
+  normal suggestion path, and the retired words are no longer offered as verb guesses.
+
+### Fixed
+
+- validator: `lib-<domain>.sh` was treated as a hook (shebang + strict-mode errors);
+  it is a sourced library, exactly like `lib.sh`.
+- `svc_render_systemd_unit` ignored the scope when choosing the install target
+  (`multi-user.target` for system units) — caught by its own test.
+- the data-not-sourced gate now allowlists `LIB_*` include variables and
+  `lib-<domain>.sh` (it flagged the new split includes).
+- `tests/command-surface.bats` claimed to be offline but never pinned the registry to
+  `file://` — `aibox ports` fetched the real network, so its message (and the suite)
+  depended on connectivity; caught by the root-vs-non-root harness double-run.
+
+### Module versions
+
+base 1.7.0 · clash 1.6.0 · dify 1.21.5 · gitlab 1.7.5 · new-api 1.4.5 · openmaic 1.4.5 ·
+pi-web 1.6.0 · windmill 1.6.5 · xiaozhi 1.4.5
+
 ## [0.20.4] — 2026-09-27
 
 ### Fixed
@@ -1380,6 +1437,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.21.0]: https://github.com/lichengwu/aibox/compare/v0.20.4...v0.21.0
 [0.20.4]: https://github.com/lichengwu/aibox/compare/v0.20.3...v0.20.4
 [0.20.3]: https://github.com/lichengwu/aibox/compare/v0.20.2...v0.20.3
 [0.20.2]: https://github.com/lichengwu/aibox/compare/v0.20.1...v0.20.2

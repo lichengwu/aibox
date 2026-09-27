@@ -1,5 +1,6 @@
 name: base
-version: 1.6.4
+version: 1.7.0
+module_iface: 1
 description: "Shared base components (PostgreSQL 18 + Redis 7); each module gets its own DB"
 platform: ""
 dir: tools/base
@@ -18,6 +19,7 @@ ports:
 
 files:
   - docker-compose.yml
+  - lib-upgrade.sh
 state_files:
   - .env
 

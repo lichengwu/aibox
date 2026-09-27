@@ -44,7 +44,7 @@ for f in "${_root}"/src/aibox/*.sh "${_root}"/tools/*/lib.sh "${_root}"/tools/*/
   [ -f "${f}" ] || continue
   hit="$(grep -nE '(^|[[:space:];&|(])\.[[:space:]]+"' "${f}" 2>/dev/null |
     grep -vE '^[0-9]+:[[:space:]]*#' |
-    grep -vE 'LIB_COMMON|LIB_SELF|lib\.sh"|common\.sh"|_common\.sh"|nvm\.sh"' || true)"
+    grep -vE 'LIB_[A-Z_]+|lib\.sh"|common\.sh"|_common\.sh"|lib-[a-z0-9]+\.sh"|nvm\.sh"' || true)"
   [ -n "${hit}" ] && src_hits="${src_hits}${f}: ${hit}
 "
 done

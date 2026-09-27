@@ -10,6 +10,10 @@ setup() {
   export AIBOX_BIN_DIR="$SANDBOX/bin"
   mkdir -p "$AIBOX_HOME" "$AIBOX_BIN_DIR"
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+  # the file's contract is "all offline": without this the registry is fetched
+  # over the REAL network, so messages (and the suite) depended on connectivity
+  # (caught by the root-vs-non-root harness double-run).
+  export AIBOX_RAW="file://$REPO_ROOT"
   unset AIBOX_PROXY_URL AIBOX_PROXY_ENABLED
 }
 
@@ -65,11 +69,13 @@ teardown() {
   grep -q '^AIBOX_PROXY_URL=""$' "$AIBOX_HOME/config"
 }
 
-@test "ports: merged-command guidance, points at dashboard" {
+@test "ports: retired word falls through (dashboard is the port surface)" {
   run bash "$REPO_ROOT/bin/aibox" ports
   [ "$status" -ne 0 ]
-  [[ "$output" == *"'ports' merged into dashboard"* ]]
-  [[ "$output" == *"aibox dashboard"* ]]
+  [[ "$output" == *"Unknown"* ]] || false
+  # the dashboard remains the authoritative port view and says so in its help
+  run bash "$REPO_ROOT/bin/aibox" dashboard --help
+  [[ "$output" == *"port"* ]] || false
 }
 
 @test "dev-guide: <module> dev-guide renders homepage/docs links (file:// registry)" {

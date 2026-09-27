@@ -1,6 +1,6 @@
 # ---------- unknown-argument UX (suggestions + one consistent hint) ----------
 # Verbs the dispatcher understands (typo suggestions for the first arg).
-AIBOX_VERBS="install uninstall update upgrade check dashboard purge proxy clash help version self list ports"
+AIBOX_VERBS="install uninstall update upgrade check dashboard purge proxy clash help version"
 
 # "Close enough to be a typo" for short ASCII words: prefix either way, one
 # substitution, or one transposition. Cheaper than a full Levenshtein and
@@ -85,11 +85,11 @@ _needed_note() { # $1=dep command
 # sub-detail (dim, indented). No bracket prefixes; symbols carry the semantics.
 # log/warn/ok/info/die/usage_die/die_code live in the shared library
 # (tools/_shared/lib/00-out.sh, injected into this bundle by scripts/bundle.sh):
-# ONE definition for the manager and for module hooks. The old "manager twin"
-# copies drifted by definition (help text, exit codes, colour fallbacks).
+# ONE definition for the manager and for module hooks (the bundler injects the
+# same fragment; the old hand-maintained copies used to drift).
 bad() { printf '%s✗%s  %s\n' "$C_RED" "$C_RST" "$*"; }
 
-# Per-verb help — the manager's twin of `aibox <module> --help`, reachable as
+# Per-verb help — the manager-side counterpart of `aibox <module> --help`, reachable as
 # `aibox <verb> --help|-h` (any argument position) and `aibox help <verb>`.
 # ONE block per verb, always exit 0 (help is not an error), so the verb surface
 # cannot drift into "purge answers, install fetches the registry".

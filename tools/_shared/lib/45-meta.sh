@@ -9,6 +9,13 @@
 #   meta_field <yaml> <field>      scalar value, else flat list joined by spaces
 #   meta_map_value <yaml> <k> <c>  two-space map member (e.g. usage.<action>)
 #   meta_version <yaml>            the version field (module libs / display)
+
+# Capability version of the manager↔module CONTRACT SURFACE: the dashboard_info
+# keys, the residue: stanza, the upgrade: stanza and the hook behaviour. Bump it
+# on any RENAME/REMOVAL in that surface (additions do not need a bump); a module
+# declares the version it targets via module_iface in module.yaml. The manager
+# exports this to hooks and warns when a module targets something newer.
+AIBOX_IFACE_SUPPORTED="1"
 #
 parse_yaml_module_stdin() {
   awk -v NAME="$1" '

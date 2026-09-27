@@ -1,4 +1,5 @@
-# ---------- profile-aware shared-base linking (manager twin of the shared lib) ----------
+# ---------- profile-aware shared-base linking (helpers live in tools/_shared/lib/10-base.sh,
+# injected into this bundle by scripts/bundle.sh — one implementation, not a twin) ----------
 # The single-file CLI cannot source tools/_shared/common.sh, so these mirror
 # base_profile_suffix/base_env_file/base_network_name/base_env_check there. Keep
 # them in sync — they are the reason a consumer can never look at the DEFAULT

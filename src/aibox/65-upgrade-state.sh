@@ -107,6 +107,226 @@ _upgrade_rollback() { # $1=module $2=svc $3=envfile $4=envbak $5=prev_ver
   return 1
 }
 
+# --history: recorded transitions (local state, zero network)
+_upg_show_history() { # $1=module
+  local name="$1"
+  local lf st st_from st_to st_ts st_live
+  lf="$(_upgrade_log_file "${name}")"
+  st="$(_upgrade_state_get "${name}" status)"
+  st_from="$(_upgrade_state_get "${name}" from)"; st_to="$(_upgrade_state_get "${name}" to)"
+  st_ts="$(_upgrade_state_get "${name}" ts)";   st_live="$(_upgrade_state_get "${name}" live)"
+  if [ -z "${st}" ] && [ ! -f "${lf}" ]; then
+    log "no upgrade recorded for ${name} yet (nothing to show)"
+    return 0
+  fi
+  log "${name} — last recorded upgrade:"
+  [ -n "${st}" ] && log "  state   : ${st}$( [ -n "${st_ts}" ] && printf ' (%s)' "${st_ts}" )"
+  [ -n "${st_from}" ] && log "  pin     : ${st_from} → ${st_to:-?}$( [ -n "${st_live}" ] && printf '   live: %s' "${st_live}" )"
+  [ -n "${st_from}" ] && log "  rollback: aibox upgrade ${name} --rollback   (back to ${st_from})"
+  if [ -f "${lf}" ]; then
+    log "  history :"
+    tail -n "${AIBOX_UPGRADE_HISTORY_LINES:-10}" "${lf}" | sed 's/^/    /'
+  fi
+  return 0
+}
+
+# --rollback: restore the recorded pre-upgrade pin (a rollback POINT) — local first,
+# no network unless the pin has to be resolved manually. Exit: 0 ok / 2 declined /
+# 20 manual intervention (spec §Exit codes).
+_upg_do_rollback() { # $1=module $2=deploy .env $3=svc.sh
+  local name="$1" envf="$2" svc="$3"
+  local r_from r_bak r_snap r_db r_to r_now r_newbak
+  r_from="$(_upgrade_state_get "${name}" from)"
+  r_bak="$(_upgrade_state_get "${name}" envbak)"
+  r_snap="$(_upgrade_state_get "${name}" databak)"
+  r_to="$(_upgrade_state_get "${name}" to)"
+  r_db="$(_upgrade_db_name "${name}")"
+  [ -n "${r_from}" ] || die "no rollback point recorded for ${name} — nothing to roll back to (pin explicitly: aibox upgrade ${name} --to <version>)"
+  if [ "${ASSUME_YES:-0}" != 1 ]; then
+    ask_confirm "Roll ${name} back to ${r_from}? (restores the version pin and recreates the containers)" \
+      || { warn "declined (non-interactive? add --yes)"; return 2; }
+  fi
+  [ -f "${r_bak}" ] || die "the recorded .env backup is gone (${r_bak}) — pin manually: aibox upgrade ${name} --to ${r_from}"
+  # Symmetric: the version we are leaving becomes the next rollback point, so a
+  # second --rollback undoes this one (git-revert semantics, not a dead end).
+  r_now="$(_upgrade_live_version "${name}")"
+  [ -n "${r_now}" ] || r_now="${r_to}"
+  r_newbak="${envf}.bak.$(date +%Y%m%d%H%M%S).$$"
+  cp "${envf}" "${r_newbak}" 2>/dev/null || true
+  if _upgrade_rollback "${name}" "${svc}" "${envf}" "${r_bak}" "${r_from}"; then
+    _upgrade_state_set "${name}" status rolled-back
+    _upgrade_state_set "${name}" from "${r_now:-?}"
+    _upgrade_state_set "${name}" to "${r_from}"
+    _upgrade_state_set "${name}" envbak "${r_newbak}"
+    _upgrade_state_set "${name}" databak ""
+    _upgrade_state_set "${name}" live "$(_upgrade_live_version "${name}")"
+    _upgrade_log_append "${name}" "${r_now:-?} → ${r_from} rolled-back-by-user"
+    [ -n "${r_snap}" ] && info "the upgrade's data snapshot is still available: ${r_snap}"
+    [ -n "${r_snap}" ] && [ -n "${r_db}" ] && _upgrade_db_restore_hint "${r_snap}" "${r_db}"
+    return 0
+  fi
+  _upgrade_state_set "${name}" status manual
+  _upgrade_log_append "${name}" "${r_now:-?} → ${r_from} rollback-failed"
+  warn "rollback failed — manual intervention needed"
+  log "  inspect : aibox ${name} logs"
+  log "  pin     : ${envf}"
+  return 20
+}
+
+# Build the new image values: the pairing comes from the upstream compose at the
+# target tag (mapping_url), or tag == target when there is no mapping (dockerhub
+# single-image). Prints one "KEY=image" line per declared image.
+_upg_build_newvals() { # $1=target $2=mapping url (may be empty) $3=declared images
+  local target="$1" mapping="$2" images="$3"
+  local mapping_body="" kv k prefix tag
+  if [ -n "${mapping}" ]; then
+    mapping_body="$(upgrade_fetch "${mapping//<VER>/${target}}")" \
+      || die "cannot fetch the image mapping at ${target} (${mapping//<VER>/<version>}) — bad tag, or network (aibox clash on)"
+  fi
+  # shellcheck disable=SC2086
+  for kv in $images; do
+    k="${kv%%=*}"
+    prefix="${kv#*=}"
+    if [ -n "${mapping}" ]; then
+      tag="$(printf '%s' "${mapping_body}" | upgrade_extract_tag "${prefix}")" \
+        || die "cannot extract the image tag for ${prefix} in the upstream mapping at ${target}"
+    else
+      tag="${target}"
+    fi
+    printf '%s\n' "${k}=${prefix}${tag}"
+  done
+}
+
+# Pull every new image BEFORE touching anything — but a direct-pull failure does
+# not abort (compose modules carry a docker.io mirror pool that retries at svc
+# start; the health gate + auto-rollback remain the safety net).
+_upg_pull_images() { # args = "KEY=image" pairs
+  local kv img
+  for kv in "$@"; do
+    img="${kv#*=}"
+    if docker image inspect "${img}" >/dev/null 2>&1; then
+      log "Already cached: ${img}"
+      continue
+    fi
+    log "pulling ${img} …"
+    if ! docker pull "${img}" >/dev/null 2>&1; then
+      warn "direct docker pull failed: ${img} — continuing (mirror pool retries at svc start; health gate + rollback protect)"
+    fi
+  done
+}
+
+# --check: report current → target, the rollback point and the required hops
+# (never touches the host). Exit 0.
+_upg_check_report() { # $1=module $2=current $3=target $4=rb-from $5=rb-ts $6=n_hops; rest=hops
+  local name="$1" cur_ver="$2" target="$3" rb_from="$4" rb_ts="$5" n_hops="$6"
+  shift 6
+  local hop_list=("$@") i hop_ver
+    if [ "${check_only}" = 1 ]; then
+      log "current : ${cur_ver}"
+      log "target  : ${target}"
+      [ -n "${rb_from}" ] && log "rollback: ${rb_from}$( [ -n "${rb_ts}" ] && printf ' (recorded %s)' "${rb_ts}" )   application: aibox upgrade ${name} --rollback"
+      if [ "${n_hops}" -gt 1 ]; then
+        log "path    : $((n_hops - 1)) required upgrade stop(s) — official rule: every stop between current and target, each hop on the minor's latest patch, migrations must finish before the next hop"
+        i=0
+        for hop_ver in "${hop_list[@]}"; do
+          i=$((i + 1))
+          if [ "${i}" -eq "${n_hops}" ]; then
+            log "  hop ${i}/${n_hops}  ${hop_ver}    target"
+          else
+            log "  hop ${i}/${n_hops}  ${hop_ver}.z → latest patch of ${hop_ver}    required stop"
+          fi
+        done
+        log "note    : omnibus boot 3-5 min/hop; the readiness gate (incl. db migrations) runs between hops"
+      fi
+      if [ "$(upgrade_ver_cmp "${target}" "${cur_ver}")" = "1" ]; then
+        log "status  : upgrade available (apply: aibox upgrade ${name} [--to ${target}] [--yes])"
+      else
+        log "status  : current is newer than the resolved target (downgrade only with --to)"
+      fi
+      return 0
+    fi
+  return 0
+}
+
+# Apply path: back up the pin, snapshot the module data, rewrite the declared
+# image keys, recreate + health-wait via svc start, verify the live version and
+# record the state. Exit: 0 ok · 10 rolled back · 20 manual intervention.
+_upg_apply() { # $1=module $2=envf $3=svc $4=target $5=cur_ver $6=module-version; rest=newvals
+  local name="$1" envf="$2" svc="$3" target="$4" cur_ver="$5" prog_module_ver="${6:-}"
+  shift 6
+  local newvals=("$@")
+# Back up the pin, snapshot the data (when the module's DB is knowable), then
+# rewrite ONLY the declared image keys and recreate + health-wait via svc start.
+# Every phase is recorded, so a failed upgrade still leaves a usable rollback
+# point and the dashboard can show the state.
+local ts bak db snap=""
+ts="$(date +%Y%m%d%H%M%S)"
+# $$ keeps the name unique: two runs inside the same second would otherwise
+# share a path — and a rollback in that window would clobber its own rollback
+# point (caught by tests/upgrade-rollback.bats).
+bak="${envf}.bak.${ts}.$$"
+cp "${envf}" "${bak}"
+log "backed up ${envf} → ${bak}"
+db="$(_upgrade_db_name "${name}")"
+if [ "${no_backup}" = 1 ]; then
+  log "data snapshot skipped (--no-backup) — rollback restores the version pin only"
+elif [ -n "${db}" ]; then
+  log "snapshotting the shared-base database '${db}' before the upgrade …"
+  snap="$(_upgrade_db_snapshot "${name}" "${db}")"
+  if [ -n "${snap}" ]; then ok "  data snapshot: ${snap}"
+  else warn "  snapshot failed — rollback restores the version pin only"; fi
+else
+  log "no shared-base database declared for ${name} — rollback restores the version pin only"
+  log "  (schema migrations may be one-way; see docs/module-spec.md §Component upgrades)"
+fi
+_upgrade_state_set "${name}" ts "${ts}"
+_upgrade_state_set "${name}" from "${cur_ver}"
+_upgrade_state_set "${name}" to "${target}"
+_upgrade_state_set "${name}" envbak "${bak}"
+_upgrade_state_set "${name}" databak "${snap}"
+_upgrade_state_set "${name}" status started
+_upgrade_log_append "${name}" "${cur_ver} → ${target} started${snap:+ snapshot=${snap}}"
+upgrade_env_rewrite "${envf}" "${newvals[@]}"
+log "rewrote image tags in ${envf} (${cur_ver} → ${target})"
+
+if ! AIBOX_MODULE="${name}" AIBOX_MODULE_VERSION="${prog_module_ver:-}" bash "${svc}" start; then
+  warn "upgrade failed the health check (${cur_ver} → ${target})"
+  if _upgrade_rollback "${name}" "${svc}" "${envf}" "${bak}" "${cur_ver}"; then
+    _upgrade_state_set "${name}" status rolled-back
+    _upgrade_state_set "${name}" live "$(_upgrade_live_version "${name}")"
+    _upgrade_log_append "${name}" "${cur_ver} → ${target} rolled-back"
+    warn "inspect: aibox ${name} logs; retry once fixed: aibox upgrade ${name} --to ${target}"
+    return 10
+  fi
+  _upgrade_state_set "${name}" status manual
+  _upgrade_log_append "${name}" "${cur_ver} → ${target} rollback-failed"
+  warn "manual intervention needed — the rollback did not come up either"
+  log "  inspect : aibox ${name} logs"
+  log "  pin     : ${envf} (backup: ${bak})"
+  log "  retry   : aibox upgrade ${name} --to ${cur_ver}    (re-apply the previous pin)"
+  [ -n "${snap}" ] && [ -n "${db}" ] && _upgrade_db_restore_hint "${snap}" "${db}"
+  return 20
+fi
+# NOTE: the module's installed-marker version is NOT overwritten with the app
+# version: the marker means "module version" (what `aibox update` compares),
+# and the app version now lives in the upgrade state where the dashboard reads
+# it. Overwriting it made `aibox update` report a bogus version transition on
+# the next run (app 1.19.0 vs module 1.4.3).
+# Post-upgrade verification: what does the RUNNING app report? (recorded; a
+# mismatch warns but never fails — the module's own health gate already passed)
+local live
+live="$(_upgrade_live_version "${name}")"
+_upgrade_state_set "${name}" live "${live}"
+_upgrade_state_set "${name}" status ok
+_upgrade_log_append "${name}" "${cur_ver} → ${target} ok${snap:+ snapshot=${snap}}"
+ok "${name} upgraded ${cur_ver} → ${target} (data volumes preserved; backup: ${bak})"
+if [ -n "${live}" ] && [ "${live#v}" != "${target}" ]; then
+  warn "the running app reports ${live} (pin: ${target}) — the image tag and the app version can differ per module"
+fi
+log "rollback point: aibox upgrade ${name} --rollback   (back to ${cur_ver})"
+log "reclaim the old images: docker image prune"
+}
+
 cmd_upgrade() {
   local name="" target="" check_only=0 pinned=0 mode="" no_backup=0
   while [ $# -gt 0 ]; do
@@ -162,65 +382,15 @@ cmd_upgrade() {
 
   # --history: the recorded transitions (local state, zero network)
   if [ "${mode}" = "history" ]; then
-    local lf st st_from st_to st_ts st_live
-    lf="$(_upgrade_log_file "${name}")"
-    st="$(_upgrade_state_get "${name}" status)"
-    st_from="$(_upgrade_state_get "${name}" from)"; st_to="$(_upgrade_state_get "${name}" to)"
-    st_ts="$(_upgrade_state_get "${name}" ts)";   st_live="$(_upgrade_state_get "${name}" live)"
-    if [ -z "${st}" ] && [ ! -f "${lf}" ]; then
-      log "no upgrade recorded for ${name} yet (nothing to show)"
-      return 0
-    fi
-    log "${name} — last recorded upgrade:"
-    [ -n "${st}" ] && log "  state   : ${st}$( [ -n "${st_ts}" ] && printf ' (%s)' "${st_ts}" )"
-    [ -n "${st_from}" ] && log "  pin     : ${st_from} → ${st_to:-?}$( [ -n "${st_live}" ] && printf '   live: %s' "${st_live}" )"
-    [ -n "${st_from}" ] && log "  rollback: aibox upgrade ${name} --rollback   (back to ${st_from})"
-    if [ -f "${lf}" ]; then
-      log "  history :"
-      tail -n "${AIBOX_UPGRADE_HISTORY_LINES:-10}" "${lf}" | sed 's/^/    /'
-    fi
-    return 0
+    _upg_show_history "${name}"
+    return $?
   fi
 
   # --rollback: restore the recorded pre-upgrade pin (a rollback POINT). Local
   # first: it needs no network unless the pin has to be resolved manually.
   if [ "${mode}" = "rollback" ]; then
-    local r_from r_bak r_snap r_db r_to r_now r_newbak
-    r_from="$(_upgrade_state_get "${name}" from)"
-    r_bak="$(_upgrade_state_get "${name}" envbak)"
-    r_snap="$(_upgrade_state_get "${name}" databak)"
-    r_to="$(_upgrade_state_get "${name}" to)"
-    r_db="$(_upgrade_db_name "${name}")"
-    [ -n "${r_from}" ] || die "no rollback point recorded for ${name} — nothing to roll back to (pin explicitly: aibox upgrade ${name} --to <version>)"
-    if [ "${ASSUME_YES:-0}" != 1 ]; then
-      ask_confirm "Roll ${name} back to ${r_from}? (restores the version pin and recreates the containers)" \
-        || { warn "declined (non-interactive? add --yes)"; return 2; }
-    fi
-    [ -f "${r_bak}" ] || die "the recorded .env backup is gone (${r_bak}) — pin manually: aibox upgrade ${name} --to ${r_from}"
-    # Symmetric: the version we are leaving becomes the next rollback point, so a
-    # second --rollback undoes this one (git-revert semantics, not a dead end).
-    r_now="$(_upgrade_live_version "${name}")"
-    [ -n "${r_now}" ] || r_now="${r_to}"
-    r_newbak="${envf}.bak.$(date +%Y%m%d%H%M%S).$$"
-    cp "${envf}" "${r_newbak}" 2>/dev/null || true
-    if _upgrade_rollback "${name}" "${svc}" "${envf}" "${r_bak}" "${r_from}"; then
-      _upgrade_state_set "${name}" status rolled-back
-      _upgrade_state_set "${name}" from "${r_now:-?}"
-      _upgrade_state_set "${name}" to "${r_from}"
-      _upgrade_state_set "${name}" envbak "${r_newbak}"
-      _upgrade_state_set "${name}" databak ""
-      _upgrade_state_set "${name}" live "$(_upgrade_live_version "${name}")"
-      _upgrade_log_append "${name}" "${r_now:-?} → ${r_from} rolled-back-by-user"
-      [ -n "${r_snap}" ] && info "the upgrade's data snapshot is still available: ${r_snap}"
-      [ -n "${r_snap}" ] && [ -n "${r_db}" ] && _upgrade_db_restore_hint "${r_snap}" "${r_db}"
-      return 0
-    fi
-    _upgrade_state_set "${name}" status manual
-    _upgrade_log_append "${name}" "${r_now:-?} → ${r_from} rollback-failed"
-    warn "rollback failed — manual intervention needed"
-    log "  inspect : aibox ${name} logs"
-    log "  pin     : ${envf}"
-    return 20
+    _upg_do_rollback "${name}" "${envf}" "${svc}"
+    return $?
   fi
 
   # Current live version: the first declared image key's tag (fallback: compose floor).
@@ -300,28 +470,8 @@ HOPSLIST
   rb_ts="$(_upgrade_state_get "${name}" ts)"
 
   if [ "${check_only}" = 1 ]; then
-    log "current : ${cur_ver}"
-    log "target  : ${target}"
-    [ -n "${rb_from}" ] && log "rollback: ${rb_from}$( [ -n "${rb_ts}" ] && printf ' (recorded %s)' "${rb_ts}" )   application: aibox upgrade ${name} --rollback"
-    if [ "${n_hops}" -gt 1 ]; then
-      log "path    : $((n_hops - 1)) required upgrade stop(s) — official rule: every stop between current and target, each hop on the minor's latest patch, migrations must finish before the next hop"
-      i=0
-      for hop_ver in "${hop_list[@]}"; do
-        i=$((i + 1))
-        if [ "${i}" -eq "${n_hops}" ]; then
-          log "  hop ${i}/${n_hops}  ${hop_ver}    target"
-        else
-          log "  hop ${i}/${n_hops}  ${hop_ver}.z → latest patch of ${hop_ver}    required stop"
-        fi
-      done
-      log "note    : omnibus boot 3-5 min/hop; the readiness gate (incl. db migrations) runs between hops"
-    fi
-    if [ "$(upgrade_ver_cmp "${target}" "${cur_ver}")" = "1" ]; then
-      log "status  : upgrade available (apply: aibox upgrade ${name} [--to ${target}] [--yes])"
-    else
-      log "status  : current is newer than the resolved target (downgrade only with --to)"
-    fi
-    return 0
+    _upg_check_report "${name}" "${cur_ver}" "${target}" "${rb_from}" "${rb_ts}" "${n_hops}" "${hop_list[@]}"
+    return $?
   fi
 
   if [ "${ASSUME_YES:-0}" != 1 ]; then
@@ -343,112 +493,16 @@ HOPSLIST
     return $?
   fi
 
-  # Build the new image values: pairing comes from the upstream compose at the target tag
-  # (mapping_url), or tag == target when there is no mapping (dockerhub single-image).
-  local mapping_body="" newvals=() kv tag
-  if [ -n "${mapping}" ]; then
-    mapping_body="$(upgrade_fetch "${mapping//<VER>/${target}}")" \
-      || die "cannot fetch the image mapping at ${target} (${mapping//<VER>/<version>}) — bad tag, or network (aibox clash on)"
-  fi
-  # shellcheck disable=SC2086
-  for kv in $images; do
-    k="${kv%%=*}"
-    prefix="${kv#*=}"
-    if [ -n "${mapping}" ]; then
-      tag="$(printf '%s' "${mapping_body}" | upgrade_extract_tag "${prefix}")" \
-        || die "cannot extract the image tag for ${prefix} in the upstream mapping at ${target}"
-    else
-      tag="${target}"
-    fi
-    newvals+=("${k}=${prefix}${tag}")
-  done
+  local newvals=() kv
+  while IFS= read -r kv; do
+    [ -n "${kv}" ] && newvals+=("${kv}")
+  done <<NEWVALS
+$(_upg_build_newvals "${target}" "${mapping}" "${images}")
+NEWVALS
+  _upg_pull_images "${newvals[@]}"
 
-  # Pull every new image BEFORE touching anything — but a direct-pull failure no
-  # longer aborts (compose modules now carry a docker.io mirror pool that retries
-  # at svc start; the health gate + auto-rollback remain the safety net).
-  local img
-  for kv in "${newvals[@]}"; do
-    img="${kv#*=}"
-    if docker image inspect "${img}" >/dev/null 2>&1; then
-      log "Already cached: ${img}"
-      continue
-    fi
-    log "pulling ${img} …"
-    if ! docker pull "${img}" >/dev/null 2>&1; then
-      warn "direct docker pull failed: ${img} — continuing (mirror pool retries at svc start; health gate + rollback protect)"
-    fi
-  done
-
-  # Back up the pin, snapshot the data (when the module's DB is knowable), then
-  # rewrite ONLY the declared image keys and recreate + health-wait via svc start.
-  # Every phase is recorded, so a failed upgrade still leaves a usable rollback
-  # point and the dashboard can show the state.
-  local ts bak db snap=""
-  ts="$(date +%Y%m%d%H%M%S)"
-  # $$ keeps the name unique: two runs inside the same second would otherwise
-  # share a path — and a rollback in that window would clobber its own rollback
-  # point (caught by tests/upgrade-rollback.bats).
-  bak="${envf}.bak.${ts}.$$"
-  cp "${envf}" "${bak}"
-  log "backed up ${envf} → ${bak}"
-  db="$(_upgrade_db_name "${name}")"
-  if [ "${no_backup}" = 1 ]; then
-    log "data snapshot skipped (--no-backup) — rollback restores the version pin only"
-  elif [ -n "${db}" ]; then
-    log "snapshotting the shared-base database '${db}' before the upgrade …"
-    snap="$(_upgrade_db_snapshot "${name}" "${db}")"
-    if [ -n "${snap}" ]; then ok "  data snapshot: ${snap}"
-    else warn "  snapshot failed — rollback restores the version pin only"; fi
-  else
-    log "no shared-base database declared for ${name} — rollback restores the version pin only"
-    log "  (schema migrations may be one-way; see docs/module-spec.md §Component upgrades)"
-  fi
-  _upgrade_state_set "${name}" ts "${ts}"
-  _upgrade_state_set "${name}" from "${cur_ver}"
-  _upgrade_state_set "${name}" to "${target}"
-  _upgrade_state_set "${name}" envbak "${bak}"
-  _upgrade_state_set "${name}" databak "${snap}"
-  _upgrade_state_set "${name}" status started
-  _upgrade_log_append "${name}" "${cur_ver} → ${target} started${snap:+ snapshot=${snap}}"
-  upgrade_env_rewrite "${envf}" "${newvals[@]}"
-  log "rewrote image tags in ${envf} (${cur_ver} → ${target})"
-
-  if ! AIBOX_MODULE="${name}" AIBOX_MODULE_VERSION="${prog_module_ver:-}" bash "${svc}" start; then
-    warn "upgrade failed the health check (${cur_ver} → ${target})"
-    if _upgrade_rollback "${name}" "${svc}" "${envf}" "${bak}" "${cur_ver}"; then
-      _upgrade_state_set "${name}" status rolled-back
-      _upgrade_state_set "${name}" live "$(_upgrade_live_version "${name}")"
-      _upgrade_log_append "${name}" "${cur_ver} → ${target} rolled-back"
-      warn "inspect: aibox ${name} logs; retry once fixed: aibox upgrade ${name} --to ${target}"
-      return 10
-    fi
-    _upgrade_state_set "${name}" status manual
-    _upgrade_log_append "${name}" "${cur_ver} → ${target} rollback-failed"
-    warn "manual intervention needed — the rollback did not come up either"
-    log "  inspect : aibox ${name} logs"
-    log "  pin     : ${envf} (backup: ${bak})"
-    log "  retry   : aibox upgrade ${name} --to ${cur_ver}    (re-apply the previous pin)"
-    [ -n "${snap}" ] && [ -n "${db}" ] && _upgrade_db_restore_hint "${snap}" "${db}"
-    return 20
-  fi
-  # NOTE: the module's installed-marker version is NOT overwritten with the app
-  # version: the marker means "module version" (what `aibox update` compares),
-  # and the app version now lives in the upgrade state where the dashboard reads
-  # it. Overwriting it made `aibox update` report a bogus version transition on
-  # the next run (app 1.19.0 vs module 1.4.3).
-  # Post-upgrade verification: what does the RUNNING app report? (recorded; a
-  # mismatch warns but never fails — the module's own health gate already passed)
-  local live
-  live="$(_upgrade_live_version "${name}")"
-  _upgrade_state_set "${name}" live "${live}"
-  _upgrade_state_set "${name}" status ok
-  _upgrade_log_append "${name}" "${cur_ver} → ${target} ok${snap:+ snapshot=${snap}}"
-  ok "${name} upgraded ${cur_ver} → ${target} (data volumes preserved; backup: ${bak})"
-  if [ -n "${live}" ] && [ "${live#v}" != "${target}" ]; then
-    warn "the running app reports ${live} (pin: ${target}) — the image tag and the app version can differ per module"
-  fi
-  log "rollback point: aibox upgrade ${name} --rollback   (back to ${cur_ver})"
-  log "reclaim the old images: docker image prune"
+  _upg_apply "${name}" "${envf}" "${svc}" "${target}" "${cur_ver}" "${prog_module_ver:-}" "${newvals[@]}"
+  return $?
 }
 
 cmd_list_available() {

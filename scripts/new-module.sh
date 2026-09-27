@@ -86,6 +86,8 @@ if [ "$WITH_COMPOSE" = 1 ]; then
   render "$DEST/module.yaml" <<'EOF'
 name: __NAME__
 version: 0.1.0
+# Contract surface this module targets — see docs/module-spec.md §Contract capability version
+module_iface: 1
 description: "__DESC__"
 platform: ""
 dir: tools/__NAME__
@@ -178,6 +180,8 @@ else
   render "$DEST/module.yaml" <<'EOF'
 name: __NAME__
 version: 0.1.0
+# Contract surface this module targets — see docs/module-spec.md §Contract capability version
+module_iface: 1
 description: "__DESC__"
 platform: ""
 dir: tools/__NAME__

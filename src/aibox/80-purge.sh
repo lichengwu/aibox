@@ -156,7 +156,53 @@ manager_paths() { # the manager's own residue ('self' scope)
 }
 
 # ---- scan ----
-PURGE_MODULES_KNOWN="base clash pi-web openmaic windmill gitlab dify new-api xiaozhi"
+# Candidate module names for the "scan everything" path, DERIVED from local
+# knowledge only (offline-safe). The manager intentionally carries NO module
+# list: a hardcoded one silently missed every newly added module (its residue was
+# never scanned, its leftover never displayed — review item D1).
+_purge_candidate_modules() {
+  local d n
+  {
+    for d in "$AIBOX_MOD_DIR"/*/; do
+      [ -f "${d}module.yaml" ] || continue
+      basename "${d}"
+    done
+    installed_names
+    for n in $(cfg_kv_get "$AIBOX_REGISTRY_CACHE" AIBOX_MODULES); do
+      printf '%s\n' "${n}"
+    done
+    # residue declarations captured at install time: the only surviving knowledge
+    # when the cache is gone and the host is offline (post-uninstall rescue)
+    if [ -f "$AIBOX_HOME/residue.conf" ]; then
+      awk -F'_residue_' '/^[a-z0-9][a-z0-9-]*_residue_/ { print $1 }' "$AIBOX_HOME/residue.conf"
+    fi
+    # deploy roots: apps/<name> is the most direct "there is residue here" signal.
+    # Named-profile roots are apps/<name>-<profile>, so strip a KNOWN profile
+    # suffix (profiles/*.conf basenames + the ports registry) before emitting.
+    local d base prof
+    local profiles=""
+    for prof in "$AIBOX_HOME"/profiles/*.conf; do
+      [ -f "${prof}" ] && profiles="${profiles} $(basename "${prof}" .conf)"
+    done
+    if [ -f "$AIBOX_HOME/ports.conf" ]; then
+      while read -r prof _rest; do
+        [ -n "${prof}" ] && profiles="${profiles} ${prof}"
+      done <"$AIBOX_HOME/ports.conf"
+    fi
+    for d in "$AIBOX_HOME"/apps/*/; do
+      [ -e "${d}" ] || continue
+      base="$(basename "${d}")"
+      for prof in ${profiles}; do
+        case "${base}" in
+        *"-${prof}") base="${base%-${prof}}" ;;
+        esac
+      done
+      printf '%s\n' "${base}"
+    done
+  } 2>/dev/null | tr ' ' '\n' | grep -E '^[a-z0-9][a-z0-9-]*$' | sort -u
+  return 0
+}
+
 PURGE_FINDINGS=""
 PURGE_COUNT=0
 _purge_add() { # scope kind target note  (tab-separated findings list)
@@ -304,7 +350,7 @@ cmd_purge() {
   done
   PURGE_FINDINGS=""; PURGE_COUNT=0; PURGE_DELETED=0; PURGE_SKIPPED=0
   if [ -z "$scope" ]; then
-    for m in $PURGE_MODULES_KNOWN; do _purge_scan_module "$m"; done
+    for m in $(_purge_candidate_modules); do _purge_scan_module "$m"; done
     _purge_scan_self
   else
     for m in $scope; do

@@ -80,6 +80,23 @@ _load_registry_remote() {
 }
 
 # Read a module field: module_field <name> <field> — requires load_registry already done.
+# A module declares the contract surface it targets (module.yaml module_iface).
+# Warn ONCE per run when it is newer than this manager: a silent mismatch would
+# surface later as a missing dashboard key or an ignored stanza. Absent = 1
+# (pre-contract modules keep working — the surface only ever grew so far).
+_iface_check() { # $1=module
+  local m="${1:-}" declared
+  [ -n "${m}" ] || return 0
+  declared="$(_module_meta_local "${m}" module_iface)"
+  [ -n "${declared}" ] || declared="$(module_field "${m}" module_iface 2>/dev/null || true)"
+  case "${declared}" in '' | *[!0-9]*) return 0 ;; esac
+  [ "${declared}" -le "${AIBOX_IFACE_SUPPORTED:-1}" ] && return 0
+  case " ${AIBOX_IFACE_WARNED:-} " in *" ${m} "*) return 0 ;; esac
+  AIBOX_IFACE_WARNED="${AIBOX_IFACE_WARNED:-} ${m}"
+  warn "${m} targets contract iface ${declared}; this aibox supports ${AIBOX_IFACE_SUPPORTED:-1} — behaviour may be missing (fix: aibox update self)"
+  return 0
+}
+
 module_field() {
   local key="AIBOX_MODULE_${1//-/_}_${2}"
   eval "printf '%s' \"\${${key}:-}\""

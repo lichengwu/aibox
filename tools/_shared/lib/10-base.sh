@@ -95,7 +95,8 @@ ensure_shared_redis_db() { # $1=module [$2=slots]
 }
 
 # Idempotent "the shared base must be UP for this action" — the action-time
-# twin of the manager's ensure_services. Live-caught: `aibox xiaozhi start`
+# the action-time counterpart of the manager's ensure_services (both use the
+# shared helpers). Live-caught: `aibox xiaozhi start`
 # died with "shared base not running … first: aibox base start" — two commands
 # for one intent. base already up → silent no-op; installed but down → start it
 # (compose up -d is idempotent) and wait for the network; not installed or not
