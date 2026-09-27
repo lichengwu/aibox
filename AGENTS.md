@@ -294,6 +294,22 @@ scripts/validate-module.sh <name> | --all                                  # con
     files). The manager carries NO per-module residue map — validator WARNs when a module
     declares neither; spec: `docs/module-spec.md` §Residue cleanup.
 
+### #12 `while IFS= read -r a b c` reads the WHOLE line into the first variable
+
+**Symptom**: a JSON emitter iterated `"name profile version"` lines and every module came out
+as one giant name (`${AIBOX_MODULE_new_api base unknown_ports:-}: bad substitution`).
+
+**Root cause**: `IFS=` (empty) disables word splitting for that `read` — a deliberate idiom
+when you want the raw line (`while IFS= read -r line`), but a trap when you then expect the
+extra variables to be filled: only the first one gets the entire line.
+
+**Fix**: use `while read -r a b c` (default IFS) when you want fields, `while IFS= read -r line`
+only for raw lines. Same family as the `${VAR}` brace rule: the idiom is right in one context
+and silently wrong in the other.
+
+**Detection**: a loop variable that "contains spaces you did not expect"; grep for
+`while IFS= read -r [a-z]* [a-z]` (more than one variable after `read`).
+
 ### #10 macOS bash 3.2 (arm64-darwin26 build): a failing `[[ ]]` does NOT trigger `set -e` — bats mid-test assertions are silently swallowed locally
 
 **Symptom**: tests "pass" on the dev Mac while the identical assertions fail on CI (ubuntu). Observed twice in one day: a stale header assertion ("Available modules", removed by an earlier TUI change) and a spacing regression — both green locally, red on CI.
