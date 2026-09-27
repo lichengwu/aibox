@@ -2,6 +2,26 @@
 
 Each aibox "module" is an independent tool, living under `tools/<name>/` in the repo, installed / updated / uninstalled / dispatched uniformly by the main CLI `aibox`.
 
+## Manager source layout (src/aibox + the bundler)
+
+The manager CLI ships as **one file** (`bin/aibox`, what `install.sh` downloads) but is
+**maintained as many**: `src/aibox/*.sh`, concatenated in lexical order by
+`scripts/bundle.sh`. `bin/aibox` is a generated artifact — CI (`bundle.sh --check`) fails
+when it drifts from the sources.
+
+- `00-head.sh` — shebang, `set -euo pipefail`, the `AIBOX_*` paths/consts (only this
+  fragment may carry a shebang or top-level shell settings)
+- `05-env.sh` … `90-main.sh` — one file per domain (ui/download/registry/state/proxy/
+  preflight/modules/base/upgrade/dashboard/purge/main); `90-main.sh` holds the dispatch
+  guard, so sourcing `bin/aibox` from tests still never dispatches
+- `tools/_shared/lib/*.sh` — the shared library used by BOTH the manager bundle and module
+  hooks; `tools/_shared/common.sh` is the generated module-side include
+  (`includes: [common]`) and is the same bytes concatenated into the manager, so
+  "manager twin of the shared lib" no longer exists as a concept
+
+Rule: a helper that both the manager and modules need lives in `tools/_shared/lib/` — never
+as a second copy inside `src/aibox/`.
+
 ## Onboarding a new module (normative)
 
 Adding a module = **scaffold + fill the contract + prove conformance**. Two repo tools own the

@@ -9,7 +9,10 @@ aibox is a lightweight, pure-bash module manager (zero runtime dependencies, com
 ## Repo layout
 
 ```text
-bin/aibox            main CLI (install.sh downloads to ~/.local/bin/aibox)
+bin/aibox            main CLI — GENERATED artifact: edit src/aibox/*.sh, run scripts/bundle.sh
+src/aibox/*.sh       the manager's actual sources (concatenated in lexical order into bin/aibox)
+scripts/bundle.sh    bundler: write / --check (CI gate) / --print / --out
+                     (the single-file shape is a RELEASE constraint, not a source one — this is why)
 install.sh           bootstrap (curl|bash install / self-update, idempotent; optional AIBOX_SHA256/AIBOX_VERIFY)
 tools/<name>/        module dir: lib.sh + install/uninstall/update/svc.sh + module.yaml
                      shipped: pi-web (macOS launchd service), openmaic (Linux deploy-host ops CLI),
@@ -37,9 +40,20 @@ aibox clash {set <sub-url>|on|off|status|refresh|select|test|logs|doctor}  # cla
 
 ## Contribution conventions
 
+### Editing the manager (mandatory)
+
+`bin/aibox` is a **generated artifact** — never hand-edit it. Sources live in `src/aibox/*.sh`
+(one file per domain, concatenated in lexical order; `00-head.sh` carries the shebang and
+`set -euo pipefail`). After any source change run `scripts/bundle.sh` and commit the
+regenerated artifact; CI runs `scripts/bundle.sh --check` and fails on drift. Rationale:
+the shipped file must stay a single file (curl|bash), but that is a release-shape constraint —
+keeping 5k lines in one hand-edited file forced "inline twins" of shared helpers that kept
+drifting. `tests/bundle.bats` locks the contract (fragments parse standalone, only the head
+fragment has a shebang, artifact == concatenation).
+
 ### bash coding conventions (mandatory)
 
-1. **`set -euo pipefail`** at the top of every script.
+1. **`set -euo pipefail`** at the top of every script (for `src/aibox/*.sh`: once, in `00-head.sh`).
 2. **Always quote variables as `${VAR}` (braces), never bare `$VAR`** — especially when a variable is immediately followed by a **non-ASCII** character (CJK text, full-width punctuation `，。、；：`). This is pitfall #1 below, the project's #1 footgun.
 3. **Declare `local` before assigning** (or on two lines).
 4. **Idempotent**: `install.sh` / `update.sh` must be safe to re-run without erroring.

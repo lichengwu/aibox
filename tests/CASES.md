@@ -77,6 +77,7 @@ Run everything: `tests/docker/run.sh` (or `bats tests/*.bats` locally).
 | help was purge-only | `install --help` fetched the registry for a module named `--help` | `tests/cli-consistency.bats` (per-verb help) |
 | hint pointed at a non-existent action | `see aibox base doctor` with no `doctor` action | `tests/cli-consistency.bats` |
 | two broken doc links + a missing test inventory | links 404'd; new suites shipped unlisted | `tests/docs-integrity.bats` |
+| a shared helper with two implementations | manager/`tools/_shared` twins drifted (base-env checks, profile suffix, exit codes, help) | `tests/bundle.bats` (artifact == sources; one source per helper) |
 
 ## Adding a case
 

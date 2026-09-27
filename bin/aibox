@@ -2,6 +2,7 @@
 # aibox — a lightweight, zero-dependency module manager for AI coding toolkits
 # Repo: https://github.com/lichengwu/aibox
 #
+# GENERATED FILE — do not edit: sources live in src/aibox/*.sh (rebuild: scripts/bundle.sh)
 # Usage (one grammar: everything is a module — 'self' is the manager module):
 #   aibox install <module> [--skip-checks]
 #   aibox uninstall <module>|self [--purge] [--yes]
@@ -56,7 +57,7 @@ if [ -z "${AIBOX_BIN_DIR:-}" ]; then
     ;;
   esac
 fi
-AIBOX_VERSION="0.19.1"
+AIBOX_VERSION="0.20.0"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 
