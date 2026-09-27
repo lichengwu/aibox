@@ -1,0 +1,107 @@
+#!/usr/bin/env bats
+# Machine-readable output (`--json`): a manager whose consumers are scripts,
+# timers and CI must answer with JSON, not with prose to be scraped.
+# Shape contract: dashboard = {aibox_version, profile, modules[]}; check =
+# {module, ok, exit, details[]}. stdout carries JSON ONLY; exit codes unchanged.
+
+load test_helper
+
+_json_valid() { # stdin → "ok" when it parses, the error otherwise
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json,sys; json.load(sys.stdin); print("ok")' 2>&1 | tail -1
+  else
+    printf 'ok'
+  fi
+}
+_json_field() { # $1=json $2=python expression over d
+  command -v python3 >/dev/null 2>&1 || { printf ''; return 0; }
+  printf '%s' "$1" | python3 -c "import json,sys; d=json.load(sys.stdin); print($2)" 2>/dev/null || true
+}
+
+@test "dashboard --json: valid JSON, documented keys, no ANSI escapes" {
+  run bash -c "export AIBOX_HOME='$AIBOX_HOME'; source '$AIBOX_BIN'; cmd_dashboard_json"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$(_json_valid <<<"$output")" = "ok" ] || { echo "$output" | head -5; false; }
+  [ "$(_json_field "$output" 'sorted(d.keys())')" = "['aibox_version', 'modules', 'profile']" ] || { echo "$output" | head -3; false; }
+  [ "$(_json_field "$output" 'd["profile"]')" = "base" ] || false
+  ! printf '%s' "$output" | grep -q $'\033' || false
+}
+
+@test "dashboard --json: one object per installed module with the full field set" {
+  mkdir -p "$AIBOX_MOD_DIR/new-api"
+  cp "$REPO_ROOT/tools/new-api/module.yaml" "$AIBOX_MOD_DIR/new-api/"
+  printf 'AIBOX_INSTALLED_new_api="1.3.0"\n' >"$AIBOX_INSTALLED"
+  run bash -c "export AIBOX_HOME='$AIBOX_HOME'; source '$AIBOX_BIN'; cmd_dashboard_json"
+  [ "$(_json_valid <<<"$output")" = "ok" ] || { echo "$output" | head -5; false; }
+  [ "$(_json_field "$output" 'len(d["modules"])')" = "1" ] || false
+  [ "$(_json_field "$output" 'd["modules"][0]["name"]')" = "new-api" ] || false
+  [ "$(_json_field "$output" 'd["modules"][0]["module_version"]')" = "1.3.0" ] || false
+  [ "$(_json_field "$output" 'd["modules"][0]["ports"]')" = "['30300/tcp:http']" ] || false
+  [ "$(_json_field "$output" 'sorted(d["modules"][0].keys())')" = "['app_version', 'endpoint', 'module_version', 'name', 'ports', 'profile', 'state']" ] || { echo "$output"; false; }
+}
+
+@test "dashboard --json: a profile-scoped install reports its profile" {
+  printf 'AIBOX_INSTALLED_new_api__prod="1.3.0"\n' >"$AIBOX_INSTALLED"
+  mkdir -p "$AIBOX_MOD_DIR/new-api"
+  cp "$REPO_ROOT/tools/new-api/module.yaml" "$AIBOX_MOD_DIR/new-api/"
+  run bash -c "export AIBOX_HOME='$AIBOX_HOME'; source '$AIBOX_BIN'; cmd_dashboard_json"
+  [ "$(_json_field "$output" 'd["modules"][0]["profile"]')" = "prod" ] || { echo "$output"; false; }
+}
+
+@test "dashboard --json: upgrade state is embedded when a state file exists" {
+  printf 'AIBOX_INSTALLED_new_api="1.3.0"\n' >"$AIBOX_INSTALLED"
+  mkdir -p "$AIBOX_MOD_DIR/new-api" "$AIBOX_HOME/upgrades"
+  cp "$REPO_ROOT/tools/new-api/module.yaml" "$AIBOX_MOD_DIR/new-api/"
+  printf 'status=ok\nfrom=v0.13.1\nto=v0.13.2\n' >"$AIBOX_HOME/upgrades/new-api.state"
+  run bash -c "export AIBOX_HOME='$AIBOX_HOME'; source '$AIBOX_BIN'; cmd_dashboard_json"
+  [ "$(_json_field "$output" 'd["modules"][0]["upgrade"]["status"]')" = "ok" ] || { echo "$output"; false; }
+  [ "$(_json_field "$output" 'd["modules"][0]["upgrade"]["to"]')" = "v0.13.2" ] || false
+}
+
+@test "check --json: envelope with module/ok/exit/details, exit code preserved" {
+  mkdir -p "$AIBOX_MOD_DIR/new-api"
+  cp "$REPO_ROOT/tools/new-api/module.yaml" "$AIBOX_MOD_DIR/new-api/"
+  run bash -c "export AIBOX_HOME='$AIBOX_HOME' AIBOX_RAW='file://$REPO_ROOT'; source '$AIBOX_BIN'; cmd_check new-api --json 2>/dev/null"
+  [ "$status" -eq 3 ] || [ "$status" -eq 4 ] || { echo "unexpected rc=$status: $output"; false; }
+  [ "$(_json_valid <<<"$output")" = "ok" ] || { echo "$output" | head -5; false; }
+  [ "$(_json_field "$output" 'd["module"]')" = "new-api" ] || false
+  [ "$(_json_field "$output" 'd["ok"]')" = "False" ] || false
+  [ "$(_json_field "$output" 'd["exit"]')" = "$status" ] || { echo "$output"; false; }
+  [ "$(_json_field "$output" 'len(d["details"]) > 0')" = "True" ] || false
+}
+
+@test "check --json: stdout is JSON only (log lines never leak into it)" {
+  mkdir -p "$AIBOX_MOD_DIR/new-api"
+  cp "$REPO_ROOT/tools/new-api/module.yaml" "$AIBOX_MOD_DIR/new-api/"
+  run bash -c "export AIBOX_HOME='$AIBOX_HOME' AIBOX_RAW='file://$REPO_ROOT'; source '$AIBOX_BIN'; cmd_check new-api --json"
+  # the whole capture (stderr merged) must still be parseable — details carry the prose
+  [ "$(_json_valid <<<"$output")" = "ok" ] || { echo "$output" | head -8; false; }
+}
+
+@test "the JSON helpers escape quotes, backslashes and control characters" {
+  run bash -c "source '$AIBOX_BIN'; json_str 'he said \"hi\" \\\\ end
+tab	here'"
+  [ "$status" -eq 0 ] || false
+  [ "$(_json_valid <<<"{\"v\": $output}")" = "ok" ] || { echo "$output"; false; }
+  [[ "$output" == *'\"hi\"'* ]] || { echo "$output"; false; }
+}
+
+@test "json_arr: comma-separated items, empty list for no items" {
+  run bash -c "source '$AIBOX_BIN'; json_arr ports a b"
+  [ "$output" = '"ports": ["a", "b"]' ] || { echo "$output"; false; }
+  run bash -c "source '$AIBOX_BIN'; json_arr ports"
+  [ "$output" = '"ports": []' ] || { echo "$output"; false; }
+}
+
+@test "help documents --json for dashboard and check" {
+  run bash -c "source '$AIBOX_BIN'; _verb_help dashboard"
+  [[ "$output" == *"--json"* ]] || false
+  run bash -c "source '$AIBOX_BIN'; _verb_help check"
+  [[ "$output" == *"--json"* ]] || false
+}
+
+@test "the JSON emitter is the shared library's, not a manager twin" {
+  [ "$(grep -c '^json_escape()' "$AIBOX_BIN")" = "1" ] || false
+  grep -q '^json_escape()' "$REPO_ROOT/tools/_shared/lib/50-json.sh" || false
+  [ "$(grep -rc '^json_escape()' "$REPO_ROOT"/src/aibox/*.sh | awk -F: '{s+=$2} END{print s+0}')" = "0" ] || false
+}

@@ -7,8 +7,8 @@
 #   aibox install <module> [--skip-checks]
 #   aibox uninstall <module>|self [--purge] [--yes]
 #   aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks]
-#   aibox check <module>|self           module preflight / environment check
-#   aibox dashboard [--available] [<module>]   overview(+ports) / catalog / detail
+#   aibox check <module>|self [--json]  module preflight / environment check
+#   aibox dashboard [--available|--json] [<module>]   overview(+ports) / catalog / detail
 #   aibox purge [<module>...|self] [--apply] [--stop] [--yes]
 #   aibox <module> <action> [args]      module action pass-through
 #   aibox proxy {set <url>|on|off|unset|check [url]|env}
@@ -1267,6 +1267,55 @@ meta_sub_field() { # $1 = module.yaml path, $2 = parent key, $3 = child key
     }
   ' "${f}" 2>/dev/null
 }
+# ---------- JSON emission (bash 3.2, no jq/python) ----------
+# Machine-readable output is a first-class surface for a manager whose main
+# consumers are scripts, timers and CI (`aibox dashboard --json`,
+# `aibox check --json`). These helpers keep the escaping in ONE place; callers
+# own the shape. stdout carries JSON only — colors/log lines go to stderr.
+
+# Escape a string for a JSON string literal (quotes, backslashes, control chars).
+json_escape() { # $1 = raw text → escaped text (no surrounding quotes)
+  local s="${1:-}" out="" i=0 c
+  while [ "${i}" -lt "${#s}" ]; do
+    c="${s:${i}:1}"
+    case "${c}" in
+    '"') out="${out}\\\"" ;;
+    '\') out="${out}\\\\" ;;
+    # shellcheck disable=SC2016
+    $'\n') out="${out}\\n" ;;
+    $'\r') out="${out}\\r" ;;
+    $'\t') out="${out}\\t" ;;
+    *) out="${out}${c}" ;;
+    esac
+    i=$(( i + 1 ))
+  done
+  printf '%s' "${out}"
+}
+
+json_str() { # $1 = raw text → "quoted JSON string"
+  printf '"%s"' "$(json_escape "${1:-}")"
+}
+
+# Key: value pairs for scalars — json_kv name "string" / json_num name 3
+json_kv_str() { printf '%s: %s' "$(json_str "${1:-}")" "$(json_str "${2:-}")"; }
+json_kv_num() { printf '%s: %s' "$(json_str "${1:-}")" "${2:-0}"; }
+json_kv_bool() {
+  local b="false"
+  case "${2:-}" in 1 | true | yes | ok) b="true" ;; esac
+  printf '%s: %s' "$(json_str "${1:-}")" "${b}"
+}
+# Array of strings: json_arr name a b c  → "name": ["a","b"]
+json_arr() { # $1 = key, rest = items
+  local key="$1" first=1 item
+  shift
+  printf '%s: [' "$(json_str "${key}")"
+  for item in "$@"; do
+    [ "${first}" = "1" ] || printf ', '
+    printf '%s' "$(json_str "${item}")"
+    first=0
+  done
+  printf ']'
+}
 # ---------- unknown-argument UX (suggestions + one consistent hint) ----------
 # Verbs the dispatcher understands (typo suggestions for the first arg).
 AIBOX_VERBS="install uninstall update upgrade check dashboard purge proxy clash help version self list ports"
@@ -1434,6 +1483,9 @@ EOF
     cat <<'EOF'
 usage: aibox check <module>|self
 
+  --json          machine-readable verdict on stdout:
+                  {"module","ok","exit","details":[...]} — exit codes unchanged
+
 Run the module's preflight without installing (deps, commands, disk, domains,
 docker pull, services), or the environment check for `self` (egress route,
 docker, node/npm, disk). Exit: 3 = hard requirement missing · 4 = precheck failed.
@@ -1443,12 +1495,16 @@ EOF
     ;;
   dashboard)
     cat <<'EOF'
-usage: aibox dashboard [--available] [<module>]
+usage: aibox dashboard [--available|--json] [<module>]
 
 No argument: every installed module per profile — app version, state, endpoint,
 credentials, ports + listeners, residue, and the async "updates available" list.
 
   --available     the registry catalog (module version + status)
+  --json          the same overview as ONE JSON object on stdout (machine-readable:
+                  aibox_version/profile/modules[] with name, module_version,
+                  app_version, state, endpoint, ports[], upgrade{}); local-first,
+                  no network, exit codes unchanged
   <module>        detail + health: app version, endpoint probe, auth, log path,
                   port listeners, config-key count, upgrade/rollback state
 
@@ -3024,9 +3080,44 @@ preflight_module() {
 
 # `aibox check` — environment check; `aibox check <module>` — that module's preflight.
 cmd_check() {
-  local target="${1:-}"
-  case "${target}" in -h|--help) _verb_help check; return 0 ;; esac
-  [ -n "$target" ] || usage_die "Usage: aibox check <module>|self   (self = environment check)"
+  local target="" want_json=0 a
+  for a in "$@"; do
+    case "${a}" in
+      -h | --help) _verb_help check; return 0 ;;
+      --json) want_json=1 ;;
+      *) [ -z "${target}" ] && target="${a}" || usage_die "Usage: aibox check <module>|self [--json]" ;;
+    esac
+  done
+  [ -n "$target" ] || usage_die "Usage: aibox check <module>|self [--json]   (self = environment check)"
+  if [ "${want_json}" = "1" ]; then
+    # machine-readable envelope: the same verdict the human path exits with, plus
+    # the human detail lines as an array (probes print prose; the envelope is the
+    # contract: module, ok, exit, details).
+    local out rc=0
+    out="$(cmd_check_inner "${target}" 2>&1)" || rc=$?
+    printf '{\n'
+    json_kv_str module "${target}"; printf ',\n'
+    json_kv_bool ok "$([ "${rc}" -eq 0 ] && printf 1 || printf 0)"; printf ',\n'
+    json_kv_num exit "${rc}"; printf ',\n'
+    printf '"details": ['
+    local line first=1
+    while IFS= read -r line; do
+      [ -n "${line}" ] || continue
+      [ "${first}" = "1" ] || printf ','
+      printf '\n    %s' "$(json_str "${line}")"
+      first=0
+    done <<DETAILS
+${out}
+DETAILS
+    [ "${first}" = "1" ] && printf ']' || printf '\n  ]'
+    printf '\n}\n'
+    return "${rc}"
+  fi
+  cmd_check_inner "${target}"
+}
+
+cmd_check_inner() { # $1=module|self → the human check (shared by --json and plain)
+  local target="$1"
   if [ "$target" = self ]; then cmd_self_check; return $?; fi
   load_registry
   module_exists "$target" || die_unknown_module "$target"
@@ -4549,6 +4640,7 @@ CATALOGFB
 cmd_dashboard() {
   case "${1:-}" in
     -h|--help)   _verb_help dashboard; return 0 ;;
+    --json)      cmd_dashboard_json ;;
     --available) cmd_list_available ;;
     "")          cmd_dashboard_overview ;;
     *)           cmd_dashboard_detail "$1" ;;
@@ -4752,6 +4844,62 @@ _dash_probe_cmd() {
   else
     rm -f "${out}" 2>/dev/null || true
   fi
+}
+
+# `aibox dashboard --json` — the machine-readable overview: everything the human
+# view shows (installed modules with module/app version, state, endpoint, ports,
+# upgrade state) as ONE JSON object on stdout. Local-first (no network), colors
+# never leak (they are TTY-gated) and log lines stay on stderr.
+_dash_info_field() { # $1=module $2=key → the dashboard_info contract field
+  local m="$1" key="$2"
+  [ -f "$AIBOX_MOD_DIR/$m/lib.sh" ] || return 0
+  AIBOX_MODULE="$m" AIBOX_HOME="$AIBOX_HOME" bash -c "
+    . '$AIBOX_MOD_DIR/$m/lib.sh' 2>/dev/null || exit 0
+    type dashboard_info >/dev/null 2>&1 || exit 0
+    dashboard_info 2>/dev/null
+  " 2>/dev/null | sed -n "s/^${key}=//p" | head -1
+}
+
+cmd_dashboard_json() {
+  local pairs m prof ver aver state ep ports p st info_lines=0 first=1
+  pairs="$(_installed_pairs)"
+  printf '{\n'
+  json_kv_str aibox_version "${AIBOX_VERSION}"; printf ',\n'
+  json_kv_str profile "${AIBOX_PROFILE:-base}"; printf ',\n'
+  printf '"modules": ['
+  # note: plain `read` (default IFS) — the pairs are ONE line per module
+  # ("name profile version"); `IFS= read` would swallow the whole line as the name
+  while read -r m prof ver; do
+    [ -n "${m}" ] || continue
+    aver="$(_dash_info_field "$m" version)"
+    state="$(_dash_info_field "$m" state)"
+    ep="$(_dash_info_field "$m" endpoint)"
+    ports="$(_module_meta_local "$m" ports)"
+    st="$(_upgrade_state_get "$m" status)"
+    [ "${first}" = "1" ] || printf ','
+    first=0
+    printf '\n  {'
+    json_kv_str name "$m"; printf ', '
+    json_kv_str profile "${prof:-base}"; printf ', '
+    json_kv_str module_version "${ver:-$(_module_version_local "$m")}"; printf ', '
+    json_kv_str app_version "$aver"; printf ', '
+    json_kv_str state "$state"; printf ', '
+    json_kv_str endpoint "$ep"; printf ', '
+    # shellcheck disable=SC2086
+    json_arr ports ${ports}
+    if [ -n "${st}" ]; then
+      printf ', "upgrade": {'
+      json_kv_str status "$st"; printf ', '
+      json_kv_str from "$(_upgrade_state_get "$m" from)"; printf ', '
+      json_kv_str to "$(_upgrade_state_get "$m" to)"
+      printf '}'
+    fi
+    printf '}'
+  done <<PAIRS
+${pairs}
+PAIRS
+  [ "${first}" = "1" ] && printf ']' || printf '\n]'
+  printf '\n}\n'
 }
 
 cmd_dashboard_overview() {
@@ -5037,7 +5185,7 @@ cmd_module_help() {
     ver="$(module_field "${name}" version)"
     desc="$(module_field "${name}" description)"
     acts="$(module_field "${name}" actions)"
-    ports="$(module_field "${name}" ports)"
+    ports="$(_module_meta_local "${name}" ports)"
     docs="$(module_field "${name}" upstream_homepage)"
   fi
   printf '%s%s%s %s· module %s%s\n' "$C_BOLD" "${name}" "$C_RST" "$C_DIM" "${ver:-\?}" "$C_RST"
@@ -5852,7 +6000,7 @@ EOF
   printf '%sInspection\n\n' "${C_BOLD}${C_CYA}"
   cat <<'EOF'
   check <module>|self        Preflight dry-run (self = environment: egress, docker, node, disk)
-  dashboard [--available]    Overview + ports + listeners; --available = registry catalog
+  dashboard [--available]    Overview + ports + listeners; --available = registry catalog; --json = machine-readable
   dashboard <module>         Detail + health + config keys + upgrade/rollback state
   purge [module...|self] [--apply] [--stop] [--yes]
                              Residue scan/cleanup (dry-run by default)

@@ -638,7 +638,7 @@ EOF
   printf '%sInspection\n\n' "${C_BOLD}${C_CYA}"
   cat <<'EOF'
   check <module>|self        Preflight dry-run (self = environment: egress, docker, node, disk)
-  dashboard [--available]    Overview + ports + listeners; --available = registry catalog
+  dashboard [--available]    Overview + ports + listeners; --available = registry catalog; --json = machine-readable
   dashboard <module>         Detail + health + config keys + upgrade/rollback state
   purge [module...|self] [--apply] [--stop] [--yes]
                              Residue scan/cleanup (dry-run by default)

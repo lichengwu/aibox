@@ -489,6 +489,7 @@ CATALOGFB
 cmd_dashboard() {
   case "${1:-}" in
     -h|--help)   _verb_help dashboard; return 0 ;;
+    --json)      cmd_dashboard_json ;;
     --available) cmd_list_available ;;
     "")          cmd_dashboard_overview ;;
     *)           cmd_dashboard_detail "$1" ;;

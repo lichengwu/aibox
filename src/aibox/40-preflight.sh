@@ -338,9 +338,44 @@ preflight_module() {
 
 # `aibox check` — environment check; `aibox check <module>` — that module's preflight.
 cmd_check() {
-  local target="${1:-}"
-  case "${target}" in -h|--help) _verb_help check; return 0 ;; esac
-  [ -n "$target" ] || usage_die "Usage: aibox check <module>|self   (self = environment check)"
+  local target="" want_json=0 a
+  for a in "$@"; do
+    case "${a}" in
+      -h | --help) _verb_help check; return 0 ;;
+      --json) want_json=1 ;;
+      *) [ -z "${target}" ] && target="${a}" || usage_die "Usage: aibox check <module>|self [--json]" ;;
+    esac
+  done
+  [ -n "$target" ] || usage_die "Usage: aibox check <module>|self [--json]   (self = environment check)"
+  if [ "${want_json}" = "1" ]; then
+    # machine-readable envelope: the same verdict the human path exits with, plus
+    # the human detail lines as an array (probes print prose; the envelope is the
+    # contract: module, ok, exit, details).
+    local out rc=0
+    out="$(cmd_check_inner "${target}" 2>&1)" || rc=$?
+    printf '{\n'
+    json_kv_str module "${target}"; printf ',\n'
+    json_kv_bool ok "$([ "${rc}" -eq 0 ] && printf 1 || printf 0)"; printf ',\n'
+    json_kv_num exit "${rc}"; printf ',\n'
+    printf '"details": ['
+    local line first=1
+    while IFS= read -r line; do
+      [ -n "${line}" ] || continue
+      [ "${first}" = "1" ] || printf ','
+      printf '\n    %s' "$(json_str "${line}")"
+      first=0
+    done <<DETAILS
+${out}
+DETAILS
+    [ "${first}" = "1" ] && printf ']' || printf '\n  ]'
+    printf '\n}\n'
+    return "${rc}"
+  fi
+  cmd_check_inner "${target}"
+}
+
+cmd_check_inner() { # $1=module|self → the human check (shared by --json and plain)
+  local target="$1"
   if [ "$target" = self ]; then cmd_self_check; return $?; fi
   load_registry
   module_exists "$target" || die_unknown_module "$target"

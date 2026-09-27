@@ -165,6 +165,9 @@ EOF
     cat <<'EOF'
 usage: aibox check <module>|self
 
+  --json          machine-readable verdict on stdout:
+                  {"module","ok","exit","details":[...]} — exit codes unchanged
+
 Run the module's preflight without installing (deps, commands, disk, domains,
 docker pull, services), or the environment check for `self` (egress route,
 docker, node/npm, disk). Exit: 3 = hard requirement missing · 4 = precheck failed.
@@ -174,12 +177,16 @@ EOF
     ;;
   dashboard)
     cat <<'EOF'
-usage: aibox dashboard [--available] [<module>]
+usage: aibox dashboard [--available|--json] [<module>]
 
 No argument: every installed module per profile — app version, state, endpoint,
 credentials, ports + listeners, residue, and the async "updates available" list.
 
   --available     the registry catalog (module version + status)
+  --json          the same overview as ONE JSON object on stdout (machine-readable:
+                  aibox_version/profile/modules[] with name, module_version,
+                  app_version, state, endpoint, ports[], upgrade{}); local-first,
+                  no network, exit codes unchanged
   <module>        detail + health: app version, endpoint probe, auth, log path,
                   port listeners, config-key count, upgrade/rollback state
 

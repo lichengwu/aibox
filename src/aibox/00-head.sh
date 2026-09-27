@@ -7,8 +7,8 @@
 #   aibox install <module> [--skip-checks]
 #   aibox uninstall <module>|self [--purge] [--yes]
 #   aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks]
-#   aibox check <module>|self           module preflight / environment check
-#   aibox dashboard [--available] [<module>]   overview(+ports) / catalog / detail
+#   aibox check <module>|self [--json]  module preflight / environment check
+#   aibox dashboard [--available|--json] [<module>]   overview(+ports) / catalog / detail
 #   aibox purge [<module>...|self] [--apply] [--stop] [--yes]
 #   aibox <module> <action> [args]      module action pass-through
 #   aibox proxy {set <url>|on|off|unset|check [url]|env}

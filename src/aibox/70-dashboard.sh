@@ -193,6 +193,62 @@ _dash_probe_cmd() {
   fi
 }
 
+# `aibox dashboard --json` — the machine-readable overview: everything the human
+# view shows (installed modules with module/app version, state, endpoint, ports,
+# upgrade state) as ONE JSON object on stdout. Local-first (no network), colors
+# never leak (they are TTY-gated) and log lines stay on stderr.
+_dash_info_field() { # $1=module $2=key → the dashboard_info contract field
+  local m="$1" key="$2"
+  [ -f "$AIBOX_MOD_DIR/$m/lib.sh" ] || return 0
+  AIBOX_MODULE="$m" AIBOX_HOME="$AIBOX_HOME" bash -c "
+    . '$AIBOX_MOD_DIR/$m/lib.sh' 2>/dev/null || exit 0
+    type dashboard_info >/dev/null 2>&1 || exit 0
+    dashboard_info 2>/dev/null
+  " 2>/dev/null | sed -n "s/^${key}=//p" | head -1
+}
+
+cmd_dashboard_json() {
+  local pairs m prof ver aver state ep ports p st info_lines=0 first=1
+  pairs="$(_installed_pairs)"
+  printf '{\n'
+  json_kv_str aibox_version "${AIBOX_VERSION}"; printf ',\n'
+  json_kv_str profile "${AIBOX_PROFILE:-base}"; printf ',\n'
+  printf '"modules": ['
+  # note: plain `read` (default IFS) — the pairs are ONE line per module
+  # ("name profile version"); `IFS= read` would swallow the whole line as the name
+  while read -r m prof ver; do
+    [ -n "${m}" ] || continue
+    aver="$(_dash_info_field "$m" version)"
+    state="$(_dash_info_field "$m" state)"
+    ep="$(_dash_info_field "$m" endpoint)"
+    ports="$(_module_meta_local "$m" ports)"
+    st="$(_upgrade_state_get "$m" status)"
+    [ "${first}" = "1" ] || printf ','
+    first=0
+    printf '\n  {'
+    json_kv_str name "$m"; printf ', '
+    json_kv_str profile "${prof:-base}"; printf ', '
+    json_kv_str module_version "${ver:-$(_module_version_local "$m")}"; printf ', '
+    json_kv_str app_version "$aver"; printf ', '
+    json_kv_str state "$state"; printf ', '
+    json_kv_str endpoint "$ep"; printf ', '
+    # shellcheck disable=SC2086
+    json_arr ports ${ports}
+    if [ -n "${st}" ]; then
+      printf ', "upgrade": {'
+      json_kv_str status "$st"; printf ', '
+      json_kv_str from "$(_upgrade_state_get "$m" from)"; printf ', '
+      json_kv_str to "$(_upgrade_state_get "$m" to)"
+      printf '}'
+    fi
+    printf '}'
+  done <<PAIRS
+${pairs}
+PAIRS
+  [ "${first}" = "1" ] && printf ']' || printf '\n]'
+  printf '\n}\n'
+}
+
 cmd_dashboard_overview() {
   # ZERO-network default view: installed state (installed.sh) + module caches
   # are LOCAL; latest-version probes run ASYNC (bounded) so a dead network
@@ -476,7 +532,7 @@ cmd_module_help() {
     ver="$(module_field "${name}" version)"
     desc="$(module_field "${name}" description)"
     acts="$(module_field "${name}" actions)"
-    ports="$(module_field "${name}" ports)"
+    ports="$(_module_meta_local "${name}" ports)"
     docs="$(module_field "${name}" upstream_homepage)"
   fi
   printf '%s%s%s %s· module %s%s\n' "$C_BOLD" "${name}" "$C_RST" "$C_DIM" "${ver:-\?}" "$C_RST"
