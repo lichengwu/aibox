@@ -77,6 +77,7 @@ Run everything: `tests/docker/run.sh` (or `bats tests/*.bats` locally).
 | help was purge-only | `install --help` fetched the registry for a module named `--help` | `tests/cli-consistency.bats` (per-verb help) |
 | hint pointed at a non-existent action | `see aibox base doctor` with no `doctor` action | `tests/cli-consistency.bats` |
 | two broken doc links + a missing test inventory | links 404'd; new suites shipped unlisted | `tests/docs-integrity.bats` |
+| a profile port collision | two profile names could derive the same slot, and nothing checked before starting | `tests/profile.bats` (registry + live check) |
 | a state file sourced as code | config/cache/state/deploy-.env were executed — a corrupted file would run as the user | `tests/state.bats` (parsed readers + gate) |
 | an unverified module download | the fetched code could differ from the repo (tampered cache/mirror) with nothing noticing | `tests/verify.bats` (modules.SHA256SUMS) |
 | automation scraping human output | scripts/CI had to parse prose for state/versions | `tests/json.bats` (`--json` dashboards + checks) |

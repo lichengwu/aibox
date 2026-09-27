@@ -22,6 +22,22 @@ when it drifts from the sources.
 Rule: a helper that both the manager and modules need lives in `tools/_shared/lib/` — never
 as a second copy inside `src/aibox/`.
 
+### Profiles and port allocation
+
+A profile is a second instance of a module family (`aibox --profile <name> …`).
+Its ports are **derived from the name** (so the same name means the same ports on
+every machine) and then **registered**: `$AIBOX_HOME/ports.conf` maps
+`<profile> pg=… redis=… web=…` (data, mode 600, parsed never sourced).
+
+Derivation and registration live in `tools/_shared/lib/60-profile.sh`
+(`profile_hash`, `profile_port`, `profile_register`, `profile_owner`,
+`profile_conflicts`, `profile_ensure`) — base and pi-web call them; no module
+carries its own copy. `profile_ensure` runs at module-lib load and **refuses to
+start into a live collision** with another profile (exit `4`, precheck failed,
+with the owning profile named); a registered-but-dead owner is not a conflict.
+
+The default profile (`base`) is exempt: it keeps the module's declared ports.
+
 ### State model (three layers, parsed never sourced)
 
 | layer | where | who owns it | examples |

@@ -44,38 +44,13 @@ MODULE_VERSION="${AIBOX_MODULE_VERSION:-$(meta_version "${LIB_SELF}/module.yaml"
 # Shares the profile config ($AIBOX_HOME/profiles/<name>.conf) with base — each module
 # derives its own vars from PROFILE_HASH + PROFILE_NAME in the config.
 
-_profile_hash() {
-  local name="$1" sum=0 i=0 ch
-  while [ $i -lt ${#name} ]; do
-    ch="${name:$i:1}"
-    sum=$((sum + $(printf '%d' "'$ch") * (i + 1)))
-    i=$((i + 1))
-  done
-  printf '%d' "$sum"
-}
 
-_profile_create() {
-  local name="$1" pf="$2" h
-  h=$(_profile_hash "$name")
-  mkdir -p "$(dirname "$pf")"
-  cat >"$pf" <<EOF
-# aibox profile: $name
-# Auto-generated deterministically from the profile name.
-# Same name → same values on every machine. Edit to override.
-PROFILE_NAME=$name
-PROFILE_HASH=$h
-EOF
-  log "Created profile '$name' (hash=$h)"
-  _PROFILE_JUST_CREATED=1
-}
 
 _profile_load() {
   [ -z "${AIBOX_PROFILE:-}" ] && return 0
   [ "$AIBOX_PROFILE" = "base" ] && return 0
   local pf="${AIBOX_HOME:-${HOME:+${HOME}/.aibox}}/profiles/${AIBOX_PROFILE}.conf"
-  if [ ! -f "$pf" ]; then
-    _profile_create "$AIBOX_PROFILE" "$pf"
-  fi
+  profile_ensure "$AIBOX_PROFILE" "$pf"
   # Parsed, not executed: a profile conf is data (cfg_kv_load in the shared lib)
   cfg_kv_load "$pf" PROFILE_
   if [ -z "${PROFILE_HASH:-}" ] && [ -z "${PROFILE_NAME:-}" ]; then
