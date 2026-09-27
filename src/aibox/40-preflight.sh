@@ -28,7 +28,7 @@ _preflight_probe_route() {
       local st="${AIBOX_HOME}/apps/clash/state" p
       [ -f "$st" ] || return 1
       # shellcheck source=/dev/null
-      p="$( . "$st" 2>/dev/null; printf '%s' "${CLASH_PORT:-7890}" )"
+      p="$( cfg_kv_load "$st"; printf '%s' "${CLASH_PORT:-7890}" )"
       code="$(curl -s -x "socks5://127.0.0.1:${p}" -o /dev/null --max-time "$t" -w '%{http_code}' "$url" 2>/dev/null)" ;;
     proxy)
       [ -n "${AIBOX_PROXY_URL:-}" ] || return 1
@@ -61,7 +61,7 @@ _preflight_adopt() {
     clash)
       st="${AIBOX_HOME}/apps/clash/state"; p=7890
       # shellcheck source=/dev/null
-      [ -f "$st" ] && p="$( . "$st" 2>/dev/null; printf '%s' "${CLASH_PORT:-7890}" )"
+      [ -f "$st" ] && p="$( cfg_kv_load "$st"; printf '%s' "${CLASH_PORT:-7890}" )"
       eff="socks5://127.0.0.1:${p}"
       export http_proxy="$eff" https_proxy="$eff" all_proxy="$eff" HTTP_PROXY="$eff" HTTPS_PROXY="$eff"
       warn "adopting clash pool (${eff}) for this run; persist: aibox clash on" ;;

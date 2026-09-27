@@ -65,6 +65,17 @@ fragment has a shebang, artifact == concatenation).
 6. **No `jq` / `python`**: the registry is shell-sourceable; the main CLI sources it directly, bash 3.2 compatible. (Since v0.4.0 the registry is auto-discovered from `tools/*/module.yaml` via a zero-dependency awk subset parser; yq validates the subset in CI.)
 7. **Keep full-width punctuation in Chinese copy** (README.zh.md), but always separate variable boundaries with `${VAR}`.
 
+### State model (mandatory)
+
+State lives in three layers — **host** (`$AIBOX_HOME/config`, `installed.sh`,
+`registry.cache`, `residue.conf`, `profiles/*.conf`), **deployment**
+(`apps/<name>[-<profile>]/.env`, `/etc/<name>/<name>.conf`) and **contract**
+(`base[-<profile>].env`, `redis[-<profile>]-<module>.env`, `upgrades/<m>.state`,
+written by the provider). **No state file is ever sourced** — data is not code:
+parse it (`cfg_kv_load` / `cfg_kv_get` / `cfg_kv_load_export` in the shared
+library). `scripts/check-sources.sh` fails on a `. "…"` of a data file; spec
+§State model.
+
 ### Content manifest (mandatory)
 
 Any change under `tools/**` (hooks, `lib.sh`, `module.yaml`, compose files, `cli/**`,

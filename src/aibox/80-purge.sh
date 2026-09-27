@@ -76,7 +76,7 @@ _residue_decl() { # $1=module $2=field (paths|containers|volumes|units|bin|npm|p
   fi
   v="$(eval "printf '%s' \"\${AIBOX_MODULE_${mu}_residue_${field}:-}\"" 2>/dev/null)"
   [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
-  v="$( ( . "$AIBOX_REGISTRY_CACHE" 2>/dev/null; eval "printf '%s' \"\${AIBOX_MODULE_${mu}_residue_${field}:-}\"" ) 2>/dev/null )"
+  v="$(cfg_kv_get "$AIBOX_REGISTRY_CACHE" "AIBOX_MODULE_${mu}_residue_${field}")"
   printf '%s' "${v}"
 }
 

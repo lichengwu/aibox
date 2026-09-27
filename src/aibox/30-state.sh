@@ -3,7 +3,7 @@ load_config() {
   [ -f "$AIBOX_CONFIG" ] || return 0
   # Config is maintained by `aibox proxy`, plain KEY=VALUE; parse failure is non-fatal.
   # shellcheck disable=SC1090
-  . "$AIBOX_CONFIG" 2>/dev/null || warn "Config file unparseable, ignored: $AIBOX_CONFIG"
+  cfg_kv_load "$AIBOX_CONFIG"
   [ -n "${AIBOX_NO_PROXY:-}" ] || AIBOX_NO_PROXY="$AIBOX_NO_PROXY_DEFAULT"
   return 0
 }
@@ -84,7 +84,7 @@ clash_active() {
   local st="${AIBOX_HOME}/apps/clash/state"
   [ -f "$st" ] || return 1
   # shellcheck disable=SC1090
-  . "$st" 2>/dev/null || return 1
+  cfg_kv_load "$st"
   [ "${CLASH_ENABLED:-0}" = "1" ] || return 1
   CLASH_PORT="${CLASH_PORT:-7890}"
   # mode-aware egress port: external (Verge etc.) → its own port
@@ -106,7 +106,7 @@ _clash_stale_warn() {
   local st="${AIBOX_HOME}/apps/clash/state" port
   [ -f "$st" ] || return 0
   # shellcheck disable=SC1090
-  . "$st" 2>/dev/null || return 0
+  cfg_kv_load "$st"
   [ "${CLASH_ENABLED:-0}" = "1" ] || return 0
   port="${CLASH_PORT:-7890}"
   if ! (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then

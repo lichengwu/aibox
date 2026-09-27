@@ -26,9 +26,12 @@ load_registry() {
   # Remote source: serve from cache when fresh.
   if _cache_fresh "$AIBOX_REGISTRY_CACHE"; then
     # shellcheck disable=SC1090
-    . "$AIBOX_REGISTRY_CACHE" 2>/dev/null || { rm -f "$AIBOX_REGISTRY_CACHE"; _load_registry_remote; return; }
-    # Verify the cache actually produced a module list; otherwise refresh.
-    [ -n "${AIBOX_MODULES:-}" ] && return
+    cfg_kv_load "$AIBOX_REGISTRY_CACHE" AIBOX_
+    # A cache that yields no module list is junk (truncated/legacy): refresh it.
+    if [ -n "${AIBOX_MODULES:-}" ]; then
+      return 0
+    fi
+    rm -f "$AIBOX_REGISTRY_CACHE"
   fi
 
   _load_registry_remote
@@ -73,7 +76,7 @@ _load_registry_remote() {
   rm -f "$_body_tmp" "$_out_tmp"
   # Eval the same assignments into this process.
   # shellcheck disable=SC1090
-  . "$AIBOX_REGISTRY_CACHE" 2>/dev/null || true
+  cfg_kv_load "$AIBOX_REGISTRY_CACHE" AIBOX_
 }
 
 # Read a module field: module_field <name> <field> — requires load_registry already done.

@@ -22,6 +22,27 @@ when it drifts from the sources.
 Rule: a helper that both the manager and modules need lives in `tools/_shared/lib/` — never
 as a second copy inside `src/aibox/`.
 
+### State model (three layers, parsed never sourced)
+
+| layer | where | who owns it | examples |
+| --- | --- | --- | --- |
+| **host** | `$AIBOX_HOME/{config,installed.sh,registry.cache,residue.conf,profiles/*.conf}` | the manager | proxy config, install markers, registry cache, residue declarations, profile hashes |
+| **deployment** | `$AIBOX_HOME/apps/<name>[-<profile>]/.env`, `/etc/<name>/<name>.conf` | the module (user-editable) | ports, image pins, module config |
+| **contract** | `$AIBOX_HOME/base[-<profile>].env`, `redis[-<profile>]-<module>.env`, `upgrades/<m>.state` | written by the provider, read-only for consumers | shared-PG/Redis connection facts, upgrade state |
+
+Rules:
+
+1. **Data is not code.** No state file is ever sourced: config, registry cache,
+   clash state, profile confs and deploy `.env` files are parsed with the shared
+   readers (`cfg_kv_load`, `cfg_kv_get`, `cfg_kv_load_export`) — values are
+   literal, never executed (`scripts/check-sources.sh` fails the build on a
+   `. "…"` of a data file).
+2. **One writer per file.** Contract files are written by their provider only
+   (`base start` writes `base.env`; the manager's `create` writes the per-module
+   Redis env). Consumers read.
+3. **Derived values are never hand-written** into docs — `aibox dashboard` is
+   the authoritative view (spec §Doc hygiene).
+
 ### Supply chain (content verification)
 
 Module scripts are code that runs as the user, so every fetched file is checked

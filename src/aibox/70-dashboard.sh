@@ -34,7 +34,7 @@ _module_meta_local() { # $1=module $2=field (scalar OR flat list like actions)
     v="$(meta_field "$AIBOX_MOD_DIR/$m/module.yaml" "$field")"
     [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
   fi
-  v="$( ( . "$AIBOX_REGISTRY_CACHE" 2>/dev/null; eval "printf '%s' \"\${AIBOX_MODULE_${mu}_${field}:-}\"" ) 2>/dev/null )"
+  v="$(cfg_kv_get "$AIBOX_REGISTRY_CACHE" "AIBOX_MODULE_${mu}_${field}")"
   printf '%s' "${v}"
 }
 
@@ -513,7 +513,7 @@ _module_usage_local() { # $1=module $2=action
   mu="${1//-/_}"; act="${2//-/_}"
   v="$(eval "printf '%s' \"\${AIBOX_MODULE_${mu}_usage_${act}:-}\"" 2>/dev/null)"
   [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
-  v="$( ( . "$AIBOX_REGISTRY_CACHE" 2>/dev/null; eval "printf '%s' \"\${AIBOX_MODULE_${mu}_usage_${act}:-}\"" ) 2>/dev/null )"
+  v="$(cfg_kv_get "$AIBOX_REGISTRY_CACHE" "AIBOX_MODULE_${mu}_usage_${act}")"
   printf '%s' "${v}"
 }
 

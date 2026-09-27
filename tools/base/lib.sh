@@ -59,11 +59,12 @@ _profile_load() {
   if [ ! -f "$pf" ]; then
     _profile_create "$AIBOX_PROFILE" "$pf"
   fi
-  # shellcheck disable=SC1090
-  . "$pf" 2>/dev/null || {
-    warn "Profile config unparseable: $pf"
+  # Parsed, not executed: a profile conf is data (cfg_kv_load in the shared lib)
+  cfg_kv_load "$pf" PROFILE_
+  if [ -z "${PROFILE_HASH:-}" ] && [ -z "${PROFILE_NAME:-}" ]; then
+    warn "Profile config unreadable: $pf"
     return 1
-  }
+  fi
 
   local _h="${PROFILE_HASH:-0}" _n="${PROFILE_NAME:-$AIBOX_PROFILE}"
   _PROFILE_SUFFIX="-${_n}"
@@ -105,8 +106,7 @@ _profile_list() {
     for f in "$pf_dir"/*.conf; do
       [ -f "$f" ] || continue
       PROFILE_NAME="" PROFILE_HASH=0
-      # shellcheck disable=SC1090
-      . "$f" 2>/dev/null || continue
+      cfg_kv_load "$f" PROFILE_
       [ -n "$PROFILE_NAME" ] || continue
       printf '  %-10s PG=%-6d Redis=%-6d\n' "$PROFILE_NAME" \
         $((35100 + PROFILE_HASH % 332)) $((36100 + PROFILE_HASH % 279))

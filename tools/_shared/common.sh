@@ -1044,6 +1044,48 @@ cfg_confirm_apply() {
   read -r ans || return 1
   case "$ans" in n | N | no | NO) return 1 ;; *) return 0 ;; esac
 }
+
+# Load a KEY=VALUE data file into shell variables WITHOUT executing it: data is
+# not code, and a corrupted (or hostile) config/state/registry file must never
+# run. Keys must look like identifiers (optionally filtered by a prefix); values
+# are taken literally (surrounding double quotes stripped) and assigned with
+# printf -v (no eval, no command substitution, no expansion).
+cfg_kv_load() { # $1=file [$2=key prefix]
+  local f="${1:-}" prefix="${2:-}" line key val
+  [ -n "${f}" ] && [ -f "${f}" ] || return 0
+  while IFS= read -r line || [ -n "${line}" ]; do
+    case "${line}" in '' | '#'*) continue ;; esac
+    case "${line}" in *=*) ;; *) continue ;; esac
+    key="${line%%=*}"
+    val="${line#*=}"
+    case "${key}" in '' | *[!A-Za-z0-9_]*) continue ;; esac
+    case "${key}" in [A-Za-z_]*) ;; *) continue ;; esac
+    if [ -n "${prefix}" ]; then
+      case "${key}" in "${prefix}"*) ;; *) continue ;; esac
+    fi
+    case "${val}" in '"'*'"') val="${val#\"}"; val="${val%\"}" ;; esac
+    printf -v "${key}" '%s' "${val}"
+  done < "${f}"
+  return 0
+}
+
+# Same, but exported (deploy .env files feed compose interpolation).
+cfg_kv_load_export() { # $1=file [$2=key prefix]
+  local f="${1:-}" prefix="${2:-}" line key
+  cfg_kv_load "${f}" "${prefix}"
+  [ -n "${f}" ] && [ -f "${f}" ] || return 0
+  while IFS= read -r line || [ -n "${line}" ]; do
+    case "${line}" in '' | '#'* | *=*) ;; *) continue ;; esac
+    key="${line%%=*}"
+    case "${key}" in '' | *[!A-Za-z0-9_]*) continue ;; esac
+    case "${key}" in [A-Za-z_]*) ;; *) continue ;; esac
+    if [ -n "${prefix}" ]; then
+      case "${key}" in "${prefix}"*) ;; *) continue ;; esac
+    fi
+    export "${key}"
+  done < "${f}"
+  return 0
+}
 # ---------- module.yaml readers (ONE implementation of the dialect) ----------
 # The registry dialect is a tiny YAML subset (scalars, flat lists, two-space
 # maps) and it used to be parsed in five places — the manager's registry loader,

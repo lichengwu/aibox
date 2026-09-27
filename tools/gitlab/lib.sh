@@ -36,10 +36,8 @@ load_env() {
   local envf
   envf="$(deploy_root)/.env"
   [ -f "$envf" ] || return 0
-  # shellcheck disable=SC1090
-  set -a
-  . "$envf"
-  set +a
+  # Parsed, not executed: data is not code (a corrupted .env must never run).
+  cfg_kv_load_export "$envf" 
 }
 
 # Deterministic root password (replaces the fragile initial_root_password file

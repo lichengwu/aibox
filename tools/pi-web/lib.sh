@@ -76,11 +76,12 @@ _profile_load() {
   if [ ! -f "$pf" ]; then
     _profile_create "$AIBOX_PROFILE" "$pf"
   fi
-  # shellcheck disable=SC1090
-  . "$pf" 2>/dev/null || {
-    warn "Profile config unparseable: $pf"
+  # Parsed, not executed: a profile conf is data (cfg_kv_load in the shared lib)
+  cfg_kv_load "$pf" PROFILE_
+  if [ -z "${PROFILE_HASH:-}" ] && [ -z "${PROFILE_NAME:-}" ]; then
+    warn "Profile config unreadable: $pf"
     return 1
-  }
+  fi
   local _h="${PROFILE_HASH:-0}" _n="${PROFILE_NAME:-$AIBOX_PROFILE}"
   PORT=$((37100 + _h % 100))
   LABEL="pi-web-${_n}"

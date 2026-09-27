@@ -59,6 +59,7 @@ Every regression test below was born from a real bug found in review or live tes
 | `docs-config-drift.bats` — 10 tests: env keys ↔ code, derived values ↔ dashboard pointer, declared ports ↔ published ports, exit-code contract | live audit: docs hardcoded profile-derived ports (base/pi-web), openmaic declared a port nothing publishes (5432 vs upstream 3000), and the docs index needed the superseded banner kept |
 | `docs-integrity.bats` — 10 tests: link resolution, docs index, test inventory, en/zh parity, per-module action docs, CASES.md coverage | live audit: two relative links 404'd, six module READMEs lacked the new standard action, and the test-suite README had no complete inventory (new suites could ship unlisted) |
 | `history-cases.bats` — 8 tests closing the historical gaps (proxy verdict, proxy persistence, multibyte frames, docker-daemon wording, 3.2 gate) | the pitfall log had four entries with no lock: #3/#5 (`%{proxy_used}` verdict), #4 (persist the proxy where the CLI reads), #6 (never slice multibyte frames), plus the live B4 wording bug |
+| `state.bats` — 8 tests: hostile config/registry-cache/clash-state content is parsed not executed, cfg_kv_get/export semantics, the no-data-sourcing gate (with a planted violation) | the state-layer review: 10 state stores in 3 formats, four of them *sourced* — a corrupted file would run as the user |
 | `verify.bats` — 8 tests: manifest freshness gate, verified/tampered/missing-manifest downloads, helper agreement, coverage of every downloaded file | the supply-chain review: module scripts are code that runs as the user, and nothing checked what the mirror actually returned |
 | `json.bats` — 10 tests: `dashboard --json` (keys, per-module fields, profile, upgrade state, no ANSI) and `check --json` (envelope + preserved exit code), the escaping helpers | the machine-readable surface review: a manager consumed by scripts/timers/CI must answer with JSON, not prose to be scraped |
 | `bundle.bats` — 10 tests: the single-file CLI is a generated artifact (`bin/aibox` == `src/aibox/*.sh` concatenation, CI `--check`, stale detection, one shebang, strict mode first) | the source-split refactor: 5k hand-edited lines forced inline twins of shared helpers; the released single file is now assembled by `scripts/bundle.sh` |
@@ -105,6 +106,7 @@ Fast suite (`bats tests/*.bats`, no docker/network, ~seconds) — **38 files**:
 - `bundle.bats`
 - `json.bats`
 - `verify.bats`
+- `state.bats`
 - `base-env.bats`
 - `base-svc.bats`
 - `clash-pool.bats`

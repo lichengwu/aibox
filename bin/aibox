@@ -1151,6 +1151,48 @@ cfg_confirm_apply() {
   read -r ans || return 1
   case "$ans" in n | N | no | NO) return 1 ;; *) return 0 ;; esac
 }
+
+# Load a KEY=VALUE data file into shell variables WITHOUT executing it: data is
+# not code, and a corrupted (or hostile) config/state/registry file must never
+# run. Keys must look like identifiers (optionally filtered by a prefix); values
+# are taken literally (surrounding double quotes stripped) and assigned with
+# printf -v (no eval, no command substitution, no expansion).
+cfg_kv_load() { # $1=file [$2=key prefix]
+  local f="${1:-}" prefix="${2:-}" line key val
+  [ -n "${f}" ] && [ -f "${f}" ] || return 0
+  while IFS= read -r line || [ -n "${line}" ]; do
+    case "${line}" in '' | '#'*) continue ;; esac
+    case "${line}" in *=*) ;; *) continue ;; esac
+    key="${line%%=*}"
+    val="${line#*=}"
+    case "${key}" in '' | *[!A-Za-z0-9_]*) continue ;; esac
+    case "${key}" in [A-Za-z_]*) ;; *) continue ;; esac
+    if [ -n "${prefix}" ]; then
+      case "${key}" in "${prefix}"*) ;; *) continue ;; esac
+    fi
+    case "${val}" in '"'*'"') val="${val#\"}"; val="${val%\"}" ;; esac
+    printf -v "${key}" '%s' "${val}"
+  done < "${f}"
+  return 0
+}
+
+# Same, but exported (deploy .env files feed compose interpolation).
+cfg_kv_load_export() { # $1=file [$2=key prefix]
+  local f="${1:-}" prefix="${2:-}" line key
+  cfg_kv_load "${f}" "${prefix}"
+  [ -n "${f}" ] && [ -f "${f}" ] || return 0
+  while IFS= read -r line || [ -n "${line}" ]; do
+    case "${line}" in '' | '#'* | *=*) ;; *) continue ;; esac
+    key="${line%%=*}"
+    case "${key}" in '' | *[!A-Za-z0-9_]*) continue ;; esac
+    case "${key}" in [A-Za-z_]*) ;; *) continue ;; esac
+    if [ -n "${prefix}" ]; then
+      case "${key}" in "${prefix}"*) ;; *) continue ;; esac
+    fi
+    export "${key}"
+  done < "${f}"
+  return 0
+}
 # ---------- module.yaml readers (ONE implementation of the dialect) ----------
 # The registry dialect is a tiny YAML subset (scalars, flat lists, two-space
 # maps) and it used to be parsed in five places — the manager's registry loader,
@@ -1955,9 +1997,12 @@ load_registry() {
   # Remote source: serve from cache when fresh.
   if _cache_fresh "$AIBOX_REGISTRY_CACHE"; then
     # shellcheck disable=SC1090
-    . "$AIBOX_REGISTRY_CACHE" 2>/dev/null || { rm -f "$AIBOX_REGISTRY_CACHE"; _load_registry_remote; return; }
-    # Verify the cache actually produced a module list; otherwise refresh.
-    [ -n "${AIBOX_MODULES:-}" ] && return
+    cfg_kv_load "$AIBOX_REGISTRY_CACHE" AIBOX_
+    # A cache that yields no module list is junk (truncated/legacy): refresh it.
+    if [ -n "${AIBOX_MODULES:-}" ]; then
+      return 0
+    fi
+    rm -f "$AIBOX_REGISTRY_CACHE"
   fi
 
   _load_registry_remote
@@ -2002,7 +2047,7 @@ _load_registry_remote() {
   rm -f "$_body_tmp" "$_out_tmp"
   # Eval the same assignments into this process.
   # shellcheck disable=SC1090
-  . "$AIBOX_REGISTRY_CACHE" 2>/dev/null || true
+  cfg_kv_load "$AIBOX_REGISTRY_CACHE" AIBOX_
 }
 
 # Read a module field: module_field <name> <field> — requires load_registry already done.
@@ -2134,7 +2179,7 @@ load_config() {
   [ -f "$AIBOX_CONFIG" ] || return 0
   # Config is maintained by `aibox proxy`, plain KEY=VALUE; parse failure is non-fatal.
   # shellcheck disable=SC1090
-  . "$AIBOX_CONFIG" 2>/dev/null || warn "Config file unparseable, ignored: $AIBOX_CONFIG"
+  cfg_kv_load "$AIBOX_CONFIG"
   [ -n "${AIBOX_NO_PROXY:-}" ] || AIBOX_NO_PROXY="$AIBOX_NO_PROXY_DEFAULT"
   return 0
 }
@@ -2215,7 +2260,7 @@ clash_active() {
   local st="${AIBOX_HOME}/apps/clash/state"
   [ -f "$st" ] || return 1
   # shellcheck disable=SC1090
-  . "$st" 2>/dev/null || return 1
+  cfg_kv_load "$st"
   [ "${CLASH_ENABLED:-0}" = "1" ] || return 1
   CLASH_PORT="${CLASH_PORT:-7890}"
   # mode-aware egress port: external (Verge etc.) → its own port
@@ -2237,7 +2282,7 @@ _clash_stale_warn() {
   local st="${AIBOX_HOME}/apps/clash/state" port
   [ -f "$st" ] || return 0
   # shellcheck disable=SC1090
-  . "$st" 2>/dev/null || return 0
+  cfg_kv_load "$st"
   [ "${CLASH_ENABLED:-0}" = "1" ] || return 0
   port="${CLASH_PORT:-7890}"
   if ! (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then
@@ -2826,7 +2871,7 @@ _preflight_probe_route() {
       local st="${AIBOX_HOME}/apps/clash/state" p
       [ -f "$st" ] || return 1
       # shellcheck source=/dev/null
-      p="$( . "$st" 2>/dev/null; printf '%s' "${CLASH_PORT:-7890}" )"
+      p="$( cfg_kv_load "$st"; printf '%s' "${CLASH_PORT:-7890}" )"
       code="$(curl -s -x "socks5://127.0.0.1:${p}" -o /dev/null --max-time "$t" -w '%{http_code}' "$url" 2>/dev/null)" ;;
     proxy)
       [ -n "${AIBOX_PROXY_URL:-}" ] || return 1
@@ -2859,7 +2904,7 @@ _preflight_adopt() {
     clash)
       st="${AIBOX_HOME}/apps/clash/state"; p=7890
       # shellcheck source=/dev/null
-      [ -f "$st" ] && p="$( . "$st" 2>/dev/null; printf '%s' "${CLASH_PORT:-7890}" )"
+      [ -f "$st" ] && p="$( cfg_kv_load "$st"; printf '%s' "${CLASH_PORT:-7890}" )"
       eff="socks5://127.0.0.1:${p}"
       export http_proxy="$eff" https_proxy="$eff" all_proxy="$eff" HTTP_PROXY="$eff" HTTPS_PROXY="$eff"
       warn "adopting clash pool (${eff}) for this run; persist: aibox clash on" ;;
@@ -4743,7 +4788,7 @@ _module_meta_local() { # $1=module $2=field (scalar OR flat list like actions)
     v="$(meta_field "$AIBOX_MOD_DIR/$m/module.yaml" "$field")"
     [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
   fi
-  v="$( ( . "$AIBOX_REGISTRY_CACHE" 2>/dev/null; eval "printf '%s' \"\${AIBOX_MODULE_${mu}_${field}:-}\"" ) 2>/dev/null )"
+  v="$(cfg_kv_get "$AIBOX_REGISTRY_CACHE" "AIBOX_MODULE_${mu}_${field}")"
   printf '%s' "${v}"
 }
 
@@ -5222,7 +5267,7 @@ _module_usage_local() { # $1=module $2=action
   mu="${1//-/_}"; act="${2//-/_}"
   v="$(eval "printf '%s' \"\${AIBOX_MODULE_${mu}_usage_${act}:-}\"" 2>/dev/null)"
   [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
-  v="$( ( . "$AIBOX_REGISTRY_CACHE" 2>/dev/null; eval "printf '%s' \"\${AIBOX_MODULE_${mu}_usage_${act}:-}\"" ) 2>/dev/null )"
+  v="$(cfg_kv_get "$AIBOX_REGISTRY_CACHE" "AIBOX_MODULE_${mu}_usage_${act}")"
   printf '%s' "${v}"
 }
 
@@ -5494,7 +5539,7 @@ _residue_decl() { # $1=module $2=field (paths|containers|volumes|units|bin|npm|p
   fi
   v="$(eval "printf '%s' \"\${AIBOX_MODULE_${mu}_residue_${field}:-}\"" 2>/dev/null)"
   [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
-  v="$( ( . "$AIBOX_REGISTRY_CACHE" 2>/dev/null; eval "printf '%s' \"\${AIBOX_MODULE_${mu}_residue_${field}:-}\"" ) 2>/dev/null )"
+  v="$(cfg_kv_get "$AIBOX_REGISTRY_CACHE" "AIBOX_MODULE_${mu}_residue_${field}")"
   printf '%s' "${v}"
 }
 

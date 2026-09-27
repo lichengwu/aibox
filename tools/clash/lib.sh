@@ -326,8 +326,8 @@ download_mihomo() {
 # ---------- state (sub URL / secret / ports / last refresh / kernel version) ----------
 state_load() {
   [ -f "$(state_file)" ] || return 0
-  # shellcheck disable=SC1090
-  . "$(state_file)" 2>/dev/null || true
+  # Parsed, not executed: the state file is data (cfg_kv_load in the shared lib)
+  cfg_kv_load "$(state_file)"
   CLASH_PORT="${CLASH_PORT:-7890}"
   CLASH_API_PORT="${CLASH_API_PORT:-9090}"
   CLASH_MODE="${CLASH_MODE:-internal}"

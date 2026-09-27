@@ -32,6 +32,27 @@ else
 fi
 rm -f "${shared_defs}" "${mgr_defs}"
 
+# DATA IS NOT CODE: state/config/env files must be parsed (cfg_kv_load / cfg_kv_get),
+# never sourced. Sourcing executes whatever is in the file — a corrupted or hostile
+# config, registry cache, clash state or deploy .env would run as the user.
+# Only CODE files may be sourced (libs and the shared include).
+src_hits=""
+for f in "${_root}"/src/aibox/*.sh "${_root}"/tools/*/lib.sh "${_root}"/tools/*/svc.sh \
+         "${_root}"/tools/*/install.sh "${_root}"/tools/*/uninstall.sh "${_root}"/tools/*/update.sh; do
+  [ -f "${f}" ] || continue
+  hit="$(grep -nE '(^|[[:space:];&|(])\.[[:space:]]+"' "${f}" 2>/dev/null |
+    grep -vE '^[0-9]+:[[:space:]]*#' |
+    grep -vE 'LIB_COMMON|LIB_SELF|lib\.sh"|common\.sh"|_common\.sh"|nvm\.sh"' || true)"
+  [ -n "${hit}" ] && src_hits="${src_hits}${f}: ${hit}
+"
+done
+if [ -n "${src_hits}" ]; then
+  printf '✗  SOURCES A DATA FILE (data is not code — parse it: cfg_kv_load / cfg_kv_get):\n%s' "${src_hits}" >&2
+  fail=1
+else
+  printf '✓  data stores: parsed, never sourced\n'
+fi
+
 # numeric prefix, unique
 seen=""
 for f in "${_root}"/src/aibox/*.sh; do
