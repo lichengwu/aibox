@@ -146,3 +146,52 @@ SHIM
     false
   fi
 }
+
+# ---------- the shared readers (one implementation of the dialect) ------------
+
+@test "meta_field: scalar, flat list, and empty for a missing field" {
+  local f="$BATS_TEST_TMPDIR/module.yaml"
+  printf 'name: demo\nversion: 1.2.3\nactions:\n  - start\n  - stop\n' >"$f"
+  [ "$(meta_field "$f" version)" = "1.2.3" ] || false
+  [ "$(meta_field "$f" actions)" = "start stop" ] || false
+  [ "$(meta_field "$f" missing)" = "" ] || false
+  [ "$(meta_field "$BATS_TEST_TMPDIR/nope.yaml" version)" = "" ] || false
+}
+
+@test "meta_map_value: two-space map member (usage.<action>)" {
+  local f="$BATS_TEST_TMPDIR/module.yaml"
+  printf 'name: demo\nusage:\n  start: "Start the thing"\n  stop: "Stop it"\n' >"$f"
+  [ "$(meta_map_value "$f" usage start)" = "Start the thing" ] || false
+  [ "$(meta_map_value "$f" usage stop)" = "Stop it" ] || false
+  [ "$(meta_map_value "$f" usage nope)" = "" ] || false
+}
+
+@test "meta_version: the module libs' single reader (and the manager's injection wins)" {
+  [ "$(meta_version "$REPO_ROOT/tools/new-api/module.yaml")" = "$(grep '^version:' "$REPO_ROOT/tools/new-api/module.yaml" | sed 's/^version: *//')" ] || false
+  # injected value wins over the file (the contract the manager uses on dispatch)
+  run bash -c "
+    export AIBOX_MODULE_VERSION=9.9.9
+    . '$REPO_ROOT/tools/new-api/lib.sh'
+    printf '%s' \"\$MODULE_VERSION\"
+  "
+  [ "$output" = "9.9.9" ] || { echo "got: $output"; false; }
+  # direct execution falls back to module.yaml next to lib.sh
+  run bash -c "
+    . '$REPO_ROOT/tools/new-api/lib.sh'
+    printf '%s' \"\$MODULE_VERSION\"
+  "
+  [ "$output" = "$(meta_version "$REPO_ROOT/tools/new-api/module.yaml")" ] || { echo "got: $output"; false; }
+}
+
+@test "every module lib resolves its version through the shared reader" {
+  local m f
+  for f in "$REPO_ROOT"/tools/*/lib.sh; do
+    m="$(basename "$(dirname "$f")")"
+    [ "$m" = "_shared" ] && continue
+    # modules without MODULE_VERSION at all (pure dispatch CLIs) are out of scope
+    grep -qE "^(export )?MODULE_VERSION=" "$f" || continue
+    grep -q 'meta_version "\${LIB_SELF}/module.yaml"' "$f" || { echo "$m: lib.sh does not use meta_version"; false; }
+    # and no module re-implements the dialect
+    ! grep -qE '(awk|sed|grep)[^|]*module\.yaml' "$f" || { echo "$m: hand-parses module.yaml"; false; }
+  done
+}

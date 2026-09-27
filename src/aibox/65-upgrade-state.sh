@@ -99,7 +99,7 @@ _upgrade_rollback() { # $1=module $2=svc $3=envfile $4=envbak $5=prev_ver
   [ -f "${bak}" ] || { warn "no .env backup to roll back to (${bak})"; return 1; }
   cp "${bak}" "${envf}" || { warn "cannot restore ${envf} from ${bak}"; return 1; }
   log "restored ${envf} from ${bak} (pin back to ${prev})"
-  if AIBOX_MODULE="${name}" bash "${svc}" start; then
+  if AIBOX_MODULE="${name}" AIBOX_MODULE_VERSION="${prog_module_ver:-}" bash "${svc}" start; then
     ok "rolled back to ${prev} — the previous version is healthy"
     return 0
   fi
@@ -413,7 +413,7 @@ HOPSLIST
   upgrade_env_rewrite "${envf}" "${newvals[@]}"
   log "rewrote image tags in ${envf} (${cur_ver} → ${target})"
 
-  if ! AIBOX_MODULE="${name}" bash "${svc}" start; then
+  if ! AIBOX_MODULE="${name}" AIBOX_MODULE_VERSION="${prog_module_ver:-}" bash "${svc}" start; then
     warn "upgrade failed the health check (${cur_ver} → ${target})"
     if _upgrade_rollback "${name}" "${svc}" "${envf}" "${bak}" "${cur_ver}"; then
       _upgrade_state_set "${name}" status rolled-back

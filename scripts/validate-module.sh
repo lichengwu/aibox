@@ -152,6 +152,12 @@ has_strict_set() {
 }
 
 # ---------- helpers ----------
+# The module.yaml dialect parser lives in the shared library. The validator used
+# to CALL parse_yaml_module_stdin without defining or sourcing it: parse_one died
+# silently and every registry-derived cross-module rule was a no-op (found while
+# consolidating the readers).
+# shellcheck source=/dev/null
+. "${REPO_ROOT}/tools/_shared/lib/45-meta.sh"
 mu_of() { printf '%s' "$1" | tr '-' '_'; }
 
 # All module yaml files (sorted, stable order).
@@ -460,6 +466,16 @@ validate_module() {
     if [ "$usrc" = dockerhub-tags ]; then
       [ -n "$upat" ] || err "upgrade: dockerhub-tags needs tag_pattern (unfiltered tags pick 'latest'/rc junk)"
     fi
+  fi
+
+  # --- S13f: one reader for the module.yaml dialect (spec §Manager source layout) ---
+  # A module's own sed/awk/grep over module.yaml is a second implementation of
+  # the dialect: use the shared readers (meta_version / meta_field /
+  # meta_map_value in tools/_shared/lib/45-meta.sh). Reading other files is fine.
+  local _hp
+  _hp="$(grep -rnE '(awk|sed|grep)[^|]*module\.yaml' "$d/lib.sh" "$d/svc.sh" "$d/install.sh" "$d/uninstall.sh" "$d/update.sh" 2>/dev/null | grep -v 'meta_version\|meta_field\|meta_map_value' | head -1 || true)"
+  if [ -n "${_hp}" ]; then
+    err "hand-parses module.yaml (${_hp%%:*}) — use the shared readers: meta_version / meta_field / meta_map_value"
   fi
 
   # --- S13e: an upgrade-capable module must expose deploy_root() ---

@@ -10,9 +10,6 @@
 
 export CLI_NAME="clash"
 KERNEL_NAME="mihomo"
-# Module version — read from module.yaml next to this lib (cache and repo
-# layouts agree; empty on a missing file → callers fall back to dim ?).
-MODULE_VERSION="$(sed -n 's/^version:[[:space:]]*//p' "$(dirname "${BASH_SOURCE[0]}")/module.yaml" 2>/dev/null | head -1 || true)"
 
 # mihomo binary location
 CLASH_BIN_DIR="${CLASH_BIN_DIR:-${AIBOX_BIN_DIR:-${HOME}/.local/bin}}"
@@ -30,6 +27,8 @@ LIB_COMMON="${LIB_SELF}/_common.sh"
 [ -f "${LIB_COMMON}" ] || LIB_COMMON="${LIB_SELF}/../_shared/common.sh"
 # shellcheck disable=SC1091
 . "${LIB_COMMON}"
+# a hook; direct execution (bats, a hook run by hand) uses the ONE shared reader.
+MODULE_VERSION="${AIBOX_MODULE_VERSION:-$(meta_version "${LIB_SELF}/module.yaml")}"
 mask_url() { printf '%s' "${1:-}" | sed -E 's#(://[^:/@]+):[^@]*@#\1:***@#'; }
 
 # ---------- deploy root / paths (module-spec deploy-type convention) ----------

@@ -260,45 +260,6 @@ EOF
 }
 # BSD awk compatible (index/substr/sub, no capture groups; runs on bash 3.2's nawk).
 # $1=module name. Scalars -> AIBOX_MODULE_<name>_<key>; lists -> space-joined; nested -> <parent>_<subkey>.
-parse_yaml_module_stdin() {
-  awk -v NAME="$1" '
-    BEGIN { parent=""; subparent=""; listkey=""; listval="" }
-    /^[[:space:]]*#/ { next }
-    /^[[:space:]]*$/ { next }
-    {
-      content=$0
-      while (substr(content,1,1)==" ") content=substr(content,2)
-      indent=length($0)-length(content)
-      if (substr(content,1,1)=="-") {
-        item=substr(content,2); sub(/^ +/, "", item)
-        if (listkey=="") listkey=(subparent!="" ? NAME"_"parent"_"subparent : NAME"_"parent)
-        listval=(listval=="" ? "" : listval" ") stripq(item)
-        next
-      }
-      colon=index(content,":")
-      if (colon>0) {
-        k=substr(content,1,colon-1); v=substr(content,colon+1)
-        sub(/^ +/, "", v); sub(/ +$/, "", v)
-        if (listkey!="") { printvar(listkey,listval); listkey=""; listval="" }
-        if (indent==0) {
-          parent=""; subparent=""
-          if (v=="") parent=k; else printvar(NAME"_"k, stripq(v))
-        } else {
-          if (v=="") subparent=k
-          else if (parent=="hooks") printvar(NAME"_"k, stripq(v))  # hooks.install -> _install (module_field compat)
-          else if (parent!="") printvar(NAME"_"parent"_"k, stripq(v))
-        }
-      }
-    }
-    END { if (listkey!="") printvar(listkey,listval) }
-    function esc(s,   r) { r=s; gsub(/\\/, "\\\\", r); gsub(/"/, "\\\"", r); gsub(/\$/, "\\$", r); gsub(/`/, "\\`", r); return r }
-    function printvar(k,v) { gsub(/-/, "_", k); printf "AIBOX_MODULE_%s=\"%s\"\n", k, esc(v) }
-    function stripq(s) {
-      if (substr(s,1,1)=="\"" && substr(s,length(s),1)=="\"") return substr(s,2,length(s)-2)
-      return s
-    }
-  '
-}
 
 # Is the given cache file fresh (mtime within TTL)? Returns 0 if fresh, 1 if stale/missing.
 # Extracted so tests can exercise the staleness logic directly. Optional $2 overrides

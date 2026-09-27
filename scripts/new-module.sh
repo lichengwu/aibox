@@ -264,9 +264,8 @@ deploy_root() {
   printf '%s' "${root}/apps/${MODULE_NAME}$(profile_suffix)"
 }
 
-# Module version — read from module.yaml next to this lib (cache and repo
-# layouts agree; empty on a missing file → callers fall back to dim ?).
-MODULE_VERSION="$(sed -n 's/^version:[[:space:]]*//p' "$(dirname "${BASH_SOURCE[0]}")/module.yaml" 2>/dev/null | head -1 || true)"
+# hook; direct execution uses the ONE shared reader (never hand-parse module.yaml).
+MODULE_VERSION="${AIBOX_MODULE_VERSION:-$(meta_version "${LIB_SELF}/module.yaml")}"
 
 # ---------- dashboard (keyline template; spec §Dashboard template) ----------
 # App version = the DEPLOYED software's version (npm package / image tag /

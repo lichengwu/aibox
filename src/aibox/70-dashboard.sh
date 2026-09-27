@@ -31,17 +31,10 @@ _module_meta_local() { # $1=module $2=field (scalar OR flat list like actions)
   local m="$1" field="$2" mu v
   mu="${1//-/_}"
   if [ -f "$AIBOX_MOD_DIR/$m/module.yaml" ]; then
-    v="$(sed -n "s/^${field}: *\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$AIBOX_MOD_DIR/$m/module.yaml" | head -1)"
-    [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
-    # flat list (field: followed by "  - item" lines): join space-separated
-    v="$(awk -v f="${field}" '
-      $0 == f ":" { inl=1; next }
-      inl && /^[ ]+- / { sub(/^[ ]+- /, ""); gsub(/^"|"$/, ""); printf "%s%s", sep, $0; sep=" "; next }
-      inl { inl=0 }
-    ' "$AIBOX_MOD_DIR/$m/module.yaml" 2>/dev/null)"
+    v="$(meta_field "$AIBOX_MOD_DIR/$m/module.yaml" "$field")"
     [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
   fi
-  v=""$( ( . "$AIBOX_REGISTRY_CACHE" 2>/dev/null; eval "printf '%s' \"\${AIBOX_MODULE_${mu}_${field}:-}\"" ) 2>/dev/null )""
+  v="$( ( . "$AIBOX_REGISTRY_CACHE" 2>/dev/null; eval "printf '%s' \"\${AIBOX_MODULE_${mu}_${field}:-}\"" ) 2>/dev/null )"
   printf '%s' "${v}"
 }
 
@@ -458,13 +451,13 @@ _module_usage_local() { # $1=module $2=action
   local f v mu act
   f="$AIBOX_MOD_DIR/$1/module.yaml"
   if [ -f "$f" ]; then
-    v="$(sed -n "/^  $2:/p" "$f" | head -1 | sed 's/^  [^:]*: *"//; s/"$//')"
+    v="$(meta_map_value "$f" usage "$2")"
     [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
   fi
   mu="${1//-/_}"; act="${2//-/_}"
   v="$(eval "printf '%s' \"\${AIBOX_MODULE_${mu}_usage_${act}:-}\"" 2>/dev/null)"
   [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
-  v=""$( ( . "$AIBOX_REGISTRY_CACHE" 2>/dev/null; eval "printf '%s' \"\${AIBOX_MODULE_${mu}_usage_${act}:-}\"" ) 2>/dev/null )""
+  v="$( ( . "$AIBOX_REGISTRY_CACHE" 2>/dev/null; eval "printf '%s' \"\${AIBOX_MODULE_${mu}_usage_${act}:-}\"" ) 2>/dev/null )"
   printf '%s' "${v}"
 }
 

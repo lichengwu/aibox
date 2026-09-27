@@ -22,6 +22,28 @@ when it drifts from the sources.
 Rule: a helper that both the manager and modules need lives in `tools/_shared/lib/` — never
 as a second copy inside `src/aibox/`.
 
+### module.yaml readers (one implementation)
+
+The registry dialect (scalars, flat lists, two-space maps) is parsed by the shared
+library only:
+
+| reader | use |
+| --- | --- |
+| `parse_yaml_module_stdin <mu>` | whole file → `AIBOX_MODULE_*` vars (manager registry loader, validator) |
+| `meta_field <yaml> <field>` | one scalar, or the flat list under a field joined by spaces |
+| `meta_map_value <yaml> <k> <c>` | a two-space map member (e.g. `usage.<action>`) |
+| `meta_version <yaml>` | the version field — what module libs use |
+
+Module libs MUST NOT hand-parse `module.yaml` (`sed`/`awk`/`grep`); the validator
+treats it as an ERROR. Their version line is:
+
+```bash
+MODULE_VERSION="${AIBOX_MODULE_VERSION:-$(meta_version "${LIB_SELF}/module.yaml")}"
+```
+
+The manager injects `AIBOX_MODULE`, `AIBOX_MOD_DIR` and (where the dispatch already
+knows it) `AIBOX_MODULE_VERSION`; the fallback keeps a hook run by hand working.
+
 ## Onboarding a new module (normative)
 
 Adding a module = **scaffold + fill the contract + prove conformance**. Two repo tools own the

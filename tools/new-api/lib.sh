@@ -2,9 +2,6 @@
 # Conventions: docs/module-spec.md — deploy root = $AIBOX_HOME/apps/new-api.
 
 MODULE_NAME="new-api"
-# Module version — read from module.yaml next to this lib (cache and repo
-# layouts agree; empty on a missing file → callers fall back to dim ?).
-MODULE_VERSION="$(sed -n 's/^version:[[:space:]]*//p' "$(dirname "${BASH_SOURCE[0]}")/module.yaml" 2>/dev/null | head -1 || true)"
 COMPOSE_PROJECT="new-api"
 CONTAINER="aibox-new-api"
 DEFAULT_PORT="30300"
@@ -18,6 +15,8 @@ LIB_COMMON="${LIB_SELF}/_common.sh"
 [ -f "${LIB_COMMON}" ] || LIB_COMMON="${LIB_SELF}/../_shared/common.sh"
 # shellcheck disable=SC1091
 . "${LIB_COMMON}"
+# a hook; direct execution (bats, a hook run by hand) uses the ONE shared reader.
+MODULE_VERSION="${AIBOX_MODULE_VERSION:-$(meta_version "${LIB_SELF}/module.yaml")}"
 
 # Deploy root per the aibox convention ($AIBOX_HOME/apps/<name>; module-spec
 # §Deploy directory). The guard is mandatory: systemd service contexts may

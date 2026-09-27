@@ -513,3 +513,14 @@ _dep_fixture() { # base installed + a consumer that declares base:postgres#app
   grep -q '^AIBOX_BASE_PG_IMAGE=postgres:18$' "$AIBOX_HOME/apps/base/.env" || { cat "$AIBOX_HOME/apps/base/.env"; false; }
   [[ "$output" == *"rolled back to pg=postgres:18"* ]] || { echo "$output"; false; }
 }
+
+@test "validator: a module hand-parsing its own module.yaml is an ERROR" {
+  local out="$SANDBOX/tools5"
+  mkdir -p "$out"
+  bash "$REPO_ROOT/scripts/new-module.sh" consumer5 --out "$out" >/dev/null 2>&1
+  printf 'V="$(sed -n "s/^version: *//p" "${LIB_SELF}/module.yaml")"
+' >>"$out/consumer5/lib.sh"
+  run env VALIDATE_TOOLS_DIR="$out" bash "$REPO_ROOT/scripts/validate-module.sh" consumer5
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"hand-parses module.yaml"* ]] || { echo "$output"; false; }
+}
