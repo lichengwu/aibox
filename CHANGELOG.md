@@ -7,6 +7,28 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.20.2] — 2026-09-27
+
+### Fixed
+
+- **`json_escape` produced invalid JSON under a non-UTF-8 locale**: bash's
+  substring expansion counts bytes there, so a multibyte character (`·`, `…` in
+  the preflight details) was sliced into invalid UTF-8 and the `--json` envelope
+  stopped parsing (CI macOS job). Escaping now iterates bytes (`LC_ALL=C`) and
+  passes anything ≥ 0x80 through untouched — valid UTF-8 in every locale.
+- **Port-owner detection trusted a single docker filter**: `docker ps --filter
+  publish=<port>` returned *unrelated* containers as the owner on a CI runner
+  (measured), so a clean profile was reported as conflicting. It now requires an
+  aibox-named container too.
+- A CI-flaky pool test asserted a fixed mirror as the PULL winner; the ranking is
+  measured latency, so it now asserts the cached winner equals the mirror that
+  actually pulled and is a pool member (CI-caught on the macOS job).
+
+### Module versions
+
+base 1.6.2 · clash 1.5.2 · dify 1.21.2 · gitlab 1.7.2 · new-api 1.4.2 ·
+openmaic 1.4.2 · pi-web 1.5.2 · windmill 1.6.2 · xiaozhi 1.4.2
+
 ## [0.20.1] — 2026-09-27
 
 ### Fixed
@@ -1312,6 +1334,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.20.2]: https://github.com/lichengwu/aibox/compare/v0.20.1...v0.20.2
 [0.20.1]: https://github.com/lichengwu/aibox/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/lichengwu/aibox/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/lichengwu/aibox/compare/v0.19.0...v0.19.1

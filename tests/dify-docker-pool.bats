@@ -231,7 +231,17 @@ EOF
   run docker_pool_prepull langgenius/dify-api:1.17.1
   [ "$status" -eq 0 ]
   [ -f "$AIBOX_HOME/dockerpool.cache" ] || false
-  grep -q $'^PULL\tdocker.1ms.run' "$AIBOX_HOME/dockerpool.cache" || false
+  # The winner is chosen by MEASURED latency, so a slow runner can legitimately
+  # rank the second mirror first (CI-caught): assert the cached winner is the
+  # mirror that actually pulled and that it comes from the declared pool.
+  grep -q $'^PULL\t' "$AIBOX_HOME/dockerpool.cache" || { cat "$AIBOX_HOME/dockerpool.cache"; false; }
+  winner="$(awk -F'\t' '$1=="PULL"{print $2}' "$AIBOX_HOME/dockerpool.cache" | head -1 | awk '{print $1}')"
+  [ -n "$winner" ] || { echo "no PULL winner cached"; cat "$AIBOX_HOME/dockerpool.cache"; false; }
+  grep -qE "^PULL ${winner}/" "$FAKE_DOCKER_PULLLOG" || { echo "cached winner ${winner} but the pull log says otherwise:"; cat "$FAKE_DOCKER_PULLLOG"; false; }
+  case " ${AIBOX_DOCKER_POOL} " in
+  *" ${winner} "*) ;;
+  *) echo "winner ${winner} is not a pool member"; false ;;
+  esac
   [ "$(stat -c %a "$AIBOX_HOME/dockerpool.cache" 2>/dev/null || stat -f %Lp "$AIBOX_HOME/dockerpool.cache" 2>/dev/null)" = "600" ] || false
 }
 

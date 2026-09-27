@@ -66,10 +66,14 @@ profile_owner() { # $1=port → the profile that registered it ("" when none)
 # Which container publishes a host port ("" when docker is unavailable / nobody
 # does). This is the authoritative answer for "is this port already taken, and by
 # whose container" — the registry only knows about aibox profiles.
-_port_owner_container() { # $1=port → container name publishing it ("" = unknown)
+_port_owner_container() { # $1=port → aibox container publishing it ("" = unknown)
   command -v docker >/dev/null 2>&1 || return 0
-  # no daemon / empty answer → "" (callers fall back to the registry view)
-  docker ps --filter "publish=${1}" --format '{{.Names}}' 2>/dev/null | grep -v '^$' | head -1 || true
+  # TWO filters on purpose: `publish=` alone is unreliable across daemon versions
+  # (measured on a CI runner: unrelated containers came back as the "owner" of
+  # 35177), and only aibox-named containers can be a profile conflict anyway.
+  # No daemon / empty answer → "" (callers fall back to the registry view).
+  docker ps --filter "name=aibox-" --filter "publish=${1}" --format '{{.Names}}' 2>/dev/null |
+    grep -v '^$' | head -1 || true
 }
 
 # Conflicts for a profile: a derived port is a conflict when it is LIVE and the

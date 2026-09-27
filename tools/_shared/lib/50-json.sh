@@ -6,6 +6,11 @@
 
 # Escape a string for a JSON string literal (quotes, backslashes, control chars).
 json_escape() { # $1 = raw text → escaped text (no surrounding quotes)
+  # LC_ALL=C on purpose: under a non-UTF-8 locale (CI macOS runs bats with C)
+  # bash's substring expansion counts BYTES, so a multibyte character would be
+  # sliced into invalid UTF-8 and the JSON would not parse. Byte-wise iteration
+  # passes any byte >= 0x80 through untouched — valid UTF-8 either way.
+  local LC_ALL=C
   local s="${1:-}" out="" i=0 c
   while [ "${i}" -lt "${#s}" ]; do
     c="${s:${i}:1}"

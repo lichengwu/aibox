@@ -57,7 +57,7 @@ if [ -z "${AIBOX_BIN_DIR:-}" ]; then
     ;;
   esac
 fi
-AIBOX_VERSION="0.20.1"
+AIBOX_VERSION="0.20.2"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 
@@ -1384,6 +1384,11 @@ meta_sub_field() { # $1 = module.yaml path, $2 = parent key, $3 = child key
 
 # Escape a string for a JSON string literal (quotes, backslashes, control chars).
 json_escape() { # $1 = raw text → escaped text (no surrounding quotes)
+  # LC_ALL=C on purpose: under a non-UTF-8 locale (CI macOS runs bats with C)
+  # bash's substring expansion counts BYTES, so a multibyte character would be
+  # sliced into invalid UTF-8 and the JSON would not parse. Byte-wise iteration
+  # passes any byte >= 0x80 through untouched — valid UTF-8 either way.
+  local LC_ALL=C
   local s="${1:-}" out="" i=0 c
   while [ "${i}" -lt "${#s}" ]; do
     c="${s:${i}:1}"
@@ -1528,10 +1533,14 @@ profile_owner() { # $1=port → the profile that registered it ("" when none)
 # Which container publishes a host port ("" when docker is unavailable / nobody
 # does). This is the authoritative answer for "is this port already taken, and by
 # whose container" — the registry only knows about aibox profiles.
-_port_owner_container() { # $1=port → container name publishing it ("" = unknown)
+_port_owner_container() { # $1=port → aibox container publishing it ("" = unknown)
   command -v docker >/dev/null 2>&1 || return 0
-  # no daemon / empty answer → "" (callers fall back to the registry view)
-  docker ps --filter "publish=${1}" --format '{{.Names}}' 2>/dev/null | grep -v '^$' | head -1 || true
+  # TWO filters on purpose: `publish=` alone is unreliable across daemon versions
+  # (measured on a CI runner: unrelated containers came back as the "owner" of
+  # 35177), and only aibox-named containers can be a profile conflict anyway.
+  # No daemon / empty answer → "" (callers fall back to the registry view).
+  docker ps --filter "name=aibox-" --filter "publish=${1}" --format '{{.Names}}' 2>/dev/null |
+    grep -v '^$' | head -1 || true
 }
 
 # Conflicts for a profile: a derived port is a conflict when it is LIVE and the
