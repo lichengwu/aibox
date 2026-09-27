@@ -7,6 +7,18 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.21.1] — 2026-09-27
+
+### Fixed
+
+- **bash 3.2 crashed on the `--check` path of a single-hop component upgrade**
+  (`a[@]: unbound variable`): bash 3.2 treats an EMPTY array expansion as an unbound
+  variable under `set -u` (bash 4.4+ made it safe, which is why the docker suite — bash 5 —
+  stayed green and only the macOS job caught it). Every possibly-empty expansion in the
+  upgrade path now uses the `${a[@]+"${a[@]}"}` idiom, in both the hop list and the
+  image-pair list, and the bash-3.2 semantics plus the idiom were verified against the
+  official `bash:3.2` image.
+
 ## [0.21.0] — 2026-09-27
 
 The maintainability batch from the architecture review: every item with its own test
@@ -1437,6 +1449,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.21.1]: https://github.com/lichengwu/aibox/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/lichengwu/aibox/compare/v0.20.4...v0.21.0
 [0.20.4]: https://github.com/lichengwu/aibox/compare/v0.20.3...v0.20.4
 [0.20.3]: https://github.com/lichengwu/aibox/compare/v0.20.2...v0.20.3
