@@ -1136,3 +1136,27 @@ meta_map_value() { # $1 = module.yaml path, $2 = parent key, $3 = member key
 meta_version() { # $1 = module.yaml path
   meta_field "${1:-}" version
 }
+
+# A nested child value under a top-level parent: scalar (`parent:` → `  child: v`)
+# or the flat list under it (`parent:` → `  child:` → `    - item`), joined.
+meta_sub_field() { # $1 = module.yaml path, $2 = parent key, $3 = child key
+  local f="${1:-}" pk="${2:-}" ck="${3:-}"
+  [ -n "${f}" ] && [ -n "${pk}" ] && [ -n "${ck}" ] && [ -f "${f}" ] || return 0
+  awk -v pk="${pk}" -v ck="${ck}" '
+    $0 == pk ":" { inb = 1; next }
+    inb && /^[^ ]/ { inb = 0 }
+    inb {
+      line = $0; sub(/^[ ]+/, "", line)
+      if (line == ck ":") { inl = 1; next }
+      if (inl && line ~ /^- /) {
+        sub(/^- /, "", line); gsub(/^"|"$/, "", line)
+        printf "%s%s", sep, line; sep = " "; next
+      }
+      if (index(line, ck ":") == 1) {
+        v = substr(line, length(ck) + 2); sub(/^ +/, "", v); gsub(/^"|"$/, "", v)
+        print v; exit
+      }
+      inl = 0
+    }
+  ' "${f}" 2>/dev/null
+}

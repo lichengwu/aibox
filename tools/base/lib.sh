@@ -730,3 +730,16 @@ DASHDB
   dash_row "network" "${AIBOX_BASE_NETWORK:-aibox-base}"
   dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/base/"
 }
+
+# ---- residue (aibox purge): the module-side override of the declarative
+# `residue:` stanza in module.yaml. base needs it because its connection env
+# files are named per profile (base.env / base-<profile>.env) — a glob the
+# declarative path list cannot express.
+residue_paths() {
+  local f
+  printf '%s\n' "${AIBOX_HOME}/apps/base"
+  for f in "${AIBOX_HOME}"/base*.env; do
+    [ -e "${f}" ] && printf '%s\n' "${f}"
+  done
+  return 0
+}

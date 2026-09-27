@@ -68,6 +68,9 @@ env:
   XIAOZHI_START_TIMEOUT: "300 — staged-start health-wait seconds"
   XIAOZHI_LOG_TAIL: "200 — log tail lines"
 
+residue:
+  containers: "^aibox-xiaozhi-(server|web|mysql)$"
+  volumes: "^aibox_xiaozhi_(models|uploadfile|mysql)$"
 usage:
   start: "Staged start: MySQL + console → secret → ws server (health-wait)"
   stop: "Stop containers"

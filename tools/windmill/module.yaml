@@ -82,6 +82,17 @@ env:
   ENABLE_MULTIPLAYER: "false — real-time collaboration (EE)"
   ENABLE_DEBUGGER: "true — DAP debugger (keep REQUIRE_SIGNED_DEBUG_REQUESTS=true on any reachable host)"
 
+residue:
+  bin: windmill
+  paths:
+    - "$ETC_DIR/windmill"
+  containers: "^windmill-"
+  volumes: "^windmill_"
+  units:
+    - windmill-backup.service
+    - windmill-backup.timer
+    - windmill-update-check.service
+    - windmill-update-check.timer
 usage:
   start: "Start the stack (docker compose up -d)"
   stop: "Stop the stack"

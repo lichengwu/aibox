@@ -62,6 +62,9 @@ env:
   NEW_API_START_TIMEOUT: "120 — health-wait seconds at start"
   NEW_API_LOG_TAIL: "200 — log tail lines"
 
+residue:
+  containers: "^aibox-new-api$"
+  volumes: "^aibox_new_api_(data|logs)$"
 usage:
   start: "Start the container (source pool pulls; health-wait)"
   stop: "Stop the container"

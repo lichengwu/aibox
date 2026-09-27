@@ -83,6 +83,12 @@ env:
   OPENMAIC_BUILD_TIMEOUT_MAIN: "3600 — main image build timeout seconds [knob]"
   OPENMAIC_BUILD_TIMEOUT_RENDER: "2400 — render image build timeout seconds [knob]"
 
+residue:
+  bin: openmaic
+  paths:
+    - "$ETC_DIR/openmaic"
+  containers: "^app-(openmaic|postgres|render-service)-[0-9]+$"
+  volumes: "^app_openmaic"
 usage:
   status: "Version / health / containers / resources overview"
   start: "Alias of up (standard lifecycle)"

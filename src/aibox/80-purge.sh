@@ -1,16 +1,11 @@
 # ---------- residue purge (workspace-level data cleanup) ----------
-# `aibox purge` cleans what uninstall hooks could not: data/config residue left
-# AFTER modules (or aibox itself) are gone — docker volumes/containers, apps/
-# directories, /etc/<module>, systemd/launchd units, dispatched binaries, npm
-# globals, lingering processes, the rc PATH block. The residue MAP below is the
-# single source of cleanup knowledge — module authors MUST extend it (see
-# docs/module-spec.md §Residue cleanup; validate-module.sh WARNs when missing).
-# Default is a dry-run report; --apply deletes. Rescue when aibox itself is
-# already deleted:
-#   curl -fsSL <repo-raw>/bin/aibox -o /tmp/aibox && bash /tmp/aibox purge --apply
-# Test/exotic-install overrides: PURGE_ETC, PURGE_SYSTEMD_DIR, PURGE_NO_DOCKER,
-# PURGE_NO_PROCS, PURGE_NO_NPM.
-
+# Residue knowledge is DECLARED by the module (module.yaml `residue:` stanza) and
+# derived generically by the manager (deploy root + every profile variant, module
+# cache, /etc/<name>, declared bin). The manager used to carry a per-module `case`
+# map for every residue kind — module-internal knowledge living in the manager, so
+# every new path (profiles, contract files) needed a manager edit. A module's own
+# lib.sh may still override any residue_* function (escape hatch for dynamic
+# cases; base's per-profile env files use it).
 _purge_rc_strip() { # $1=rc file: remove the marked "# aibox" + export PATH block
   local tmp=".aibox-rcstrip.33083"
   awk '
@@ -19,12 +14,7 @@ _purge_rc_strip() { # $1=rc file: remove the marked "# aibox" + export PATH bloc
     { skip = 0; print }
   ' "$1" > "$tmp" && cat "$tmp" > "$1" && rm -f "$tmp"
 }
-
 _purge_etc_root()     { printf '%s' "${PURGE_ETC:-/etc}"; }
-# Module CLIs may exist in the resolved bin dir AND in the legacy ~/.local/bin
-# (pre-0.15 default) — scan both so an old copy is never reported as "clean".
-# Named-profile deploy roots (apps/<name>-<profile>, profile-scoped since 0.19):
-# purge must reach residue from ANY profile, not just the default one.
 _purge_apps_profile_paths() { # $1=module
   local d
   for d in "$AIBOX_HOME"/apps/"$1"-*; do
@@ -32,13 +22,11 @@ _purge_apps_profile_paths() { # $1=module
     printf '%s\n' "$d"
   done
 }
-
 _purge_bin_path() { # $1=binary name
   printf '%s\n' "$AIBOX_BIN_DIR/$1"
   [ "$AIBOX_BIN_DIR" = "$HOME/.local/bin" ] || printf '%s\n' "$HOME/.local/bin/$1"
 }
 _purge_systemd_dir()  { printf '%s' "${PURGE_SYSTEMD_DIR:-/etc/systemd/system}"; }
-
 _purge_docker_up() {
   if [ "${PURGE_NO_DOCKER:-0}" = "1" ]; then return 1; fi
   command -v docker >/dev/null 2>&1 || return 1
@@ -46,69 +34,112 @@ _purge_docker_up() {
 }
 _purge_dir_size() { du -sh "$1" 2>/dev/null | awk '{print $1}' || printf '?'; }
 _purge_container_state() { docker inspect -f '{{.State.Status}}' "$1" 2>/dev/null || printf 'unknown'; }
+# The residue DECLARATION is captured into $AIBOX_HOME/residue.conf right after a
+# module is downloaded (install/update) — `aibox purge` must clean leftovers even
+# when the module cache is gone AND the host is offline, and at that point the
+# only surviving knowledge is this file (the registry cache may be stale too).
+# Plain KEY=VALUE lines, never sourced (data is not code).
+_residue_store() { printf '%s/residue.conf' "${AIBOX_HOME}"; }
 
-# ---- the residue map (extend when adding a module!) ----
-residue_paths() { # $1=module → candidate paths (scan filters by existence)
-  local f
-  case "$1" in
-    base)
-      printf '%s\n' "$AIBOX_HOME/apps/base"
-      for f in "$AIBOX_HOME"/base*.env; do
-        if [ -e "$f" ]; then printf '%s\n' "$f"; fi
-      done ;;
-    clash)    printf '%s\n' "$AIBOX_HOME/apps/clash"
-              _purge_bin_path mihomo ;;
-    pi-web)   printf '%s\n' "$AIBOX_HOME/apps/pi-web" \
-                "$HOME/.config/systemd/user/pi-web.service" \
-                "$HOME/.config/systemd/user/com.agegr.pi-web.service" \
-                "$HOME/.local/share/pi-web" \
-                "$HOME/Library/LaunchAgents/pi-web.plist" \
-                "$HOME/Library/LaunchAgents/com.agegr.pi-web.plist" ;;
-    openmaic) printf '%s\n' "$AIBOX_HOME/apps/openmaic" "$(_purge_etc_root)/openmaic"
-              _purge_bin_path openmaic ;;
-    windmill) printf '%s\n' "$AIBOX_HOME/apps/windmill" "$(_purge_etc_root)/windmill"
-              _purge_bin_path windmill ;;
-    gitlab)   printf '%s\n' "$AIBOX_HOME/apps/gitlab" "$(_purge_apps_profile_paths gitlab)" ;;
-    dify)     printf '%s\n' "$AIBOX_HOME/apps/dify" "$(_purge_apps_profile_paths dify)" ;;
-    new-api)  printf '%s\n' "$AIBOX_HOME/apps/new-api" "$(_purge_apps_profile_paths new-api)" ;;
-    xiaozhi)  printf '%s\n' "$AIBOX_HOME/apps/xiaozhi" "$(_purge_apps_profile_paths xiaozhi)" ;;
-  esac
+_residue_record() { # $1=module → capture its residue declaration (idempotent)
+  local m="$1" f field v tmp store
+  store="$(_residue_store)"
+  f="$AIBOX_MOD_DIR/$m/module.yaml"
+  [ -f "${f}" ] || return 0
+  tmp="$(mktemp)"
+  [ -f "${store}" ] && grep -v "^${m}_residue_" "${store}" >"${tmp}" 2>/dev/null || true
+  for field in paths containers volumes units bin npm process; do
+    v="$(meta_sub_field "$f" residue "${field}")"
+    [ -n "${v}" ] && printf '%s_residue_%s=%s\n' "${m}" "${field}" "${v}" >>"${tmp}"
+  done
+  if [ -s "${tmp}" ]; then
+    mv "${tmp}" "${store}"
+    chmod 600 "${store}" 2>/dev/null || true
+  else
+    rm -f "${tmp}"
+  fi
   return 0
 }
-residue_volume_patterns() { # $1=module → docker volume name ERE (empty = none)
-  case "$1" in
-    base)     printf '%s' '^aibox_(pg|redis)_data' ;;
-    windmill) printf '%s' '^windmill_' ;;
-    openmaic) printf '%s' '^app_openmaic' ;;
-    gitlab)   printf '%s' '^gitlab_gitlab_(config|logs|data)$' ;;
-    dify)     printf '%s' '^dify_(storage|db|redis|sandbox_deps|sandbox_conf|plugin_daemon|weaviate)$' ;;
-    new-api)  printf '%s' '^aibox_new_api_(data|logs)$' ;;
-    xiaozhi)  printf '%s' '^aibox_xiaozhi_(models|uploadfile|mysql)$' ;;
-  esac
+
+_residue_decl() { # $1=module $2=field (paths|containers|volumes|units|bin|npm|process)
+  local m="$1" field="$2" v mu
+  mu="${m//-/_}"
+  if [ -f "$AIBOX_MOD_DIR/$m/module.yaml" ]; then
+    v="$(meta_sub_field "$AIBOX_MOD_DIR/$m/module.yaml" residue "${field}")"
+    [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
+  fi
+  local store
+  store="$(_residue_store)"
+  if [ -f "${store}" ]; then
+    v="$(grep "^${m}_residue_${field}=" "${store}" 2>/dev/null | head -1 | cut -d= -f2-)"
+    [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
+  fi
+  v="$(eval "printf '%s' \"\${AIBOX_MODULE_${mu}_residue_${field}:-}\"" 2>/dev/null)"
+  [ -n "${v}" ] && { printf '%s' "${v}"; return 0; }
+  v="$( ( . "$AIBOX_REGISTRY_CACHE" 2>/dev/null; eval "printf '%s' \"\${AIBOX_MODULE_${mu}_residue_${field}:-}\"" ) 2>/dev/null )"
+  printf '%s' "${v}"
+}
+
+# A module lib may override a residue_* function: run it in a child shell that
+# sources the module's lib (the same pattern the upgrade engine uses for
+# deploy_root / upgrade_stops) — only when the module cache is still present.
+_residue_lib_call() { # $1=module $2=function; args after that
+  local m="$1" fn="$2" lib out
+  shift 2
+  lib="$AIBOX_MOD_DIR/$m/lib.sh"
+  [ -f "${lib}" ] || return 0
+  out="$(AIBOX_MODULE="${m}" AIBOX_HOME="${AIBOX_HOME}" bash -c "
+    . '${lib}' >/dev/null 2>&1 || exit 0
+    type -t ${fn} >/dev/null 2>&1 || exit 0
+    ${fn} \"\$@\"
+  " -- "$@" 2>/dev/null || true)"
+  [ -n "${out}" ] && printf '%s' "${out}"
   return 0
+}
+
+_residue_expand() { # expand the path placeholders the stanza may use
+  local s="$1"
+  s="${s//\$HOME/${HOME}}"
+  s="${s//\$AIBOX_HOME/${AIBOX_HOME}}"
+  s="${s//\$ETC_DIR/$(_purge_etc_root)}"
+  printf '%s' "${s}"
+}
+
+residue_paths() { # $1=module → candidate paths (the scan filters by existence)
+  local m="$1" lib p b
+  lib="$(_residue_lib_call "$m" residue_paths)"
+  [ -n "${lib}" ] && { printf '%s\n' "${lib}"; return 0; }
+  # generic: canonical deploy root + every named profile's variant, the module
+  # cache, and the conventional /etc config dir
+  {
+    printf '%s\n' "$AIBOX_HOME/apps/$m"
+    _purge_apps_profile_paths "$m"
+    printf '%s\n' "$AIBOX_HOME/modules/$m" "$(_purge_etc_root)/$m"
+    for p in $(_residue_decl "$m" paths); do
+      printf '%s\n' "$(_residue_expand "$p")"
+    done
+    for b in $(_residue_decl "$m" bin); do
+      _purge_bin_path "$b"
+    done
+  } | sort -u
+}
+
+residue_volume_patterns() { # $1=module → docker volume name ERE (empty = none)
+  _residue_decl "$1" volumes
 }
 residue_container_patterns() { # $1=module → container-name ERE
-  case "$1" in
-    base)     printf '%s' '^aibox-base(-[A-Za-z0-9]+)?-(postgres|redis)$' ;;
-    windmill) printf '%s' '^windmill-' ;;
-    openmaic) printf '%s' '^app-(openmaic|postgres|render-service)-[0-9]+$' ;;
-    gitlab)   printf '%s' '^aibox-gitlab$' ;;
-    dify)     printf '%s' '^dify-' ;;
-    new-api)  printf '%s' '^aibox-new-api$' ;;
-    xiaozhi)  printf '%s' '^aibox-xiaozhi-(server|web|mysql)$' ;;
-  esac
-  return 0
+  _residue_decl "$1" containers
 }
 residue_systemd_units() { # $1=module → system-level unit file paths
-  local sd; sd="$(_purge_systemd_dir)"
-  case "$1" in
-    windmill) printf '%s\n' "$sd/windmill-backup.service" "$sd/windmill-backup.timer" \
-                            "$sd/windmill-update-check.service" "$sd/windmill-update-check.timer" ;;
-  esac
+  local m="$1" u sd
+  sd="$(_purge_systemd_dir)"
+  for u in $(_residue_decl "$m" units); do
+    printf '%s\n' "${sd}/${u}"
+  done
   return 0
 }
-residue_npm_packages() { case "$1" in pi-web) printf '%s' '@agegr/pi-web' ;; esac; return 0; }
-residue_processes()    { case "$1" in clash)   printf '%s' 'mihomo' ;;        esac; return 0; }
+residue_npm_packages() { _residue_decl "$1" npm; }
+residue_processes()    { _residue_decl "$1" process; }
 
 manager_paths() { # the manager's own residue ('self' scope)
   local d

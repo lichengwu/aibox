@@ -139,6 +139,11 @@ env:
 
 # Per-action help text (one line each) — `aibox __NAME__ --help` renders this
 # table. The validator WARNs when a declared action has no usage entry.
+residue:
+  # aibox purge reads this offline (cache yaml → $AIBOX_HOME/residue.conf →
+  # registry cache): declare what a clean uninstall must remove.
+  containers: "^aibox-__NAME__$"
+  volumes: "^aibox___NAME___.*$"
 usage:
   start: "TODO what start does"
   stop: "TODO what stop does"
@@ -215,6 +220,8 @@ env:
 
 # Per-action help text (one line each) — `aibox __NAME__ --help` renders this
 # table. The validator WARNs when a declared action has no usage entry.
+residue:
+  bin: __NAME__
 usage:
   start: "Start the upstream stack (alias of the CLI's own verb)"
   stop: "Stop the upstream stack (alias)"

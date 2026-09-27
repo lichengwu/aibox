@@ -175,5 +175,8 @@ download_module() {
     fi
     chmod +x "$AIBOX_LAST_DEST/$f" 2>/dev/null || true
   done
+  # capture the residue declaration while module.yaml is on disk: `aibox purge`
+  # must work after the cache is gone and offline (rescue case)
+  _residue_record "$name"
 }
 

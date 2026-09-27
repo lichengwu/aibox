@@ -664,16 +664,17 @@ READM
     done
   fi
 
-  # --- S23: residue-map entry in bin/aibox (post-manager cleanup) ---
-  # `aibox purge` must be able to clean this module's leftovers AFTER the module
-  # (or aibox itself) is gone — the embedded residue map is the only knowledge
-  # left then. Repo-own tools/ only: the map lives in THIS repo's bin/aibox, so
-  # an external scaffold (VALIDATE_TOOLS_DIR override — used by new-module.sh and
-  # tests) cannot be in it yet; the author adds the entry when the module lands.
-  if [ -z "${VALIDATE_TOOLS_DIR:-}" ] && [ -f "$REPO_ROOT/bin/aibox" ]; then
-    awk '/^residue_paths\(\)/,/^\}/' "$REPO_ROOT/bin/aibox" | grep -qE "^[[:space:]]*${m}\)" ||
-      warn "no residue-map entry in bin/aibox (residue_paths) — 'aibox purge' cannot clean this module's leftovers"
+  # --- S23: residue DECLARED by the module (post-manager cleanup) ---
+  # `aibox purge` must clean a module's leftovers AFTER the module (or aibox
+  # itself) is gone. The knowledge therefore belongs to the MODULE: a `residue:`
+  # stanza in module.yaml (paths/containers/volumes/units/bin/npm/process — read
+  # offline from the cache or the registry cache) or a residue_paths() override
+  # in lib.sh for dynamic cases. The manager used to carry a per-module map.
+  if ! grep -qE '^residue:' "$f" && ! grep -qE '^residue_paths\(\)' "$d/lib.sh" 2>/dev/null; then
+    warn "no residue declaration — add a 'residue:' stanza to module.yaml (or a residue_paths() override in lib.sh) so 'aibox purge' can clean this module's leftovers"
   fi
+
+
 }
 
 # ---------- run ----------

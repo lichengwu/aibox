@@ -44,6 +44,9 @@ actions:
   - use-external
   - internal
 
+residue:
+  bin: mihomo
+  process: mihomo
 usage:
   start: "Start the mihomo kernel + switch aibox egress"
   stop: "Stop the kernel (egress falls back)"

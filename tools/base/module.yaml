@@ -74,6 +74,9 @@ env:
   AIBOX_DOCKER_MIRROR: "(unset) — user mirror, tried first [knob]"
   AIBOX_DOCKER_FORCE_POOL: "0 — 1 = skip the direct probe, always engage the pool [knob]"
 
+residue:
+  containers: "^aibox-base(-[A-Za-z0-9]+)?-(postgres|redis)$"
+  volumes: "^aibox_(pg|redis)_data"
 usage:
   start: "Start shared PG + Redis"
   stop: "Stop containers (data preserved)"

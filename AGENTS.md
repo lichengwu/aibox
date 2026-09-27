@@ -257,7 +257,14 @@ scripts/validate-module.sh <name> | --all                                  # con
 10. **Docs are part of the contract**: `README.md` (commands / ports / env overrides / preflight — validator: ERROR if missing) and `docs/DEVELOPMENT.md` (upstream links, version-pin policy, design decisions, known quirks — validator: WARN if missing). **Never hardcode derived values** (profile-derived ports, container names, env-file paths, credentials): state the default-profile default if useful, label it as such, and point at `aibox dashboard <module>` / `aibox <module> config list` for the authoritative values (spec §Doc hygiene; the validator WARNs when a profile-deriving module documents numeric ports with no dashboard pointer).
 11. **Consuming the shared `base`? Follow the dependency contract** (spec §Dependency contract): link through the shared helpers (`base_env_file`/`ensure_shared_base`/`ensure_shared_db`/`ensure_shared_redis_db`) — NEVER hardcode `base.env` (it points at the DEFAULT profile and silently attaches a named-profile module to the wrong instance), end `deploy_root()` with `$(profile_suffix)`, declare the resource you consume (`base:redis#<module>` — a bare `base:redis` allocates no logical DB), and keep the `base.env` contract ADDITIVE (bump `AIBOX_BASE_ENV_VERSION` on both sides for any rename/removal). The validator enforces all four.
 12. **No hardcoded credentials** in compose files; shared-PG consumers read `${AIBOX_POSTGRES_*}` from the injected `base.env` (validator scans; base is the only exception by design).
-13. **Residue map for `aibox purge`**: extend the `residue_*` map functions in `bin/aibox` with the module's leftovers (volumes / containers / `/etc/<name>` / units / dispatched binaries / npm packages) — `aibox purge` must be able to remove residue even AFTER the module (or aibox itself) is uninstalled (rescue: curl the single-file `bin/aibox` to /tmp and run `purge --apply`). Validator WARNs when the entry is missing; spec: `docs/module-spec.md` §Residue cleanup.
+13. **Residue is DECLARED by the module**: a `residue:` stanza in `module.yaml`
+    (`paths`/`containers`/`volumes`/`units`/`bin`/`npm`/`process`) — captured into
+    `$AIBOX_HOME/residue.conf` at install time, so `aibox purge` can clean leftovers even
+    after the module (or aibox itself) is uninstalled and offline (rescue: curl the
+    single-file `bin/aibox` to /tmp and run `purge --apply`). A module whose residue is
+    dynamic overrides `residue_paths()` in `lib.sh` (base does, for its per-profile env
+    files). The manager carries NO per-module residue map — validator WARNs when a module
+    declares neither; spec: `docs/module-spec.md` §Residue cleanup.
 
 ### #10 macOS bash 3.2 (arm64-darwin26 build): a failing `[[ ]]` does NOT trigger `set -e` — bats mid-test assertions are silently swallowed locally
 

@@ -28,6 +28,19 @@ setup() {
   echo x > "$PURGE_SYSTEMD_DIR/windmill-backup.timer"
   mkdir -p "$HOME/.config"
   printf 'alias ll="ls"\n# aibox\nexport PATH="%s:$PATH"\nalias gg="git"\n' "$AIBOX_BIN_DIR" > "$HOME/.zshrc"
+
+  # Residue knowledge is DECLARED by the module and captured into
+  # $AIBOX_HOME/residue.conf at install time (download_module) — this is what a
+  # real host has after `aibox install` + `aibox uninstall` (the rescue case).
+  cat > "$AIBOX_HOME/residue.conf" <<'RESIDUE'
+windmill_residue_bin=windmill
+windmill_residue_paths=$ETC_DIR/windmill
+windmill_residue_units=windmill-backup.service windmill-backup.timer
+windmill_residue_containers=^windmill-
+windmill_residue_volumes=^windmill_
+gitlab_residue_containers=^aibox-gitlab$
+gitlab_residue_volumes=^gitlab_gitlab_(config|logs|data)$
+RESIDUE
 }
 
 teardown() {
@@ -190,4 +203,57 @@ SH
   ' >/dev/null 2>&1
   # accepted: stop happened in the SAME run (no --stop flag, no re-run)
   grep -q "^stop windmill-windmill_server-1" "$DOCKER_CALLS_LOG"
+}
+
+# ---------- declared residue (module contract, not a manager map) ---------------
+
+@test "residue declarations are captured at install time (download_module → residue.conf)" {
+  rm -f "$AIBOX_HOME/residue.conf"
+  run bash -c "
+    export AIBOX_HOME='$AIBOX_HOME' AIBOX_RAW='file://$REPO_ROOT'
+    source '$AIBOX'
+    download_module new-api >/dev/null 2>&1 || exit 1
+    grep -c '^new-api_residue_' '$AIBOX_HOME/residue.conf'
+  "
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "${output##*$'\n'}" = "2" ] || { echo "expected 2 declared fields, got: $output"; false; }
+  grep -q '^new-api_residue_containers=\^aibox-new-api\$' "$AIBOX_HOME/residue.conf" || { cat "$AIBOX_HOME/residue.conf"; false; }
+}
+
+@test "rescue: declared residue is found with NO module cache (store survives uninstall)" {
+  [ ! -d "$AIBOX_HOME/modules/windmill" ] || false    # fixture has no cache for it
+  run bash -c "
+    export AIBOX_HOME='$AIBOX_HOME' PURGE_ETC='$PURGE_ETC' PURGE_NO_DOCKER=1
+    source '$AIBOX'
+    residue_systemd_units windmill
+    residue_container_patterns windmill
+  "
+  [[ "$output" == *"windmill-backup.timer"* ]] || { echo "$output"; false; }
+  [[ "$output" == *"^windmill-"* ]] || { echo "$output"; false; }
+}
+
+@test "the module's own residue_paths() wins over the declaration (escape hatch)" {
+  mkdir -p "$AIBOX_HOME/modules/base"
+  cp "$REPO_ROOT/tools/base/module.yaml" "$AIBOX_HOME/modules/base/"
+  cp "$REPO_ROOT/tools/base/lib.sh" "$AIBOX_HOME/modules/base/"
+  cp "$REPO_ROOT/tools/_shared/common.sh" "$AIBOX_HOME/modules/base/_common.sh"
+  mkdir -p "$AIBOX_HOME/apps/base"
+  touch "$AIBOX_HOME/base.env" "$AIBOX_HOME/base-prod.env"
+  run bash -c "
+    export AIBOX_HOME='$AIBOX_HOME' PURGE_ETC='$PURGE_ETC' PURGE_NO_DOCKER=1
+    source '$AIBOX'
+    residue_paths base
+  "
+  [[ "$output" == *"$AIBOX_HOME/base.env"* ]] || { echo "$output"; false; }
+  [[ "$output" == *"$AIBOX_HOME/base-prod.env"* ]] || { echo "$output"; false; }
+}
+
+@test "generic: every named profile's deploy root is a residue candidate" {
+  mkdir -p "$AIBOX_HOME/apps/dify-prod"
+  run bash -c "
+    export AIBOX_HOME='$AIBOX_HOME' PURGE_ETC='$PURGE_ETC' PURGE_NO_DOCKER=1
+    source '$AIBOX'
+    residue_paths dify
+  "
+  [[ "$output" == *"apps/dify-prod"* ]] || { echo "$output"; false; }
 }

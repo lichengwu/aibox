@@ -66,7 +66,15 @@ with exactly this flow.
 5. **Service modules**: `actions` containing `start` MUST provide the full lifecycle `start/stop/restart/status/logs` (+ module-specific actions like `credentials`); a `dashboard` action with a module-owned rich view (`render_dashboard` in `lib.sh` — the manager prefers module-owned over its generic fallback); self-starting services use the platform-native init system (AGENTS.md rule 9).
 6. **Docs**: `README.md` (commands / ports / env overrides / preflight — ERROR if missing) + `docs/DEVELOPMENT.md` (upstream links, version-pin policy, design decisions, known quirks — WARN if missing).
 7. **Prove**: `scripts/validate-module.sh <name>` → 0 errors; `bats tests/*.bats` green; live smoke on a docker host: `aibox install <name>` → `<name> start` → `status` → `logs` → `stop` → `uninstall`.
-8. **Residue map**: extend the residue map in `bin/aibox` (`residue_*` functions) with the module's leftover locations (volumes, containers, `/etc/<name>`, units, dispatched binaries) — `aibox purge` must be able to clean up AFTER the module (or aibox itself) is uninstalled (validator WARNs when the entry is missing).
+8. **Residue declaration**: add a `residue:` stanza to `module.yaml` —
+   `paths` (extra locations; `$HOME`/`$AIBOX_HOME`/`$ETC_DIR` are expanded), `containers`,
+   `volumes`, `units` (system-level unit file names), `bin` (dispatched binaries),
+   `npm`, `process`. `aibox purge` must clean the module's leftovers AFTER the module (or
+   aibox itself) is uninstalled and offline: the stanza is captured into
+   `$AIBOX_HOME/residue.conf` at install/update time, and the manager derives the rest
+   generically (deploy root + every profile variant, module cache, `/etc/<name>`).
+   Dynamic cases override `residue_paths()` in `lib.sh` (base does). Validator WARNs when
+   a module declares neither.
 9. **Register in docs**: add the module row to `README.md` / `README.zh.md`; `aibox dashboard --available` picks the module up automatically (`module.yaml` is the registry).
 
 ## Directory layout
@@ -201,12 +209,19 @@ aibox uninstall self [--purge] [--yes] remove the manager; --purge = cascade ful
 
 ### Residue cleanup (`aibox purge`)
 
-Hooks can only clean while they exist. `aibox purge` handles the after-the-fact case —
-data/config left behind when modules (or aibox itself) are already gone. The residue MAP
-is embedded in `bin/aibox` (`residue_*` functions — the single source of cleanup knowledge;
-new modules MUST extend it, onboarding checklist item 8; the validator WARNs otherwise):
+`aibox purge` must remove what modules (or aibox itself) left behind **after** they are
+uninstalled and **offline**. The knowledge therefore belongs to the module:
 
-```bash
+1. `module.yaml` `residue:` stanza (declarative: `paths`/`containers`/`volumes`/`units`/`bin`/`npm`/`process`),
+   or a `residue_paths()` override in `lib.sh` for dynamic cases (base: per-profile env files)
+2. captured into `$AIBOX_HOME/residue.conf` at install/update time (plain KEY=VALUE, never sourced)
+   — this is what survives `aibox uninstall <module>` and a stale registry cache
+3. the manager derives the rest generically: `$AIBOX_HOME/apps/<name>` + every named profile's
+   variant, `$AIBOX_HOME/modules/<name>`, `/etc/<name>`, the declared `bin`
+
+There is no per-module residue map in the manager any more (that map was module-internal
+knowledge living in the manager — every new path needed a manager edit).
+
 aibox purge                          # dry-run scan: categorized residue report (default)
 aibox purge <module>... --apply      # clean specific modules' residue
 aibox purge self --apply             # the manager's own residue (bin, state, rc block)

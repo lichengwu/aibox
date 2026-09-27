@@ -74,6 +74,9 @@ env:
   AIBOX_DOCKER_MIRROR: "(unset) — user mirror, tried first [knob]"
   AIBOX_DOCKER_FORCE_POOL: "0 — 1 = skip the direct probe, always engage the pool [knob]"
 
+residue:
+  containers: "^dify-"
+  volumes: "^dify_(storage|db|redis|sandbox_deps|sandbox_conf|plugin_daemon|weaviate)$"
 usage:
   start: "Start the stack (source pool pulls images; 1-2 min first boot)"
   stop: "Stop containers"

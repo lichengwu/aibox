@@ -50,6 +50,9 @@ env:
   AIBOX_DOCKER_MIRROR: "(unset) — user mirror, tried first [knob]"
   AIBOX_DOCKER_FORCE_POOL: "0 — 1 = skip the direct probe, always engage the pool [knob]"
 
+residue:
+  containers: "^aibox-gitlab$"
+  volumes: "^gitlab_gitlab_(config|logs|data)$"
 usage:
   start: "Start the container (source pool pulls; 3-5 min first boot)"
   stop: "Stop the container"
