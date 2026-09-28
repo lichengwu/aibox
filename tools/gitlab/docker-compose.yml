@@ -41,7 +41,11 @@ services:
       GITLAB_ROOT_PASSWORD: "${GITLAB_ROOT_PASSWORD:-}"
       GITLAB_OMNIBUS_CONFIG: |
         external_url '${GITLAB_EXTERNAL_URL:-http://localhost:31110}'
-        nginx['listen_port'] = ${GITLAB_HTTP_PORT:-31110}
+        # listen_port is the port nginx's EXTERNAL protocol listens on: with
+        # external_url https://… that is the TLS port — setting the plain HTTP
+        # port here makes nginx create two default servers on 80 ("duplicate
+        # default server for 0.0.0.0:80", live-caught) and nginx never starts.
+        nginx['listen_port'] = ${GITLAB_NGINX_LISTEN_PORT:-31110}
         nginx['listen_https'] = ${GITLAB_HTTPS_ENABLE:-false}
         nginx['ssl_certificate'] = '/etc/gitlab/ssl/gitlab.crt'
         nginx['ssl_certificate_key'] = '/etc/gitlab/ssl/gitlab.key'

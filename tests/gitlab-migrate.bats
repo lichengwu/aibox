@@ -141,3 +141,76 @@ GITLAB_EXTERNAL_URL=https://gitlab.example.test"
   [ "$status" -eq 30 ] || false
   case "$output" in *"not running"*) ;; *) false ;; esac
 }
+
+@test "http_up: HTTPS on → probes the TLS port (301 on plain HTTP must not fake 'down')" {
+  _write_env "GITLAB_HTTPS_ENABLE=true
+GITLAB_HTTPS_PORT=443
+GITLAB_HTTP_PORT=80"
+  shim="$BATS_TMPDIR/curlshim"; rm -rf "$shim"; mkdir -p "$shim"
+  cat >"$shim/curl" <<'SH'
+#!/usr/bin/env bash
+url=""
+for a in "$@"; do case "$a" in http*|https*) url="$a" ;; esac; done
+case "$url" in
+https://127.0.0.1:443/*) printf '200' ;;
+http://127.0.0.1:80/*)  printf '301' ;;
+*) printf '000' ;;
+esac
+SH
+  chmod +x "$shim/curl"
+  run env PATH="$shim:/usr/bin:/bin" bash -c ". '$GITLAB_LIB'; load_env; http_up && echo UP || echo DOWN"
+  case "$output" in *UP*) ;; *) false ;; esac
+  # TLS port dead but nginx redirecting -> still counts as answering (301)
+  cat >"$shim/curl" <<'SH'
+#!/usr/bin/env bash
+for a in "$@"; do case "$a" in https://*) printf '000'; exit 0 ;; esac; done
+printf '301'
+SH
+  chmod +x "$shim/curl"
+  run env PATH="$shim:/usr/bin:/bin" bash -c ". '$GITLAB_LIB'; load_env; http_up && echo UP || echo DOWN"
+  case "$output" in *UP*) ;; *) false ;; esac
+}
+
+@test "sync_nginx_listen_port: TLS on → TLS port, off → HTTP port, idempotent" {
+  for spec in "true:443" "false:8080"; do
+    en="${spec%%:*}"; want="${spec##*:}"
+    h="$(mktemp -d)"
+    mkdir -p "$h/apps/gitlab"
+    printf 'GITLAB_HTTPS_ENABLE=%s\nGITLAB_HTTPS_PORT=443\nGITLAB_HTTP_PORT=8080\n' "$en" >"$h/apps/gitlab/.env"
+    run env AIBOX_HOME="$h" bash -c ". '$GITLAB_LIB'; load_env; sync_nginx_listen_port; cfg_kv_get \"\$AIBOX_HOME/apps/gitlab/.env\" GITLAB_NGINX_LISTEN_PORT"
+    [ "$output" = "$want" ] || false
+    run env AIBOX_HOME="$h" bash -c ". '$GITLAB_LIB'; load_env; sync_nginx_listen_port; grep -c '^GITLAB_NGINX_LISTEN_PORT=' \"\$AIBOX_HOME/apps/gitlab/.env\""
+    [ "$output" = "1" ] || false
+    rm -rf "$h"
+  done
+  # wiring: start AND restart carry the sync (a restart that skipped it left nginx
+  # on the wrong port — live-caught)
+  run bash -c "awk '/^(start|restart)\)/{n++} /sync_nginx_listen_port/{s++} END{print n\":\"s}' '$REPO_ROOT/tools/gitlab/svc.sh'"
+  [ "$status" -eq 0 ] || false
+  run grep -q "GITLAB_NGINX_LISTEN_PORT" "$REPO_ROOT/tools/gitlab/docker-compose.yml"
+  [ "$status" -eq 0 ]
+}
+
+@test "status_info/doctor_ports: TLS on → the external https endpoint, effective ports (80/443/31222)" {
+  _write_env "GITLAB_HTTPS_ENABLE=true
+GITLAB_HTTPS_PORT=443
+GITLAB_HTTP_PORT=80
+GITLAB_EXTERNAL_URL=https://gitlab.example.test"
+  run bash -c ". '$GITLAB_LIB'; load_env; status_info | grep '^endpoint='"
+  [ "$status" -eq 0 ] || false
+  case "$output" in *https://gitlab.example.test*) ;; *) false ;; esac
+  run bash -c ". '$GITLAB_LIB'; load_env; doctor_ports"
+  case "$output" in *80/tcp:http*443/tcp:https*31222/tcp:git-ssh*) ;; *) false ;; esac
+  # TLS off → the plain http endpoint, no https port declared
+  _write_env "GITLAB_HTTPS_ENABLE=false
+GITLAB_HTTP_PORT=8080"
+  run bash -c ". '$GITLAB_LIB'; load_env; status_info | grep '^endpoint='"
+  case "$output" in *http://127.0.0.1:8080*) ;; *) false ;; esac
+  run bash -c ". '$GITLAB_LIB'; load_env; doctor_ports"
+  case "$output" in *https*) false ;; esac
+  # the shared doctor must consult the hook
+  run grep -q 'type doctor_ports' "$REPO_ROOT/tools/_shared/lib/20-doctor.sh"
+  [ "$status" -eq 0 ] || false
+  run grep -q 'declared}" = 1' "$REPO_ROOT/tools/_shared/lib/20-doctor.sh"
+  [ "$status" -eq 0 ]
+}

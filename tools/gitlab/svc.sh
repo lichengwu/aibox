@@ -21,6 +21,8 @@ start)
   ensure_root_password
   # HTTPS is opt-in; a missing cert pair is generated (never overwritten)
   ensure_tls_material
+  # derived: nginx's listen port follows external_url's protocol
+  sync_nginx_listen_port
   compose up -d "$@"
   port="${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
   timeout_s="${GITLAB_START_TIMEOUT:-600}"
@@ -50,6 +52,8 @@ stop)
   ok "stopped (data volumes untouched)"
   ;;
 restart)
+  ensure_tls_material
+  sync_nginx_listen_port
   compose restart "$@"
   ok "restarted (the entrypoint re-runs omnibus reconfigure on boot)"
   ;;
@@ -59,6 +63,7 @@ restart)
 config)
   load_env
   ROOT="$(deploy_root)"
+  sync_nginx_listen_port
   CFG_YAML="${DIR}/module.yaml" \
     CFG_STORE="${ROOT}/.env" \
     CFG_APPLY="aibox gitlab restart" \
@@ -191,9 +196,21 @@ restore)
   log "restoring ${backup_id} (puma + sidekiq stopped first)…"
   docker exec "$CONTAINER_NAME" gitlab-ctl stop puma >/dev/null 2>&1 || true
   docker exec "$CONTAINER_NAME" gitlab-ctl stop sidekiq >/dev/null 2>&1 || true
+  # Keep the output: a restore that fails silently tells the operator nothing
+  # (live-caught: it "failed in 24s" while the real reason — a restore task left
+  # running by an earlier attempt — was only visible in the task's own output).
+  rlog="$(mktemp "${TMPDIR:-/tmp}/gitlab-restore.XXXXXX" 2>/dev/null || echo /tmp/gitlab-restore.log)"
+  rc=0
   printf '%s\n' "yes" | docker exec -i -e BACKUP="$backup_id" "$CONTAINER_NAME" \
-    gitlab-backup restore >/dev/null 2>&1 || \
-    die "restore failed — run it by hand for details: docker exec -it $CONTAINER_NAME gitlab-backup restore BACKUP=$backup_id"
+    gitlab-backup restore >"$rlog" 2>&1 || rc=$?
+  if [ "$rc" != 0 ]; then
+    if grep -qi "backup and restore task in progress" "$rlog"; then
+      die "another backup/restore task is still running inside the container — wait for it, then retry (log: $rlog)"
+    fi
+    warn "gitlab-backup restore exited ${rc} — last lines:"
+    tail -n 12 "$rlog" >&2 || true
+    die "restore failed (full log: $rlog)"
+  fi
   log "restarting services and waiting for the web endpoint…"
   docker exec "$CONTAINER_NAME" gitlab-ctl restart >/dev/null 2>&1 || true
   waited=0

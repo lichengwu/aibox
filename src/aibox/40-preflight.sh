@@ -439,6 +439,23 @@ cmd_self_check() {
 # a node auto-install with no progress line). Output goes to a log — replayed as
 # a tail on failure — and a heartbeat every 30s shows it's still alive.
 # AIBOX_PM_TIMEOUT=0 disables the bound.
+_docker_compose_plugin_shim() { # $1 = compose binary, $2.. = candidate plugin dirs
+  # Debian/Ubuntu ship compose v2 as a STANDALONE `docker-compose` binary; the
+  # docker CLI only finds plugins in /usr/libexec/docker/cli-plugins (or the
+  # /usr/local variant). Without this link `docker compose …` — what every aibox
+  # module actually runs — fails while `docker-compose` works, which looks like a
+  # broken install. Cheap, idempotent, harmless when a plugin already exists.
+  local bin="$1"; shift
+  [ -n "${bin}" ] && [ -x "${bin}" ] || return 1
+  local d
+  for d in "$@"; do
+    [ -n "${d}" ] || continue
+    mkdir -p "${d}" 2>/dev/null || continue
+    ln -sf "${bin}" "${d}/docker-compose" 2>/dev/null && return 0
+  done
+  return 1
+}
+
 _pm_index_refresh() { # $1 = pm, $2 = "force" to refresh even when the index exists
   # A cleanup that removed /var/lib/apt/lists (disk reclaiming is a normal
   # operation — aibox autoclean advises it) makes EVERY apt install fail with
@@ -576,7 +593,7 @@ _node_dist_pick() { # → the winning dist base URL (DIRECT = https://nodejs.org
 # Auto-install deps by platform. Lightweight / has a package manager -> install; needs sudo
 # or GUI interaction -> print the manual command.
 install_dep() {
-  local cmd="$1" ver="${2:-}" os pm eng comp root
+  local cmd="$1" ver="${2:-}" os pm eng root
   os="$(uname -s)"
   root=0; [ "$(id -u)" = "0" ] && root=1
   info "Auto-installing ${cmd} ..."
@@ -595,21 +612,39 @@ install_dep() {
         warn "  After install, start Docker.app and accept the license (can't be fully automated)"
       elif [ "$root" = "1" ]; then
         # Root: no privilege escalation needed — actually install (policy: never
-        # SILENTLY sudo; running as root is not sudo). Package-name fallbacks:
-        # docker-ce (get.docker.com repo) → moby-engine (RHEL9/AlibabaCloudLinux
-        # native, measured on AL4) → docker.io (Debian-family). Compose v2 comes
-        # from the plugin package (dep_satisfied accepts `docker compose`).
+        # SILENTLY sudo; running as root is not sudo).
         case "$pm" in
-          apt-get) eng="docker.io"; comp="docker-compose-v2" ;;
-          *)       eng="docker-ce"; comp="docker-compose-plugin" ;;
+          apt-get) eng="docker.io" ;;
+          *)       eng="docker-ce" ;;
         esac
-        info "${pm} install -y ${eng} ${comp} (running as root)"
+        # (compose is installed by name-loop below: the apt package name differs
+        # per distro — Debian 13 ships v2 as `docker-compose`, not -v2/-plugin)
+        info "${pm} install -y ${eng} (running as root)"
         _pm_index_refresh "$pm"
-        _pm_install "$pm" "$eng" "$comp" 2>/dev/null \
-          || { _pm_index_refresh "$pm" force; _pm_install "$pm" "$eng" "$comp" 2>/dev/null; } \
-          || ${pm} install -y moby-engine docker-compose-plugin 2>/dev/null \
-          || ${pm} install -y docker.io docker-compose-v2 2>/dev/null \
-          || { warn "  package install failed (tried ${eng}+${comp}, moby-engine, docker.io variants)"; return 1; }
+        # The ENGINE ALONE first: one unknown package name fails the WHOLE apt
+        # command (measured live on Debian 13: no docker-compose-v2 package, and
+        # that blocked docker.io itself — the engine was never installed while the
+        # message said only "package install failed").
+        _pm_install "$pm" "$eng" 2>/dev/null \
+          || { _pm_index_refresh "$pm" force; _pm_install "$pm" "$eng" 2>/dev/null; } \
+          || _pm_install "$pm" moby-engine 2>/dev/null \
+          || _pm_install "$pm" docker.io 2>/dev/null \
+          || { warn "  docker engine install failed (tried ${eng}, moby-engine, docker.io)"; return 1; }
+        # Compose v2 next, name by name — a failure here must NOT undo the engine.
+        if ! { command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; }; then
+          case "$pm" in
+            apt-get) _cs="docker-compose docker-compose-v2" ;;
+            *)       _cs="docker-compose-plugin docker-compose" ;;
+          esac
+          for _c in ${_cs}; do
+            _pm_install "$pm" "$_c" >/dev/null 2>&1 && break
+          done
+        fi
+        # Standalone compose binary → make `docker compose` work (modules run that).
+        if command -v docker >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
+          _docker_compose_plugin_shim "$(command -v docker-compose 2>/dev/null || true)" \
+            /usr/libexec/docker/cli-plugins /usr/local/lib/docker/cli-plugins || true
+        fi
         # Only claim "installed" once the CLI actually exists — the old flow
         # announced "docker installed but the daemon didn't start" even when
         # no binary ever appeared (live-caught on a mirror that lied).

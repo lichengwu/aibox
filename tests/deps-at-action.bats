@@ -356,3 +356,27 @@ SH
   grep -q '_pm_index_refresh "\$pm"' "$REPO_ROOT/src/aibox/40-preflight.sh" || false
   grep -q '_pm_index_refresh "\$pm" force' "$REPO_ROOT/src/aibox/40-preflight.sh" || false
 }
+
+@test "compose plugin shim: standalone docker-compose becomes visible to 'docker compose'" {
+  frag="$BATS_TMPDIR/shim-frag.sh"
+  sed -n '/^_docker_compose_plugin_shim() {/,/^}/p' "$REPO_ROOT/src/aibox/40-preflight.sh" >"$frag"
+  [ -s "$frag" ] || false
+  bin="$BATS_TMPDIR/docker-compose"; printf '#!/bin/sh\nexit 0\n' >"$bin"; chmod +x "$bin"
+  d1="$BATS_TMPDIR/plugins-1"; d2="$BATS_TMPDIR/plugins-2"
+  # first dir unusable (a file, not a dir) -> falls through to the second
+  : >"$d1"
+  run bash -c ". '$frag'; _docker_compose_plugin_shim '$bin' '$d1' '$d2'"
+  [ "$status" -eq 0 ] || false
+  [ -L "$d2/docker-compose" ] || false
+  [ "$(readlink "$d2/docker-compose")" = "$bin" ] || false
+  # missing/non-executable binary -> refused, nothing created
+  run bash -c ". '$frag'; _docker_compose_plugin_shim '' '$d2'"
+  [ "$status" -ne 0 ] || false
+  # idempotent: running twice keeps one valid link
+  run bash -c ". '$frag'; _docker_compose_plugin_shim '$bin' '$d2'; _docker_compose_plugin_shim '$bin' '$d2'"
+  [ "$status" -eq 0 ] || false
+  [ -L "$d2/docker-compose" ] || false
+  # wiring: the engine is installed ALONE before any compose package is tried
+  run bash -c "grep -n 'install -y \${eng} (running as root)' '$REPO_ROOT/src/aibox/40-preflight.sh'"
+  [ "$status" -eq 0 ] || false
+}

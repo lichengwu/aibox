@@ -365,14 +365,24 @@ module_doctor() { # $1=module name (defaults to $AIBOX_MODULE)
     info "state       (module has no status_info)"
   fi
   # 3) declared ports
-  local ports="" entry
-  ports="$(awk '/^ports:/{f=1;next} /^[a-z_]+:/{f=0} f&&/^  - /{sub(/^  - /,""); printf "%s ", $0}' "${yaml}" 2>/dev/null || true)"
+  # The module may know its EFFECTIVE ports (an operator can override them in the
+  # deploy .env — gitlab does: 80/443 instead of the declared 31110/31143). Probing
+  # the declared defaults then reports "not listening" for a service that is
+  # actually public: the module's own answer wins when it provides one.
+  local ports="" entry declared=1
+  if type doctor_ports >/dev/null 2>&1; then
+    ports="$(doctor_ports 2>/dev/null || true)"
+    [ -n "${ports}" ] && declared=0
+  fi
+  [ -n "${ports}" ] || ports="$(awk '/^ports:/{f=1;next} /^[a-z_]+:/{f=0} f&&/^  - /{sub(/^  - /,""); printf "%s ", $0}' "${yaml}" 2>/dev/null || true)"
   for entry in ${ports}; do
     local pnum="${entry%%/*}"
     case "${pnum}" in ''|*[!0-9]*) continue ;; esac
     if port_listening "${pnum}"; then ok "port        ${entry} listening"
     local _phint; _phint="$(port_policy_hint "${pnum}")"
-    [ -n "${_phint}" ] && warn "port        ${pnum} is ${_phint} (spec §Port allocation: 31000-31999 services / 32000-32999 infra)"
+    # The policy governs module DEFAULTS; an operator's deliberate deployment port
+    # (privileged 80/443 for a public service) is reported, not policed.
+    [ -n "${_phint}" ] && [ "${declared}" = 1 ] && warn "port        ${pnum} is ${_phint} (spec §Port allocation: 31000-31999 services / 32000-32999 infra)"
     else info "port        ${entry} — (not listening)"; fi
   done
   [ -n "${ports}" ] || info "port        (none declared)"

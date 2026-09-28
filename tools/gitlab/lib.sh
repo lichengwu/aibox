@@ -122,6 +122,30 @@ backup_tars() { # newest-first list of in-container backup tars
 # rails busy — NOT a verdict). Passwords with single quotes would break the
 # runner string; hex seeds and sane user values are safe, and a broken probe
 # just degrades to "unverified".
+# Derived key: nginx's listen port must match the protocol in external_url.
+# TLS on  -> the TLS port (omnibus still serves the plain-HTTP redirect itself,
+#            on 80, because redirect_http_to_https is set)
+# TLS off -> the plain HTTP port
+# Written into the deploy .env (compose interpolates it) — idempotent.
+sync_nginx_listen_port() {
+  local envf want cur tmp
+  envf="$(deploy_root)/.env"
+  [ -f "${envf}" ] || return 0
+  case "$(cfg_kv_get "${envf}" GITLAB_HTTPS_ENABLE 2>/dev/null || true)" in
+  true | 1 | yes) want="$(cfg_kv_get "${envf}" GITLAB_HTTPS_PORT 2>/dev/null || true)" ;;
+  *) want="$(cfg_kv_get "${envf}" GITLAB_HTTP_PORT 2>/dev/null || true)" ;;
+  esac
+  [ -n "${want}" ] || return 0
+  cur="$(cfg_kv_get "${envf}" GITLAB_NGINX_LISTEN_PORT 2>/dev/null || true)"
+  [ "${cur}" = "${want}" ] && return 0
+  tmp="$(mktemp "${envf}.tmp.XXXXXX")" || return 0
+  grep -v '^GITLAB_NGINX_LISTEN_PORT=' "${envf}" >"${tmp}" 2>/dev/null || true
+  printf '\n# derived by aibox gitlab: nginx listens on this port (external_url protocol)\nGITLAB_NGINX_LISTEN_PORT=%s\n' "${want}" >>"${tmp}"
+  cat "${tmp}" >"${envf}"   # keep the inode: the 600 mode survives
+  rm -f "${tmp}"
+  return 0
+}
+
 root_password_verify() { # $1=password
   local out
   out="$(docker exec "$CONTAINER_NAME" gitlab-rails runner "puts User.find_by(username: 'root').valid_password?('${1}')" 2>/dev/null || true)"
@@ -160,52 +184,67 @@ compose_images() {
 }
 
 # GitLab answers 200 on the sign-in page once rails+puma are up (302 on /).
-http_up() {
-  local port code
-  port="${1:-$DEFAULT_HTTP_PORT}"
+http_up() { # $1 = HTTP port override; with HTTPS on, the TLS listener is the probe
+  local port code https_port
+  port="${1:-${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}}"
+  case "${GITLAB_HTTPS_ENABLE:-false}" in
+  true | 1 | yes)
+    # nginx redirects plain HTTP to TLS in this mode, so /users/sign_in on the
+    # HTTP port answers 301 forever and the probe would never see the app. Ask
+    # the TLS listener (-k: the cert is the operator's, possibly self-signed).
+    https_port="${GITLAB_HTTPS_PORT:-31143}"
+    code="$(curl -s -k --noproxy '*' -o /dev/null --max-time 5 -w '%{http_code}' "https://127.0.0.1:${https_port}/users/sign_in" 2>/dev/null || true)"
+    case "$code" in
+    200 | 302) return 0 ;;
+    esac
+    ;;
+  esac
   # --noproxy: this probes 127.0.0.1 — an inherited http_proxy env (manual
   # exports; aibox's own proxy flow already sets no_proxy) would route the
   # loopback probe through the proxy and return 000 (measured live).
   code="$(curl -s --noproxy '*' -o /dev/null --max-time 5 -w '%{http_code}' "http://127.0.0.1:${port}/users/sign_in" 2>/dev/null || true)"
   case "$code" in
   200 | 302) return 0 ;;
+  301) return 0 ;; # nginx serving the TLS redirect: the web endpoint answers
   *) return 1 ;;
   esac
 }
-
-container_running() {
-  docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER_NAME"
+upgrade_stops() { # $1=cur_major.minor $2=tgt_major.minor (range for derivation)
+  local cur="${1:-0.0}" tgt="${2:-0.0}"
+  # Frozen history ≤17.4 (upstream config/upgrade_path.yml; conditional stops
+  # 16.0/16.1/16.2/17.1 included — safe default, they only cost minutes)
+  printf '%s\n' 8.11 8.12 8.17 9.5 10.0 10.8 11.0 11.11 \
+    12.0 12.1 12.10 13.0 13.1 13.8 13.12 \
+    14.0 14.3 14.9 14.10 15.0 15.4 15.11 \
+    16.0 16.1 16.2 16.3 16.7 16.11 17.1 17.3 17.5 17.8 17.11
+  # ≥18: derived from the official cadence — generate x.2/x.5/x.8/x.11 for
+  # every major from 18 up to the target's major (one extra major is harmless).
+  local cmin tmin tmaj mj mn
+  cmin="${cur#*.}"
+  [ "${cmin}" = "${cur}" ] && cmin=0
+  tmaj="${tgt%%.*}"
+  tmin="${tgt#*.}"
+  [ "${tmin}" = "${tgt}" ] && tmin=0
+  for ((mj = 18; mj <= tmaj; mj++)); do
+    for mn in 2 5 8 11; do
+      printf '%s.%s\n' "${mj}" "${mn}"
+    done
+  done
 }
 
-# Effective image: the deploy .env overrides the module default.
-effective_image() {
-  printf '%s' "${GITLAB_IMAGE:-$DEFAULT_IMAGE}"
-}
-
-# Deployed app version: the gitlab-ce image tag.
-app_version() {
-  local img tag
-  load_env
-  img="${GITLAB_IMAGE:-$DEFAULT_IMAGE}"
-  tag="${img##*:}"
-  printf '%s' "${tag#v}"
-}
-
-# SSH clone base URL (host part best-effort; the authoritative value is the
-# clone button in the GitLab UI — external_url controls what GitLab renders).
-ssh_clone_url() {
-  local host port
-  host="$(detect_external_host)"
-  port="${GITLAB_SSH_PORT:-$DEFAULT_SSH_PORT}"
-  printf 'ssh://git@%s:%s' "$host" "$port"
-}
-
-# Status interface (called by `aibox status`; see docs/module-spec.md).
 status_info() {
   local port url health
   load_env
   port="${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
-  url="http://127.0.0.1:${port}"
+  case "${GITLAB_HTTPS_ENABLE:-false}" in
+  true | 1 | yes)
+    # The operator-facing endpoint is the TLS one: with redirect_http_to_https the
+    # plain port only answers 301, so reporting it (and calling 301 "ok") was
+    # misleading (live-caught on a migration).
+    url="${GITLAB_EXTERNAL_URL:-https://127.0.0.1:${GITLAB_HTTPS_PORT:-31143}}"
+    ;;
+  *) url="http://127.0.0.1:${port}" ;;
+  esac
   echo "version=$(app_version)"
   echo "endpoint=${url}"
   echo "credential=root / password: aibox gitlab credentials (verified live)"
@@ -213,10 +252,10 @@ status_info() {
     health="$(docker inspect -f '{{.State.Health.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo none)"
     if http_up "$port"; then
       echo "state=ok"
-      echo "health=ok HTTP 200 (${health})"
+      echo "health=ok (web endpoint answering; container health: ${health})"
     else
       echo "state=starting"
-      echo "health=starting (${health}; first boot takes 3-5 min)"
+      echo "health=starting (container health: ${health}; first boot takes 3-5 min)"
     fi
   else
     echo "state=stopped"
@@ -224,7 +263,22 @@ status_info() {
   fi
 }
 
-# ---------- status (the module's rich view — keyline template) ----------
+ssh_clone_url() {
+  local host port
+  host="$(detect_external_host)"
+  port="${GITLAB_SSH_PORT:-$DEFAULT_SSH_PORT}"
+  printf 'ssh://git@%s:%s' "$host" "$port"
+}
+
+doctor_ports() { # EFFECTIVE deployment ports (module.yaml holds defaults only)
+  load_env
+  printf '%s/tcp:http ' "${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
+  case "${GITLAB_HTTPS_ENABLE:-false}" in
+  true | 1 | yes) printf '%s/tcp:https ' "${GITLAB_HTTPS_PORT:-31143}" ;;
+  esac
+  printf '%s/tcp:git-ssh\n' "${GITLAB_SSH_PORT:-31222}"
+}
+
 render_status() {
   load_env
   local port st state code
@@ -256,48 +310,22 @@ render_status() {
   status_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/gitlab/"
 }
 
-# ---------- GitLab upgrade path (required upgrade stops) ----------
-# Official rule (docs.gitlab.com/update/upgrade_paths): cross-version upgrades
-# must pass through every required upgrade stop between current and target;
-# each hop lands on the LATEST PATCH of that minor; background migrations must
-# finish before the next hop. Data source decision: the pre-17.5 stops are a
-# FROZEN historical table (verified line-by-line against gitlab-org/gitlab
-# config/upgrade_path.yml); from 18.0 the official cadence is fixed (x.2/x.5/
-# x.8/x.11) so future stops are DERIVED — no table chasing, no network needed
-# for path computation.
-#
-# Contract: the manager's upgrade engine sources this lib and calls
-# upgrade_stops() when present → multi-hop upgrades engage. Modules without
-# this function keep the single-hop behavior (module-spec §Component upgrades).
-upgrade_stops() { # $1=cur_major.minor $2=tgt_major.minor (range for derivation)
-  local cur="${1:-0.0}" tgt="${2:-0.0}"
-  # Frozen history ≤17.4 (upstream config/upgrade_path.yml; conditional stops
-  # 16.0/16.1/16.2/17.1 included — safe default, they only cost minutes)
-  printf '%s\n' 8.11 8.12 8.17 9.5 10.0 10.8 11.0 11.11 \
-    12.0 12.1 12.10 13.0 13.1 13.8 13.12 \
-    14.0 14.3 14.9 14.10 15.0 15.4 15.11 \
-    16.0 16.1 16.2 16.3 16.7 16.11 17.1 17.3 17.5 17.8 17.11
-  # ≥18: derived from the official cadence — generate x.2/x.5/x.8/x.11 for
-  # every major from 18 up to the target's major (one extra major is harmless).
-  local cmin tmin cmaj tmaj mj mn
-  cmaj="${cur%%.*}"
-  cmin="${cur#*.}"
-  [ "${cmin}" = "${cur}" ] && cmin=0
-  tmaj="${tgt%%.*}"
-  tmin="${tgt#*.}"
-  [ "${tmin}" = "${tgt}" ] && tmin=0
-  for ((mj = 18; mj <= tmaj; mj++)); do
-    for mn in 2 5 8 11; do
-      printf '%s.%s\n' "${mj}" "${mn}"
-    done
-  done
+effective_image() {
+  printf '%s' "${GITLAB_IMAGE:-$DEFAULT_IMAGE}"
 }
 
-# Hop gate: omnibus /-/readiness (includes the db-migrations checks) — enabled
-# by monitoring_whitelist in the compose config (see docker-compose.yml).
-# MEASURED: the whitelist is 127.0.0.1, and the host's port-mapped requests
-# arrive with the docker-bridge source IP — rejected with 404. So the probe
-# runs FROM INSIDE the container (docker exec → source 127.0.0.1; same exec
+container_running() {
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER_NAME"
+}
+
+app_version() {
+  local img tag
+  load_env
+  img="${GITLAB_IMAGE:-$DEFAULT_IMAGE}"
+  tag="${img##*:}"
+  printf '%s' "${tag#v}"
+}
+
 # pattern as the credentials flow). Falls back to http_up when the exec probe
 # is unavailable (older deploys without the whitelist, curl-less images) so
 # the gate never BLOCKS an otherwise-healthy hop.

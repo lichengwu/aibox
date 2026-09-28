@@ -7,6 +7,44 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.28.0] — 2026-09-29
+
+### Fixed
+
+- **gitlab HTTPS actually serves.** `nginx['listen_port']` is the port nginx's
+  EXTERNAL protocol listens on: with `external_url https://…` it must be the TLS
+  port. Rendering the plain HTTP port there made nginx create two default servers
+  on 80 ("duplicate default server for 0.0.0.0:80") and never start — HTTPS was
+  silently dead while the module reported success. It is now a derived key
+  (`GITLAB_NGINX_LISTEN_PORT`, synced by start/restart/config) so the TLS listener
+  follows the URL's protocol. Live-caught migrating a native 18.9.1 install.
+- **gitlab: honest endpoint + effective-port diagnostics.** With TLS on,
+  `status_info` reports the operator-facing `https://…` endpoint (previously the
+  plain port, which only redirects — reported as "✓ HTTP 301"), and a new
+  `doctor_ports()` hook tells the shared `module_doctor` the DEPLOYMENT's ports
+  (80/443 here) instead of the module defaults (31110/31143), which used to report
+  "not listening" for a service that was publicly serving. The port-policy hint now
+  applies to module defaults only — an operator's deliberate 80/443 is not policed.
+- **gitlab restore is no longer silent.** A restore that failed told the operator
+  nothing (it ran with output discarded): now the output is kept, the tail is shown
+  on failure, and the specific "another backup/restore task is still running" case
+  is named with the fix. (Live-caught: the second attempt "failed in 24s" while the
+  real cause was a previous task still unpacking the archive.)
+- **Dependency install on apt hosts, per package.** One unknown package name fails
+  the WHOLE `apt-get install`: Debian 13 has no `docker-compose-v2`, which silently
+  blocked `docker.io` itself. The engine is now installed alone first, compose is
+  tried name-by-name, and a standalone `docker-compose` binary is linked into the
+  docker CLI plugin dir so `docker compose` (what every module runs) works.
+
+### Added
+
+- gitlab `backup` / `restore` / `import-secrets` were exercised end-to-end on a
+  real migration; the module README carries the measured native-omnibus recipe.
+
+### Module versions
+
+gitlab 1.12.0
+
 ## [0.27.1] — 2026-09-28
 
 ### Fixed
@@ -1811,6 +1849,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.28.0]: https://github.com/lichengwu/aibox/compare/v0.27.1...v0.28.0
 [0.27.1]: https://github.com/lichengwu/aibox/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/lichengwu/aibox/compare/v0.26.1...v0.27.0
 [0.26.1]: https://github.com/lichengwu/aibox/compare/v0.26.0...v0.26.1
