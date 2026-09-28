@@ -1,5 +1,5 @@
 name: pi-web
-version: 1.8.1
+version: 1.9.0
 module_iface: 1
 description: "Deploy @agegr/pi-web as a launchd/systemd service (HTTP Basic auth, auto-restart)"
 platform: ""
@@ -43,7 +43,6 @@ actions:
   - stop
   - restart
   - status
-  - dashboard
   - doctor
   - logs
   - diagnose
@@ -72,7 +71,6 @@ usage:
   stop: "Stop the service"
   restart: "Recreate the service (applies config changes)"
   status: "Service + HTTP health + rich view"
-  dashboard: "Alias of status"
   doctor: "Deep diagnostics: deps, docker, state, declared ports"
   logs: "Follow the app log"
   diagnose: "Self-check (port/auth/process/log)"
@@ -84,7 +82,7 @@ upstream:
   install: https://github.com/agegr/pi-web#installation
   test: https://github.com/agegr/pi-web#development
 
-dashboard:
+status:
   endpoints:
     - "http://127.0.0.1:${PORT}"
   hint: "Username pi / password: see `aibox pi-web status` (plist PI_WEB_PASSWORD)"

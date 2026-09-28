@@ -1,5 +1,5 @@
 name: windmill
-version: 1.8.1
+version: 1.9.0
 module_iface: 1
 description: "Windmill self-host ops CLI (init/upgrade/backup/drill/doctor)"
 platform: ""
@@ -50,7 +50,6 @@ actions:
   - stop
   - restart
   - status
-  - dashboard
   - doctor
   - logs
   - shell
@@ -103,7 +102,6 @@ usage:
   stop: "Stop the stack"
   restart: "Recreate containers"
   status: "Stack health + version info"
-  dashboard: "Same as status (dispatched to the CLI)"
   doctor: "Deep diagnostics (the CLI\'s check)"
   logs: "Container logs"
   shell: "Open a shell in the server container"
@@ -125,7 +123,7 @@ upstream:
   homepage: https://github.com/windmill-labs/windmill
   docs: https://www.windmill.dev/docs/
 
-dashboard:
+status:
   endpoints:
     - "http://127.0.0.1:${PORT}"
   hint: "Credentials in CREDENTIALS.txt + .env; DB connects to shared PG via ${AIBOX_POSTGRES_HOST} (injected via base.env)"

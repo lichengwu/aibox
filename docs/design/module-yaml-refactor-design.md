@@ -2,7 +2,7 @@
 
 > Status: Design draft (spec-only; this round does not modify any actual `.sh` / `module.yaml` / `docker-compose*.yml` content)
 > Date: 2026-09-16
-> Scope: ① Remove redundancy from module.yaml fields (actions / files / dashboard); ② Shared-component (PG/Redis) dependency declaration + connection-info propagation spec
+> Scope: ① Remove redundancy from module.yaml fields (actions / files / status); ② Shared-component (PG/Redis) dependency declaration + connection-info propagation spec
 > Related: This design is an incremental revision of [`docs/module-system-spec.md`](../module-system-spec.md); after landing, the corresponding spec sections will be updated accordingly
 > Principle: **Keep it simple and extensible.** Shared-component propagation introduces no codegen — one shared env file + compose `--env-file` live read + module-referenced variables.
 
@@ -12,7 +12,7 @@
 
 - **files**: The standard 5 files (`lib.sh install.sh uninstall.sh update.sh svc.sh`) are implicit defaults; module.yaml lists only **extra** files. The awk parser takes the union of "standard set ∪ files".
 - **actions**: Keep the full list; add a new "Common Action Contract" defining the semantics of the lifecycle set; service-type = derived from `actions` containing `start` (no extra field); when the CLI runs `aibox <module>` (no action), it lists the declared actions as help, without validating on every invocation.
-- **dashboard**: yaml keeps only `endpoints[]` + `hint` (pre-install fallback); at runtime everything goes through `lib.sh`'s `dashboard_info()` (installed overrides yaml).
+- **status**: yaml keeps only `endpoints[]` + `hint` (pre-install fallback); at runtime everything goes through `lib.sh`'s `status_info()` (installed overrides yaml).
 - **Shared components**: `base` acts as the **provider**; `base start` writes a `$AIBOX_HOME/base.env` (`AIBOX_POSTGRES_*` / `AIBOX_REDIS_*`, single source). Consumer modules declare `services: [base:postgres#windmill]` in module.yaml.
 - **Propagation (no generator)**: When aibox schedules compose, for modules that declare `services` it automatically appends `--env-file $AIBOX_HOME/base.env`; the module **hand-writes one stable** `docker-compose.shared.yml` (network join + `replicas:0` + constructs `DATABASE_URL` in `environment` using `${AIBOX_POSTGRES_*}`, **zero hardcoded credentials**); the module's own `.env` sets `AIBOX_POSTGRES_DB=<module>`. Changing base credentials/port → `base restart` rewrites base.env → the next `aibox <module> restart` (compose up) interpolates the new values. **Change once, zero module-file edits.**
 - **Component names are always full names**: `postgres`, `redis`; no abbreviations like `pg` (env variables, component keys, and compose service/container naming stay consistent throughout).
@@ -46,9 +46,9 @@ Action distribution across the 5 modules (status as of 2026-09-16):
 
 All 5 modules' `files:` contain the same `lib.sh install.sh uninstall.sh update.sh svc.sh`, plus a few extra items (`openmaic`/`windmill` own CLIs, `base/docker-compose.yml`, `openmaic|windmill/docker-compose.shared.yml`). The standard set is the established default in spec §2.3, yet it is copy-pasted.
 
-### 1.3 dashboard's hint and runtime overlap
+### 1.3 status's hint and runtime overlap
 
-spec §4.4 already specifies that runtime info comes from `lib.sh`'s `dashboard_info()`. The `dashboard` section of module.yaml was originally positioned as a "static fallback when not installed", but the `hint` string often re-copies the credentials/port that `dashboard_info()` would compute. Two sources of truth → drift.
+spec §4.4 already specifies that runtime info comes from `lib.sh`'s `status_info()`. The `status` section of module.yaml was originally positioned as a "static fallback when not installed", but the `hint` string often re-copies the credentials/port that `status_info()` would compute. Two sources of truth → drift.
 
 ### 1.4 Shared-component connection info is scattered and hardcoded (most severe)
 
@@ -72,7 +72,7 @@ Changing base's port (35432→35000), user, password, or image version → depen
 | **actions** | Spec defines a common lifecycle contract; modules still list all actions; service-type derived from containing `start` | ❌ "List only extra actions, inject the standard set implicitly": actions are no longer self-describing; you can't see the full picture from the yaml; both help and CI need injection logic. ❌ Add a `lifecycle: passthrough` field: duplicates "whether actions contains start", adding another drift point. |
 | **actions reading** | CLI lists actions as help only when no action is given; no per-invocation validation | ❌ "Validate declared ∈ actions before forwarding, warn if not blocked": if it doesn't block it has no binding force, and it adds noise on every call — the worst of both worlds. |
 | **files** | Standard set implicit; list only extras | ❌ "Explicitly list all + lint to enforce the standard set exists": still duplicates 5 lines; adding a new standard file requires editing all modules. Implicit union is backward-compatible (old yaml that lists everything still works). |
-| **dashboard** | yaml keeps only endpoints+hint (pre-install) | ❌ "Remove the yaml field entirely": when not installed, the main CLI has no endpoint hint, degrading UX. |
+| **status** | yaml keeps only endpoints+hint (pre-install) | ❌ "Remove the yaml field entirely": when not installed, the main CLI has no endpoint hint, degrading UX. |
 | **Shared-component propagation** | base writes a `base.env` + compose `--env-file` live injection + module hand-writes a stable override using variables | ❌ "sync-deps generator templating overrides + `.env.aibox` + `base_conn_info`": the generator must understand each module's service topology (which joins the network, which has `replicas:0`) — this is inherently module-specific and clearest when hand-written; the generator amounts to reinventing a template engine, its output needs .gitignore, regeneration triggers, and conflicts with hand-written files. The module already has a hand-written shared.yml; only the credentials need to become variables. ❌ "Only write a spec without building a mechanism": relies on manual sync, treating symptoms not causes. |
 | **Component naming** | Full names `postgres`/`redis` | ❌ Abbreviation `pg`: poor readability, decoupled from env-variable/compose-service naming. |
 
@@ -123,7 +123,7 @@ upstream:                         # unchanged
   homepage: ...
   docs: ...
 
-dashboard:                        # ★ changed: slimmed down, only two subfields
+status:                        # ★ changed: slimmed down, only two subfields
   endpoints:
     - "http://127.0.0.1:${PORT}"  #   static template (may use ${PORT} placeholder)
   hint: "credentials in CREDENTIALS.txt + .env"  #   one-line pre-install fallback
@@ -152,7 +152,7 @@ ports:
 | `services` | No | **Shared-component dependencies**, compact string `provider:component[#dbname]`. `component` uses full names (`postgres`/`redis`). `postgres` should provide `#dbname` (creates an independent database for the module); `redis` usually omits `#dbname`. Multi-DB use: `base:postgres#windmill_jobs`. Declaration drives: CI validation of provider/component, `install` auto-runs `base createdb`, compose scheduling auto-adds `--env-file base.env`. |
 | `provides` | No | Provider modules only. Lists exposed component full names. A consumer module's `services` references must match some provider's `provides`. |
 | `upstream` | No | Unchanged |
-| `dashboard` | No | **Only `endpoints[]` + `hint`.** Other subfields are deprecated. `endpoints` may use placeholders like `${PORT}` (expanded against the module's env at parse time). |
+| `status` | No | **Only `endpoints[]` + `hint`.** Other subfields are deprecated. `endpoints` may use placeholders like `${PORT}` (expanded against the module's env at parse time). |
 
 ### 3.4 Compact string format `provider:component[#dbname]`
 
@@ -275,7 +275,7 @@ If a module needs an exclusive version/config incompatible with the shared one �
 
 - Every item listed in `files` must exist in `tools/<name>/`.
 - **Service-type judgment is derived**: a module whose `actions` contains `start` must contain the full lifecycle set (start/stop/restart/status/logs) and `svc.sh` must implement them (grep the action-name case branches). Modules without `start` are not enforced.
-- `dashboard` allows only the `endpoints` + `hint` subfields (extras error out).
+- `status` allows only the `endpoints` + `hint` subfields (extras error out).
 - Component names in `services`/`provides` must be full names (whitelist `{postgres, redis, ...}`).
 
 ### 7.2 port-conflict (existing, retained)
@@ -303,8 +303,8 @@ Includes base's 35432/36379. Purpose labels synced to full names (`35432/tcp:pos
 
 1. The `files` union is done in `download_module` (standard set ∪ files deduplicated, standard set first), not in the parser — local, minimal intrusion. Backward-compatible with old yaml (listing all → after union still the full set, no duplicate downloads).
 2. `services` / `provides` are parsed as new list fields as usual (`AIBOX_MODULE_<name>_services` / `_provides`, space-separated scalars), for CI validation, `install` createdb decisions, and the compose wrapper's decision to add `--env-file`.
-3. `dashboard.endpoints` (existing list) retained; `dashboard.hint` (existing scalar) retained; other subfields deprecated (CI error is enough).
-4. **`esc()` escapes `$` / `"` / `` ` `` / `\` in `printvar` values**, so that `${...}` in values (e.g. `${PORT}`, `${AIBOX_POSTGRES_*}`) stays literal and is not expanded by `eval` — fixing the original parser's bug where `$VAR`/`${VAR}` in values were expanded during `eval` injection (which under `set -u` would blow up as unbound). The `${PORT}` placeholder in dashboard endpoints is therefore usable.
+3. `status.endpoints` (existing list) retained; `status.hint` (existing scalar) retained; other subfields deprecated (CI error is enough).
+4. **`esc()` escapes `$` / `"` / `` ` `` / `\` in `printvar` values**, so that `${...}` in values (e.g. `${PORT}`, `${AIBOX_POSTGRES_*}`) stays literal and is not expanded by `eval` — fixing the original parser's bug where `$VAR`/`${VAR}` in values were expanded during `eval` injection (which under `set -u` would blow up as unbound). The `${PORT}` placeholder in status endpoints is therefore usable.
 5. `module_field` still returns space-separated strings for `services`/`provides`; the caller splits them further.
 
 Zero structural breakage, minimal changes.
@@ -316,7 +316,7 @@ Zero structural breakage, minimal changes.
 ### Phase A: Remove module.yaml field redundancy (low risk)
 
 1. awk parser adds files union + parses services/provides.
-2. Each module.yaml: remove `files` standard lines, slim down `dashboard`, change `ports` purpose labels to full names.
+2. Each module.yaml: remove `files` standard lines, slim down `status`, change `ports` purpose labels to full names.
 3. CI module-lint adds new validations (including service-type derived judgment).
 4. Existing hand-written `docker-compose.shared.yml` stays for now (refactored to use variables in the next phase).
 
@@ -393,7 +393,7 @@ upstream:
   homepage: https://www.postgresql.org/
   docs: https://www.postgresql.org/docs/
 
-dashboard:
+status:
   endpoints:
     - "postgres: postgres://127.0.0.1:35432  redis: redis://127.0.0.1:36379"
   hint: "aibox base createdb <module> to create a DB; connection info in $AIBOX_HOME/base.env"
@@ -454,7 +454,7 @@ upstream:
   homepage: https://github.com/windmill-labs/windmill
   docs: https://www.windmill.dev/docs/
 
-dashboard:
+status:
   endpoints:
     - "http://127.0.0.1:${PORT}"
   hint: "credentials in CREDENTIALS.txt + .env; DB connects to shared PG via ${AIBOX_POSTGRES_HOST} (value injected from base.env)"
@@ -516,7 +516,7 @@ upstream:
   homepage: https://github.com/THU-MAIC/OpenMAIC
   docs: https://github.com/THU-MAIC/OpenMAIC#readme
 
-dashboard:
+status:
   endpoints:
     - "http://127.0.0.1:${PORT}"
   hint: "credentials in .env.local; DATABASE_URL constructed by shared.yml using ${AIBOX_POSTGRES_*} (injected from base.env)"
@@ -581,18 +581,18 @@ docker compose --env-file .env --env-file "$AIBOX_HOME/base.env" \
 
 **Implemented and verified (commit `1b3369a`):**
 
-- **Phase A**: awk `esc()` + `download_module` files union + `cmd_module_action` lists help when no action + all 5 module.yaml updated (files slimmed / dashboard slimmed / ports full names / services·provides).
+- **Phase A**: awk `esc()` + `download_module` files union + `cmd_module_action` lists help when no action + all 5 module.yaml updated (files slimmed / status slimmed / ports full names / services·provides).
 - **Phase B**: `base/lib.sh` `write_base_env()` + `base start` writes `$AIBOX_HOME/base.env`; `base/docker-compose.yml` service `pg`→`postgres`, container `aibox-base-pg`→`aibox-base-postgres`, env `AIBOX_BASE_PG_*`→`AIBOX_BASE_POSTGRES_*` (the `pg_data` volume retains old data); `bin/aibox` `ensure_services` (on install, seeing services → base start + createdb).
 - **Phase C (openmaic)**: `docker-compose.shared.yml` + heredoc `DATABASE_URL` changed to `${AIBOX_POSTGRES_*}`; `compose()`/`compose_timed()` shared-mode append `--env-file base.env`.
 - **Phase C (windmill)**: mechanical rename `aibox-base-pg`→`aibox-base-postgres` / `AIBOX_BASE_PG_*`→`AIBOX_BASE_POSTGRES_*` (CLI + shared.yml + DEVELOPMENT.md).
-- **CI**: `module-lint` expanded (files exist / lifecycle / dashboard two subfields / full-name whitelist) + §2.2 grep excludes `${...}`; new `deps-lint` job added.
+- **CI**: `module-lint` expanded (files exist / lifecycle / status two subfields / full-name whitelist) + §2.2 grep excludes `${...}`; new `deps-lint` job added.
 
 **Verified (docker):**
 
 - `aibox base start` → `aibox-base-postgres` starts + `$AIBOX_HOME/base.env` written; old DBs (`testdb`/`windmill`) retained via the `pg_data` volume.
 - `docker compose --env-file base.env -f … config` → `${AIBOX_POSTGRES_*}` interpolated to `postgres://aibox:aibox@aibox-base-postgres:5432/<db>`; without `--env-file` they are empty — proving base.env is the single source.
 - openmaic's real shared.yml + base.env → `config` renders `DATABASE_URL` correctly parsed, `replicas:0`, joins `aibox-base`.
-- `bash -n` all pass; bash 3.2 gotchas #1 #8 scan clean; `aibox list/ports/dashboard/dev-guide` regress normally.
+- `bash -n` all pass; bash 3.2 gotchas #1 #8 scan clean; `aibox list/ports/status/dev-guide` regress normally.
 
 **Remaining (the "separate iteration" noted in design §9; not in scope this round):**
 

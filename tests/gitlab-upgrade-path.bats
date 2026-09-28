@@ -134,8 +134,8 @@ STUB
   rm -rf "$root"
 }
 
-@test "render_dashboard: no docker → degrades, exit 0 under set -euo pipefail" {
-  run bash -c "set -euo pipefail; PATH=/usr/bin:/bin; . '$REPO_ROOT/tools/gitlab/lib.sh'; render_dashboard"
+@test "render_status: no docker → degrades, exit 0 under set -euo pipefail" {
+  run bash -c "set -euo pipefail; PATH=/usr/bin:/bin; . '$REPO_ROOT/tools/gitlab/lib.sh'; render_status"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"not running (aibox gitlab start)"* ]] || false
 }

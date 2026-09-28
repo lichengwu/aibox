@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # CLI consistency (0.18.0) — the instruction-system audit turned into guards.
-# Found & fixed: per-verb help existed only for one verb (install/check/dashboard
+# Found & fixed: per-verb help existed only for one verb (install/check/status
 # treated `--help` as a MODULE name and even hit the registry; the rest reported
 # an unknown option, exit 1), usage() drifted from the real sub-verbs, usage
 # errors exited 1 while the spec documents 2, preflight failures exited 1 while
@@ -28,7 +28,7 @@ teardown() { [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true; }
 
 @test "help: every verb answers --help with its own usage block, exit 0" {
   local v out
-  for v in install uninstall update upgrade check dashboard autoclean proxy version; do
+  for v in install uninstall update upgrade check status autoclean proxy version; do
     run bash "$AIBOX_BIN" "$v" --help
     [ "$status" -eq 0 ] || { echo "verb=${v} exit=${status}"; echo "$output"; false; }
     out="$(head -1 <<<"$output")"
@@ -69,7 +69,7 @@ teardown() { [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true; }
 @test "help drift: every dispatch arm has a _verb_help block and is listed in usage()" {
   local verbs v
   verbs="$(sed -n '/# ---------- dispatch ----------/,/^  case "\${1:-help}" in/p' "$AIBOX_BIN" \
-    | grep -oE '^[[:space:]]+(install\|uninstall\|update\|upgrade\|check\|dashboard\|autoclean\|proxy\|version)[^)]*\)' \
+    | grep -oE '^[[:space:]]+(install\|uninstall\|update\|upgrade\|check\|status\|autoclean\|proxy\|version)[^)]*\)' \
     | tr -d ' )' | tr '|' '\n' | sort -u)"
   for v in ${verbs}; do
     # a help block exists for it…
@@ -78,7 +78,7 @@ teardown() { [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true; }
   done
   #… and the overview lists each verb
   local overview; overview="$(bash "$AIBOX_BIN" help 2>&1)"
-  for v in install uninstall update upgrade check dashboard autoclean proxy version; do
+  for v in install uninstall update upgrade check status autoclean proxy version; do
     [[ "$overview" == *"${v}"* ]] || { echo "usage() does not mention ${v}"; false; }
   done
 }
@@ -177,7 +177,7 @@ YAML
   for f in "$REPO_ROOT"/tools/*/module.yaml; do
     m="$(basename "$(dirname "$f")")"
     acts="$(awk '/^actions:/{f=1;next} /^[a-z_]+:/{f=0} f&&/^  - /{print $2}' "$f")"
-    for need in start stop restart status dashboard logs doctor; do
+    for need in start stop restart status status logs doctor; do
       printf '%s\n' ${acts} | grep -qx "$need" || { echo "${m}: missing action ${need}"; false; }
     done
   done
@@ -202,7 +202,7 @@ YAML
   mkdir -p "$mod"
   cp "$REPO_ROOT/tools/_shared/common.sh" "$mod/_common.sh"
   printf 'name: statmod\nversion: 1.0.0\ndescription: "d"\ndir: tools/statmod\nports:\n  - 19/tcp:x\n' >"$mod/module.yaml"
-  printf '%s\n' 'dashboard_info() { printf "version=1.2.3\nstate=stopped\nendpoint=http://127.0.0.1:19\n"; }' >"$mod/lib.sh"
+  printf '%s\n' 'status_info() { printf "version=1.2.3\nstate=stopped\nendpoint=http://127.0.0.1:19\n"; }' >"$mod/lib.sh"
   run bash -c "
     export AIBOX_MODULE=statmod AIBOX_HOME='$AIBOX_HOME'
     . '$mod/_common.sh'

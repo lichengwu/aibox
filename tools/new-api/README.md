@@ -9,7 +9,7 @@ Upstream: [QuantumNous/new-api](https://github.com/QuantumNous/new-api) · docs:
 ```text
 aibox install new-api
 aibox new-api start|stop|restart|status|logs|credentials
-aibox new-api dashboard          # endpoint + health
+aibox new-api status          # endpoint + health
 aibox update new-api [--restart|--no-restart]
 aibox upgrade new-api [--check]  # float to a newer upstream image tag
 aibox uninstall new-api [--purge]
@@ -76,7 +76,7 @@ refuses auto-jumping 0.13.x → 1.0.0-rc). Auto-rollback on failed health check.
 ## Diagnostics
 
 `aibox new-api doctor` — declared deps, docker daemon reachability, the module's own
-reported state (`dashboard_info`) and its declared port listeners. Shared
+reported state (`status_info`) and its declared port listeners. Shared
 implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
 exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.
 
@@ -87,7 +87,6 @@ exit `0` healthy · `3` a dependency is missing · `30` the service is not ready
 | `stop` | Stop the container |
 | `restart` | Recreate the container |
 | `status` | Container + API health + rich view |
-| `dashboard` | Alias of status |
 | `doctor` | Deep diagnostics: deps, docker, state, declared ports |
 | `logs` | Container logs |
 | `credentials` | First login hint + secret location |

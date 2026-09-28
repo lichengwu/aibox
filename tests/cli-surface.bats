@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# CLI v2.1 surface: migration guidance for merged commands, dashboard modes,
+# CLI v2.1 surface: migration guidance for merged commands, status modes,
 # proxy check single-target routing, reserved module name 'self'.
 # Hermetic: sandbox AIBOX_HOME/BIN_DIR + file:// registry (no network, no docker needed).
 
@@ -46,8 +46,8 @@ teardown() {
   [[ "$output" == *"aibox check <module>|self"* ]]
 }
 
-@test "dashboard --available lists the registry catalog (file:// source)" {
-  run bash "$REPO_ROOT/bin/aibox" dashboard --available
+@test "status --available lists the registry catalog (file:// source)" {
+  run bash "$REPO_ROOT/bin/aibox" status --available
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   # header since the TUI redesign (66d6175): "aibox module catalog" + registry line
   [[ "$output" == *"aibox module catalog"* ]]
@@ -56,7 +56,7 @@ teardown() {
   [[ "$output" == *"gitlab"* ]]
 }
 
-@test "dashboard overview: local-first (dead network OK), per-profile sections, module blocks" {
+@test "status overview: local-first (dead network OK), per-profile sections, module blocks" {
   # installed state from installed.sh + module caches — NO registry/network.
   # Point AIBOX_RAW at a dead host: the overview must still render.
   export AIBOX_RAW="https://dead.invalid/aibox"
@@ -64,17 +64,17 @@ teardown() {
 AIBOX_INSTALLED_base="1.2.1"
 AIBOX_INSTALLED_new_api__work="1.0.1"
 EOF
-  # module cache (lib.sh with dashboard_info) for base
+  # module cache (lib.sh with status_info) for base
   mkdir -p "$AIBOX_HOME/modules/base"
   # state=ok pins the header icon (without it the fallback port-probe is
   # environment-dependent: file:// registry provides base's ports → on a
   # docker-less CI host 32432 never listens → ○ stopped, and the ✓ asserts fail)
-  printf 'dashboard_info() { echo "state=ok"; echo "endpoint=pg://127.0.0.1:32432"; echo "health=ok"; }\n' \
+  printf 'status_info() { echo "state=ok"; echo "endpoint=pg://127.0.0.1:32432"; echo "health=ok"; }\n' \
     >"$AIBOX_HOME/modules/base/lib.sh"
   mkdir -p "$AIBOX_HOME/modules/new-api"
-  printf 'dashboard_info() { echo "endpoint=http://127.0.0.1:30300"; echo "credential=first login"; echo "version=v0.13.2"; }\n' \
+  printf 'status_info() { echo "endpoint=http://127.0.0.1:30300"; echo "credential=first login"; echo "version=v0.13.2"; }\n' \
     >"$AIBOX_HOME/modules/new-api/lib.sh"
-  run bash "$REPO_ROOT/bin/aibox" dashboard
+  run bash "$REPO_ROOT/bin/aibox" status
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   # two profile sections (base + named profile), grouped separately
   [[ "$output" == *"profile base"* ]] || false
@@ -96,19 +96,19 @@ EOF
   [[ "$output" != *"health "* ]] || false
 }
 
-@test "dashboard overview: empty state + residue section for not-installed leftovers" {
+@test "status overview: empty state + residue section for not-installed leftovers" {
   # the residue scan is gated on the docker CLI (manager-side docker probes);
   # skip where docker is absent (minimal containers) — CI runners carry it
   command -v docker >/dev/null 2>&1 || skip "no docker CLI (residue scan needs it)"
   export AIBOX_RAW="https://dead.invalid/aibox"
-  export AIBOX_DASH_UPDATE_TIMEOUT=1
+  export AIBOX_STATUS_UPDATE_TIMEOUT=1
   # base installed; gitlab NOT installed but with a residue dir → residue section
   cat >"$AIBOX_HOME/installed.sh" <<'EOF'
 AIBOX_INSTALLED_base="1.2.1"
 EOF
   mkdir -p "$AIBOX_HOME/modules/base" "$AIBOX_HOME/apps/gitlab"
-  printf 'dashboard_info() { echo "endpoint=pg://x"; }\n' >"$AIBOX_HOME/modules/base/lib.sh"
-  run bash "$REPO_ROOT/bin/aibox" dashboard
+  printf 'status_info() { echo "endpoint=pg://x"; }\n' >"$AIBOX_HOME/modules/base/lib.sh"
+  run bash "$REPO_ROOT/bin/aibox" status
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"✓ base"* ]] || false
   [[ "$output" == *"── residue"* ]] || false
@@ -117,15 +117,15 @@ EOF
   [[ "$output" != *"✓ gitlab"* ]] || false
 }
 
-@test "dashboard detail: local-first — installed module renders with a dead registry" {
+@test "status detail: local-first — installed module renders with a dead registry" {
   export AIBOX_RAW="https://dead.invalid/aibox"
   cat >"$AIBOX_HOME/installed.sh" <<'EOF'
 AIBOX_INSTALLED_base="1.2.1"
 EOF
   mkdir -p "$AIBOX_HOME/modules/base"
-  printf 'dashboard_info() { echo "endpoint=pg://127.0.0.1:32432"; echo "health=ok"; }\n' \
+  printf 'status_info() { echo "endpoint=pg://127.0.0.1:32432"; echo "health=ok"; }\n' \
     >"$AIBOX_HOME/modules/base/lib.sh"
-  run bash "$REPO_ROOT/bin/aibox" dashboard base
+  run bash "$REPO_ROOT/bin/aibox" status base
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   # keyline: dim module-version fallback (no version= in this mock), rule,
   # health merged into the endpoint row, sunk module row
@@ -294,19 +294,19 @@ EOF2
 }
 
 
-@test "dashboard overview: state= contract renders the composite icon + word" {
-  export AIBOX_DASH_UPDATE_TIMEOUT=1
+@test "status overview: state= contract renders the composite icon + word" {
+  export AIBOX_STATUS_UPDATE_TIMEOUT=1
   cat >"$AIBOX_HOME/installed.sh" <<'EOF2'
 AIBOX_INSTALLED_new_api="1.1.1"
 EOF2
   # one module, all four contract states via a state-file-driven mock
   mkdir -p "$AIBOX_HOME/modules/new-api"
-  printf 'dashboard_info() { echo "state=$(cat \"$MOCK_STATE\" 2>/dev/null)"; echo "endpoint=http://127.0.0.1:30300"; }\n' \
+  printf 'status_info() { echo "state=$(cat \"$MOCK_STATE\" 2>/dev/null)"; echo "endpoint=http://127.0.0.1:30300"; }\n' \
     >"$AIBOX_HOME/modules/new-api/lib.sh"
   for st in ok starting stopped na; do
     printf '%s' "$st" >"$AIBOX_HOME/mock_state"
     export MOCK_STATE="$AIBOX_HOME/mock_state"
-    run bash "$REPO_ROOT/bin/aibox" dashboard
+    run bash "$REPO_ROOT/bin/aibox" status
     [ "$status" -eq 0 ] || { echo "state=$st"; echo "$output"; false; }
     case "$st" in
     ok)
@@ -332,16 +332,16 @@ EOF2
   done
 }
 
-@test "dashboard overview: stale cache without state= falls back to the port heuristic" {
-  export AIBOX_DASH_UPDATE_TIMEOUT=1
+@test "status overview: stale cache without state= falls back to the port heuristic" {
+  export AIBOX_STATUS_UPDATE_TIMEOUT=1
   cat >"$AIBOX_HOME/installed.sh" <<'EOF2'
 AIBOX_INSTALLED_new_api="1.1.1"
 EOF2
   # no state=, no module.yaml → no ports → plain ✓ (deterministic on any host)
   mkdir -p "$AIBOX_HOME/modules/new-api"
-  printf 'dashboard_info() { echo "endpoint=http://127.0.0.1:30300"; }\n' \
+  printf 'status_info() { echo "endpoint=http://127.0.0.1:30300"; }\n' \
     >"$AIBOX_HOME/modules/new-api/lib.sh"
-  run bash "$REPO_ROOT/bin/aibox" dashboard
+  run bash "$REPO_ROOT/bin/aibox" status
   [ "$status" -eq 0 ] || false
   [[ "$output" == *"✓ new-api 1.1.1"* ]] || false
   [[ "$output" != *"· ok"* && "$output" != *"· stopped"* ]] || false

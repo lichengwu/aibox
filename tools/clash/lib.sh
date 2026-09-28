@@ -400,7 +400,7 @@ reload_config() {
     log "Reloaded config" || warn "Reload failed (mihomo not running?)"
 }
 
-# ---------- dashboard (the module's rich view: state + nodes + latency) ----------
+# ---------- status (the module's rich view: state + nodes + latency) ----------
 # Nodes come from mihomo's own proxy-provider view (the kernel parses the
 # subscription, tests every node, and keeps the latency history — aibox only
 # RENDERS it). Parsed without jq (project rule): split the provider JSON on
@@ -438,8 +438,8 @@ _nodes_lines() { # → "delay|alive|name" lines, sorted by delay (dead last)
     }' | sort -t'|' -k1,1n
 }
 
-# Render the module dashboard (invoked by `aibox clash dashboard`).
-render_dashboard() {
+# Render the module status (invoked by `aibox clash status`).
+render_status() {
   state_load
   local mode="${CLASH_MODE:-internal}" egress_port="${CLASH_PORT:-31790}" aver state
   [ "${mode}" = "external" ] && egress_port="${CLASH_EXT_PORT:-${CLASH_PORT}}"
@@ -454,28 +454,28 @@ render_dashboard() {
     aver=""
     state=""
   fi
-  dash_header "clash" "${aver}" "${state}"
+  status_header "clash" "${aver}" "${state}"
 
   # --- state rows ---
   if [ "${mode}" = "external" ]; then
     local ext="$(detect_external_clash | head -1)" app="clash kernel"
     [ -n "${ext}" ] && app="$(ext_app_name "${ext#*\t}")"
-    dash_row "kernel" "${app} on 127.0.0.1:${egress_port} (external clash client — node control via its own app)"
+    status_row "kernel" "${app} on 127.0.0.1:${egress_port} (external clash client — node control via its own app)"
   elif kernel_running; then
-    dash_row "kernel" "mihomo v${KERNEL_TAG:-unknown} ${C_DIM:-}·${C_RST:-} pid $(cat "$(pid_file)" 2>/dev/null)"
+    status_row "kernel" "mihomo v${KERNEL_TAG:-unknown} ${C_DIM:-}·${C_RST:-} pid $(cat "$(pid_file)" 2>/dev/null)"
   else
-    dash_row "kernel" "${C_YEL:-}not running (aibox clash on)${C_RST:-}"
+    status_row "kernel" "${C_YEL:-}not running (aibox clash on)${C_RST:-}"
   fi
-  dash_row "egress" "127.0.0.1:${egress_port}"
+  status_row "egress" "127.0.0.1:${egress_port}"
   if [ "${mode}" = "internal" ]; then
-    dash_row "api" "127.0.0.1:${CLASH_API_PORT} (secret $([ -n "${CLASH_SECRET}" ] && printf 'set' || printf 'unset'))"
+    status_row "api" "127.0.0.1:${CLASH_API_PORT} (secret $([ -n "${CLASH_SECRET}" ] && printf 'set' || printf 'unset'))"
   fi
   if [ -n "${SUB_URL:-}" ]; then
     local host="${SUB_URL#*://}"
     host="${host%%/*}"
-    dash_row "sub" "${host} ${C_DIM:-}·${C_RST:-} refreshed $([ -n "${LAST_REFRESH:-}" ] && [ "${LAST_REFRESH}" != "0" ] && date -r "${LAST_REFRESH}" '+%Y-%m-%d %H:%M' 2>/dev/null || echo 'never')"
+    status_row "sub" "${host} ${C_DIM:-}·${C_RST:-} refreshed $([ -n "${LAST_REFRESH:-}" ] && [ "${LAST_REFRESH}" != "0" ] && date -r "${LAST_REFRESH}" '+%Y-%m-%d %H:%M' 2>/dev/null || echo 'never')"
   else
-    dash_row "sub" "${C_YEL:-}none (aibox clash set <subscription-url>)${C_RST:-}"
+    status_row "sub" "${C_YEL:-}none (aibox clash set <subscription-url>)${C_RST:-}"
   fi
 
   # --- nodes (internal mode only — external mode has no API access) ---
@@ -518,7 +518,7 @@ NODES2
     echo
     printf '  %snode list unavailable in external mode (managed by the clash app itself)\n' "${C_DIM:-}"
   fi
-  dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/clash/"
+  status_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/clash/"
 }
 
 # Have mihomo immediately fetch the subscription (skip cache).
@@ -605,8 +605,8 @@ probe_via_clash() {
   fi
 }
 
-# Dashboard interface (called by `aibox dashboard`): outputs endpoint/credential/log/health.
-dashboard_info() {
+# Status interface (called by `aibox status`): outputs endpoint/credential/log/health.
+status_info() {
   state_load
   # app version: the deployed mihomo kernel tag (internal mode only —
   # external mode has no kernel of ours)

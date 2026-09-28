@@ -76,7 +76,7 @@ FILES
   for f in "${REPO_ROOT}"/tools/*/module.yaml; do
     m="$(basename "$(dirname "${f}")")"
     acts="$(awk '/^actions:/{f=1;next} /^[a-z_]+:/{f=0} f&&/^  - /{print $2}' "${f}")"
-    for need in doctor dashboard logs; do
+    for need in doctor status logs; do
       printf '%s\n' ${acts} | grep -qx "${need}" || continue
       grep -q "${need}" "${REPO_ROOT}/tools/${m}/README.md" || bad="${bad} ${m}:${need}"
     done

@@ -1,5 +1,5 @@
 name: base
-version: 1.9.1
+version: 1.10.0
 module_iface: 1
 description: "Shared base components (PostgreSQL 18 + Redis 7); each module gets its own DB"
 platform: ""
@@ -55,7 +55,6 @@ actions:
   - stop
   - restart
   - status
-  - dashboard
   - doctor
   - logs
   - create
@@ -86,7 +85,6 @@ usage:
   stop: "Stop containers (data preserved)"
   restart: "Stop + start"
   status: "Container states + PG/Redis rich view"
-  dashboard: "Alias of status"
   doctor: "Deep diagnostics: deps, docker, state, declared ports"
   logs: "Container logs"
   create: "<component> <resource> — create a resource (e.g. create postgres dify)"
@@ -100,7 +98,7 @@ upstream:
   homepage: https://www.postgresql.org/
   docs: https://www.postgresql.org/docs/
 
-dashboard:
+status:
   endpoints:
     - "postgres: postgres://127.0.0.1:32432  redis: redis://127.0.0.1:32379"
   hint: "aibox base create postgres <module> to create a DB; connection info in $AIBOX_HOME/base.env"

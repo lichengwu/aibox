@@ -35,14 +35,14 @@ if [ -z "${CLI}" ]; then
   die "openmaic command not found, run first: aibox install openmaic"
 fi
 
-# dashboard maps to the CLI's own status (dispatch-only module — the CLI's
+# status maps to the CLI's own status (dispatch-only module — the CLI's
 # output IS the rich view; no separate render here)
 case "${action}" in
 # Standard lifecycle aliases: dispatch CLIs expose their own verbs (openmaic uses
 # up/down), but `aibox <module> start|stop` must work everywhere (spec §CLI surface).
 start)  action="up" ;;
 stop)   action="down" ;;
-dashboard) action="status" ;;
+status) action="status" ;;
 esac
 
 exec "${CLI}" "${action}" "$@"

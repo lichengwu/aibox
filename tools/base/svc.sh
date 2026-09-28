@@ -15,8 +15,8 @@ restart)
   cmd_stop
   cmd_start
   ;;
-# dashboard is an alias of status (merged 2026-09: one "show state" verb —
-# operational facts + the rich view; the manager-level aibox dashboard stays separate)
+# status is an alias of status (merged 2026-09: one "show state" verb —
+# operational facts + the rich view; the manager-level aibox status stays separate)
 # config: base.env is the store (spec §Configuration). set offers the apply
 # (restart recreates the containers; consuming modules re-read base.env at
 # their next start).
@@ -26,9 +26,9 @@ config)
     CFG_APPLY="aibox base restart" \
     cfg_action "$@"
   ;;
-status | dashboard)
+status)
   cmd_status
-  render_dashboard
+  render_status
   ;;
 logs)
   ensure_compose

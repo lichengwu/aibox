@@ -1,5 +1,5 @@
 # ---------- docker hub tag resolution (the TAGS family) ----------
-# Shared: both the manager (component upgrades, dashboards) and module hooks
+# Shared: both the manager (component upgrades, statuss) and module hooks
 # (upgrade stanzas) resolve a repo's tag list through the same direct →
 # local-mirror → pool order the image pulls use, with the sticky winner cached
 # in $AIBOX_HOME/dockerpool.cache.

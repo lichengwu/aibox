@@ -1,6 +1,6 @@
 # ---------- unknown-argument UX (suggestions + one consistent hint) ----------
 # Verbs the dispatcher understands (typo suggestions for the first arg).
-AIBOX_VERBS="install uninstall update upgrade check dashboard autoclean proxy clash help version"
+AIBOX_VERBS="install uninstall update upgrade check status autoclean proxy clash help version"
 
 # "Close enough to be a typo" for short ASCII words: prefix either way, one
 # substitution, or one transposition. Cheaper than a full Levenshtein and
@@ -41,13 +41,13 @@ die_unknown_module() { # $1=typed name
   local n="$1" sug
   sug="$(_suggest_word "$n" ${AIBOX_VERBS} || true)"
   if [ -n "$sug" ]; then
-    usage_die "Unknown command or module: ${n} — did you mean: aibox ${sug}?  (verbs: aibox help · modules: aibox dashboard --available)"
+    usage_die "Unknown command or module: ${n} — did you mean: aibox ${sug}?  (verbs: aibox help · modules: aibox status --available)"
   fi
   sug="$(_suggest_word "$n" ${AIBOX_MODULES:-} || true)"
   if [ -n "$sug" ]; then
-    usage_die "Unknown module: ${n} — did you mean: aibox ${sug}?  (catalog: aibox dashboard --available)"
+    usage_die "Unknown module: ${n} — did you mean: aibox ${sug}?  (catalog: aibox status --available)"
   fi
-  usage_die "Unknown module: ${n} (aibox dashboard --available shows available modules)"
+  usage_die "Unknown module: ${n} (aibox status --available shows available modules)"
 }
 
 # Installed-module version ("" when absent) — for the re-install note.
@@ -108,7 +108,7 @@ install hook. Declared service deps are installed FIRST (recursive, cycle-guarde
   AIBOX_PM_TIMEOUT=<secs> bound package-manager auto-install (default 600; 0 = off)
   AIBOX_STRICT_SERVICES=1 exit non-zero when a service dep did not start
 
-related: aibox check <module> (preflight dry-run) · aibox dashboard <module>
+related: aibox check <module> (preflight dry-run) · aibox status <module>
 EOF
     ;;
   uninstall)
@@ -158,7 +158,7 @@ and records a rollback point. Multi-hop modules (gitlab) walk the required stops
   --yes, -y       skip the confirmation
 
 exit codes: 10 = upgrade failed but rolled back · 20 = manual intervention needed
-related: aibox dashboard <module> (shows the recorded state)
+related: aibox status <module> (shows the recorded state)
 EOF
     ;;
   check)
@@ -175,9 +175,9 @@ docker, node/npm, disk). Exit: 3 = hard requirement missing · 4 = precheck fail
 related: aibox install <module> (which runs the same preflight)
 EOF
     ;;
-  dashboard)
+  status)
     cat <<'EOF'
-usage: aibox dashboard [--available|--json] [<module>]
+usage: aibox status [--available|--json] [<module>]
 
 No argument: every installed module per profile — app version, state, endpoint,
 credentials, ports + listeners, residue, and the async "updates available" list.
@@ -190,7 +190,7 @@ credentials, ports + listeners, residue, and the async "updates available" list.
   <module>        detail + health: app version, endpoint probe, auth, log path,
                   port listeners, config-key count, upgrade/rollback state
 
-The dashboard is the authoritative view for DERIVED values (profile ports,
+The status is the authoritative view for DERIVED values (profile ports,
 container names, env paths) — docs deliberately point here instead of hardcoding.
 EOF
     ;;
@@ -250,7 +250,7 @@ the static proxy for the whole toolkit.
 
   set <sub-url>       store the subscription + generate the config
   on | off            start/stop the kernel (start/stop/restart also work)
-  status              state + nodes + latency (dashboard view)
+  status              state + nodes + latency (rich view)
   refresh             re-fetch the subscription
   select <node>       switch the active node
   test [url]          connectivity through the pool
@@ -263,7 +263,7 @@ EOF
     cat <<'EOF'
 usage: aibox version   (also: -v, --version)
 
-Print the manager version. Module versions: aibox dashboard --available.
+Print the manager version. Module versions: aibox status --available.
 EOF
     ;;
   help)

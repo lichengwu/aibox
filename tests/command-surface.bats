@@ -69,12 +69,12 @@ teardown() {
   grep -q '^AIBOX_PROXY_URL=""$' "$AIBOX_HOME/config"
 }
 
-@test "ports: retired word falls through (dashboard is the port surface)" {
+@test "ports: retired word falls through (status is the port surface)" {
   run bash "$REPO_ROOT/bin/aibox" ports
   [ "$status" -ne 0 ]
   [[ "$output" == *"Unknown"* ]] || false
-  # the dashboard remains the authoritative port view and says so in its help
-  run bash "$REPO_ROOT/bin/aibox" dashboard --help
+  # the status remains the authoritative port view and says so in its help
+  run bash "$REPO_ROOT/bin/aibox" status --help
   [[ "$output" == *"port"* ]] || false
 }
 

@@ -1,5 +1,5 @@
 name: openmaic
-version: 1.6.1
+version: 1.7.0
 module_iface: 1
 description: "OpenMAIC ops CLI (install/upgrade/backup/doctor)"
 platform: ""
@@ -14,7 +14,7 @@ ports:
   - 31140/tcp:app
 # NOTE: no 5432 entry — upstream's postgres service has no host port mapping
 # (internal to the compose network; shared mode uses the base PG). A declared
-# port is shown by `aibox dashboard` and reserved by the port-conflict check,
+# port is shown by `aibox status` and reserved by the port-conflict check,
 # so declaring one nothing publishes is drift (caught by tests/docs-config-drift.bats).
 
 files:
@@ -51,7 +51,6 @@ actions:
   - start
   - stop
   - status
-  - dashboard
   - health
   - doctor
   - version
@@ -96,7 +95,6 @@ usage:
   status: "Version / health / containers / resources overview"
   start: "Alias of up (standard lifecycle)"
   stop: "Alias of down (standard lifecycle)"
-  dashboard: "Same as status (dispatched to the CLI)"
   health: "[--wait N] — health check (exit code is probe-friendly)"
   doctor: "Environment self-check"
   version: "[--check] — version info / upstream release check"
@@ -121,7 +119,7 @@ upstream:
   homepage: https://github.com/THU-MAIC/OpenMAIC
   docs: https://github.com/THU-MAIC/OpenMAIC#readme
 
-dashboard:
+status:
   endpoints:
     - "http://127.0.0.1:${PORT}"
   hint: "Credentials in .env.local; DATABASE_URL built by shared.yml from ${AIBOX_POSTGRES_*} (injected via base.env)"

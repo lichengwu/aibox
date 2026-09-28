@@ -34,7 +34,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   # ---------- dispatch ----------
   # Help first, uniformly: `aibox <verb> --help|-h` (any position) and
   # `aibox help <verb>` render that verb's block and exit 0. Before this, only
-  # purge answered --help; install/check/dashboard treated it as a MODULE name
+  # purge answered --help; install/check/status treated it as a MODULE name
   # (fetching the registry) and the rest as an unknown option.
   case "${1:-}" in
     help|-h|--help)
@@ -42,7 +42,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
         _verb_help "${2}" || { usage; exit 2; }
         exit 0
       fi ;;
-    install|uninstall|update|upgrade|check|dashboard|autoclean|proxy|version)
+    install|uninstall|update|upgrade|check|status|autoclean|proxy|version)
       case "${2:-}" in -h|--help) _verb_help "$1"; exit 0 ;; esac ;;
   esac
 
@@ -53,14 +53,17 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     upgrade)          shift; cmd_upgrade "$@" ;;
     check)            shift; cmd_check "$@" ;;
     autoclean)        shift; cmd_autoclean "$@" ;;
-    dashboard)        shift; cmd_dashboard "$@" ;;
+    status)        shift; cmd_status "$@" ;;
+    dashboard)
+      # removed in 0.26.0 — merged into `status` (its module-level rich views too)
+      usage_die "the 'dashboard' verb was merged into 'status' — use: aibox status [<module>]" ;;
     proxy)            shift; cmd_proxy "$@" ;;
-    # hidden internal verb: the dashboard's async latest-version probe runs as
-    # a SEPARATE process (bash $0 __dash-probe …) — gh_pool_fetch's race
+    # hidden internal verb: the status's async latest-version probe runs as
+    # a SEPARATE process (bash $0 __status-probe …) — gh_pool_fetch's race
     # semantics misbehave inside nested background subshells (measured: silent
     # instant failure); a fresh process runs the pool exactly like any CLI
     # invocation. Not in help; harmless if invoked directly.
-    __dash-probe)     shift; _dash_probe_cmd "$@" ;;
+    __status-probe)     shift; _status_probe_cmd "$@" ;;
     version|-v|--version) echo "aibox $AIBOX_VERSION" ;;
     help|-h|--help)   usage ;;
     *)

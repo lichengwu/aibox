@@ -16,7 +16,7 @@ aibox upgrade dify [--check] [--to <ver>] [--yes]
                                   # bump the deployed dify VERSION without an aibox release (see below)
 aibox uninstall dify [--purge]    # default: stop + remove program files (data kept); --purge: also wipe volumes
 aibox check dify                  # run the preflight (docker pull, disk, images)
-aibox dashboard dify              # version + endpoint + health
+aibox status dify              # version + endpoint + health
 ```
 
 ## How it works
@@ -162,7 +162,7 @@ the matching service + env (model the block on dify's upstream compose).
 ## Diagnostics
 
 `aibox dify doctor` — declared deps, docker daemon reachability, the module's own
-reported state (`dashboard_info`) and its declared port listeners. Shared
+reported state (`status_info`) and its declared port listeners. Shared
 implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
 exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.
 
@@ -173,7 +173,6 @@ exit `0` healthy · `3` a dependency is missing · `30` the service is not ready
 | `stop` | Stop containers |
 | `restart` | Recreate containers (applies .env changes) |
 | `status` | Container + web health + stack rich view |
-| `dashboard` | Alias of status |
 | `doctor` | Deep diagnostics: deps, docker, state, declared ports |
 | `logs` | Container logs |
 | `credentials` | Show the admin INIT_PASSWORD |

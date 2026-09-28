@@ -387,7 +387,7 @@ cmd_restore() { # [$1=file] (default: newest dump)
 # ${AIBOX_BASE_PG_IMAGE:-postgres:18}); this verb floats them with the same safety
 # shape as the manager's app upgrades: dump first → rewrite the pin → recreate →
 # verify → roll back the pin on failure. The state goes to the SAME file the
-# manager uses ($AIBOX_HOME/upgrades/base.state), so `aibox dashboard base` shows
+# manager uses ($AIBOX_HOME/upgrades/base.state), so `aibox status base` shows
 # it and `aibox upgrade base --rollback` restores the same pin file.
 _pin_get() { # $1=KEY $2=file → value ("" when absent)
   [ -f "$2" ] || return 0
@@ -527,8 +527,8 @@ cmd_createdb() {
   log "Database ${dbname} ready (shared PG ${PG_HOST}:${PG_PORT})"
 }
 
-# ---------- Dashboard interface ----------
-dashboard_info() {
+# ---------- Status interface ----------
+status_info() {
   # app version: both components' image tags (multi-component module — the
   # keyline header omits it, the generic manager views render the row)
   local v="" pg_tag rd_tag
@@ -538,7 +538,7 @@ dashboard_info() {
   [ -n "${v}" ] && echo "version=${v}"
   echo "endpoint=pg://${PG_HOST}:${PG_PORT} (user=${PG_USER}) + redis://${REDIS_HOST}:${REDIS_PORT}"
   echo "credential=PG user/password ${PG_USER}/* (override via AIBOX_BASE_POSTGRES_PASSWORD; consuming modules see ${ENV_FILE})"
-  # state= is the machine-readable contract (aibox dashboard renders the icon:
+  # state= is the machine-readable contract (aibox status renders the icon:
   # ok=✓ / starting=⚠ / stopped=○); local docker probes only (local-first holds).
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${POSTGRES_CONTAINER}"; then
     if docker exec "${POSTGRES_CONTAINER}" pg_isready -U "${PG_USER}" >/dev/null 2>&1; then
@@ -554,8 +554,8 @@ dashboard_info() {
   fi
 }
 
-# ---------- dashboard (the module's rich view) ----------
-render_dashboard() {
+# ---------- status (the module's rich view) ----------
+render_status() {
   # keyline header: no single app version (multi-component: the rows carry the
   # per-component image tags); state from both containers
   local state=""
@@ -571,10 +571,10 @@ render_dashboard() {
       state="stopped"
     fi
   fi
-  dash_header "base" "" "${state}"
+  status_header "base" "" "${state}"
   if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-    dash_row "state" "docker daemon unreachable"
-    dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/base/"
+    status_row "state" "docker daemon unreachable"
+    status_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/base/"
     return 0
   fi
   # PG
@@ -584,7 +584,7 @@ render_dashboard() {
   if [ -n "${pg_up}" ]; then
     local pg_status
     pg_status="$(docker ps --filter "name=${POSTGRES_CONTAINER}" --format '{{.Status}}' 2>/dev/null | head -1)"
-    dash_row "postgres" "${pg_ver} ${C_DIM:-}·${C_RST:-} 127.0.0.1:${PG_PORT} ${C_DIM:-}·${C_RST:-} ${pg_status:-up}"
+    status_row "postgres" "${pg_ver} ${C_DIM:-}·${C_RST:-} 127.0.0.1:${PG_PORT} ${C_DIM:-}·${C_RST:-} ${pg_status:-up}"
     # databases + sizes (the module's own + consumers')
     printf '  %s%-10s\n' "${C_DIM:-}" "databases:"
     while IFS='|' read -r db size; do
@@ -594,7 +594,7 @@ render_dashboard() {
 $(docker exec "${POSTGRES_CONTAINER}" psql -U "${PG_USER}" -tAc "SELECT datname || '|' || pg_size_pretty(pg_database_size(datname)) FROM pg_database WHERE datistemplate = false ORDER BY pg_database_size(datname) DESC" 2>/dev/null || true)
 DASHDB
   else
-    dash_row "postgres" "${C_YEL:-}not running (aibox base start)${C_RST:-}"
+    status_row "postgres" "${C_YEL:-}not running (aibox base start)${C_RST:-}"
   fi
   # Redis
   local rd_up="" rd_ver="" rd_keys=""
@@ -602,17 +602,17 @@ DASHDB
   rd_ver="$(docker inspect -f '{{.Config.Image}}' "${REDIS_CONTAINER}" 2>/dev/null || echo redis)"
   if [ -n "${rd_up}" ]; then
     rd_keys="$(docker exec "${REDIS_CONTAINER}" redis-cli dbsize 2>/dev/null || echo '?')"
-    dash_row "redis" "${rd_ver} ${C_DIM:-}·${C_RST:-} 127.0.0.1:${REDIS_PORT} ${C_DIM:-}·${C_RST:-} ${rd_keys} keys"
+    status_row "redis" "${rd_ver} ${C_DIM:-}·${C_RST:-} 127.0.0.1:${REDIS_PORT} ${C_DIM:-}·${C_RST:-} ${rd_keys} keys"
   else
-    dash_row "redis" "${C_YEL:-}not running${C_RST:-}"
+    status_row "redis" "${C_YEL:-}not running${C_RST:-}"
   fi
   # The profile-DERIVED values that docs must not hardcode: container names,
   # the env file consumers read (base-<profile>.env) and the deploy root.
-  # `aibox dashboard base` is the authoritative view (AGENTS.md/docs convention).
-  dash_row "containers" "${POSTGRES_CONTAINER} · ${REDIS_CONTAINER}"
-  dash_row "env" "${ENV_FILE}"
-  dash_row "network" "${AIBOX_BASE_NETWORK:-aibox-base}"
-  dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/base/"
+  # `aibox status base` is the authoritative view (AGENTS.md/docs convention).
+  status_row "containers" "${POSTGRES_CONTAINER} · ${REDIS_CONTAINER}"
+  status_row "env" "${ENV_FILE}"
+  status_row "network" "${AIBOX_BASE_NETWORK:-aibox-base}"
+  status_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/base/"
 }
 
 # ---- residue (aibox purge): the module-side override of the declarative

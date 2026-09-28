@@ -122,7 +122,7 @@ aibox check gitlab
 ## Diagnostics
 
 `aibox gitlab doctor` — declared deps, docker daemon reachability, the module's own
-reported state (`dashboard_info`) and its declared port listeners. Shared
+reported state (`status_info`) and its declared port listeners. Shared
 implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
 exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.
 
@@ -133,7 +133,6 @@ exit `0` healthy · `3` a dependency is missing · `30` the service is not ready
 | `stop` | Stop the container |
 | `restart` | Recreate the container |
 | `status` | Container + web health + rich view |
-| `dashboard` | Alias of status |
 | `doctor` | Deep diagnostics: deps, docker, state, declared ports |
 | `logs` | Container logs |
 | `credentials` | Show the seeded root password + verify it against the live account |

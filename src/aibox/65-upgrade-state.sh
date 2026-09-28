@@ -3,7 +3,7 @@
 # The engine's AUTOMATIC rollback only covers a failed upgrade; `--rollback`
 # (a user-level rollback POINT) needs to know the previous pin, where its .env
 # backup lives, and whether a data snapshot was taken. State is local-only:
-# the dashboard renders it with zero network.
+# the status renders it with zero network.
 _upgrade_dir()        { printf '%s/upgrades' "${AIBOX_HOME}"; }
 _upgrade_state_file() { printf '%s/%s.state' "$(_upgrade_dir)" "$1"; }
 _upgrade_log_file()   { printf '%s/%s.log'   "$(_upgrade_dir)" "$1"; }
@@ -33,12 +33,12 @@ _upgrade_log_append() { # $1=module $2=line
   return 0
 }
 
-# The running app's version, via the module's own dashboard_info (local probe).
+# The running app's version, via the module's own status_info (local probe).
 # Recorded after an upgrade: the image tag is a promise, this is the evidence.
 _upgrade_live_version() { # $1=module
   local m="$1" mod_dir="${AIBOX_MOD_DIR}/$1" out
   [ -f "${mod_dir}/lib.sh" ] || return 0
-  out="$(AIBOX_MODULE="${m}" AIBOX_HOME="${AIBOX_HOME}" bash -c ". '${mod_dir}/lib.sh' 2>/dev/null && type dashboard_info >/dev/null 2>&1 && dashboard_info 2>/dev/null || true" 2>/dev/null | sed -n 's/^version=//p' | head -1)"
+  out="$(AIBOX_MODULE="${m}" AIBOX_HOME="${AIBOX_HOME}" bash -c ". '${mod_dir}/lib.sh' 2>/dev/null && type status_info >/dev/null 2>&1 && status_info 2>/dev/null || true" 2>/dev/null | sed -n 's/^version=//p' | head -1)"
   out="${out#v}"; out="${out%% *}"
   [ -n "${out}" ] && printf '%s' "${out}"
   return 0
@@ -259,7 +259,7 @@ _upg_apply() { # $1=module $2=envf $3=svc $4=target $5=cur_ver $6=module-version
 # Back up the pin, snapshot the data (when the module's DB is knowable), then
 # rewrite ONLY the declared image keys and recreate + health-wait via svc start.
 # Every phase is recorded, so a failed upgrade still leaves a usable rollback
-# point and the dashboard can show the state.
+# point and the status can show the state.
 local ts bak db snap=""
 ts="$(date +%Y%m%d%H%M%S)"
 # $$ keeps the name unique: two runs inside the same second would otherwise
@@ -310,7 +310,7 @@ if ! AIBOX_MODULE="${name}" AIBOX_MODULE_VERSION="${prog_module_ver:-}" bash "${
 fi
 # NOTE: the module's installed-marker version is NOT overwritten with the app
 # version: the marker means "module version" (what `aibox update` compares),
-# and the app version now lives in the upgrade state where the dashboard reads
+# and the app version now lives in the upgrade state where the status reads
 # it. Overwriting it made `aibox update` report a bogus version transition on
 # the next run (app 1.19.0 vs module 1.4.3).
 # Post-upgrade verification: what does the RUNNING app report? (recorded; a
@@ -372,7 +372,7 @@ cmd_upgrade() {
   fi
 
   # Locate the module cache + the deploy .env via the module's own lib.sh
-  # (the same pattern dashboard_info uses) — shared by every mode.
+  # (the same pattern status_info uses) — shared by every mode.
   local mod_dir="${AIBOX_MOD_DIR}/${name}" envf root svc
   [ -f "${mod_dir}/lib.sh" ] || die "Missing ${mod_dir}/lib.sh (try: aibox update ${name})"
   root="$(AIBOX_MODULE="${name}" AIBOX_HOME="${AIBOX_HOME}" bash -c ". '${mod_dir}/lib.sh' 2>/dev/null; deploy_root 2>/dev/null" 2>/dev/null || true)"
@@ -538,22 +538,22 @@ CATALOGFB
     fi
     printf '  %-14s  %-8s  %-30s  %s\n' "$m" "$ver" "$(_trunc "${desc:-}" 30)" "$inst"
   done
-  printf '\n%sVERSION = the aibox module version · the deployed app version: aibox dashboard <module>%s\n' "$C_DIM" "$C_RST"
+  printf '\n%sVERSION = the aibox module version · the deployed app version: aibox status <module>%s\n' "$C_DIM" "$C_RST"
 }
 
-# Dashboard: module status + endpoint + credentials, visualized.
-# `aibox dashboard` — global overview table; `aibox <module> dashboard` — module detail + health probe.
-cmd_dashboard() {
+# Status: module status + endpoint + credentials, visualized.
+# `aibox status` — global overview table; `aibox status <module>` — module detail + health probe (merged: was status).
+cmd_status() {
   case "${1:-}" in
-    -h|--help)   _verb_help dashboard; return 0 ;;
-    --json)      cmd_dashboard_json ;;
+    -h|--help)   _verb_help status; return 0 ;;
+    --json)      cmd_status_json ;;
     --available) cmd_list_available ;;
-    "")          cmd_dashboard_overview ;;
-    *)           cmd_dashboard_detail "$1" ;;
+    "")          cmd_status_overview ;;
+    *)           cmd_status_detail "$1" ;;
   esac
 }
 
 # Truncate a string to N visible columns, appending an ellipsis if it was cut.
-# Values come from dashboard_info()/module.yaml hints (ASCII), so byte-slicing is safe here.
+# Values come from status_info()/module.yaml hints (ASCII), so byte-slicing is safe here.
 _trunc() { local s="$1" n="$2"; [ "${#s}" -gt "$n" ] && printf '%s…' "${s:0:$((n-1))}" || printf '%s' "$s"; }
 

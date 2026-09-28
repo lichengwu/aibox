@@ -157,8 +157,8 @@ ssh_clone_url() {
   printf 'ssh://git@%s:%s' "$host" "$port"
 }
 
-# Dashboard interface (called by `aibox dashboard`; see docs/module-spec.md).
-dashboard_info() {
+# Status interface (called by `aibox status`; see docs/module-spec.md).
+status_info() {
   local port url health
   load_env
   port="${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
@@ -181,8 +181,8 @@ dashboard_info() {
   fi
 }
 
-# ---------- dashboard (the module's rich view — keyline template) ----------
-render_dashboard() {
+# ---------- status (the module's rich view — keyline template) ----------
+render_status() {
   load_env
   local port st state code
   port="${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
@@ -196,21 +196,21 @@ render_dashboard() {
   else
     state="stopped"
   fi
-  dash_header "gitlab" "$(app_version)" "${state}"
+  status_header "gitlab" "$(app_version)" "${state}"
   if [ -n "${st}" ]; then
-    dash_row "container" "${st}"
+    status_row "container" "${st}"
     code="$(curl -s -o /dev/null --max-time 5 -w '%{http_code}' "http://127.0.0.1:${port}/" 2>/dev/null || echo 000)"
     [ -z "${code}" ] && code="000"
     case "${code}" in
-    2?? | 3?? | 401) dash_row "web" "http://127.0.0.1:${port} ${C_DIM:-}·${C_RST:-} ${C_GRN:-}✓ HTTP ${code}${C_RST:-}" ;;
-    *) dash_row "web" "http://127.0.0.1:${port} ${C_DIM:-}·${C_RST:-} ${C_YEL:-}HTTP ${code}${C_RST:-}" ;;
+    2?? | 3?? | 401) status_row "web" "http://127.0.0.1:${port} ${C_DIM:-}·${C_RST:-} ${C_GRN:-}✓ HTTP ${code}${C_RST:-}" ;;
+    *) status_row "web" "http://127.0.0.1:${port} ${C_DIM:-}·${C_RST:-} ${C_YEL:-}HTTP ${code}${C_RST:-}" ;;
     esac
-    dash_row "ssh" ":${GITLAB_SSH_PORT:-31222} (git over SSH)"
+    status_row "ssh" ":${GITLAB_SSH_PORT:-31222} (git over SSH)"
   else
-    dash_row "container" "${C_YEL:-}not running (aibox gitlab start)${C_RST:-}"
+    status_row "container" "${C_YEL:-}not running (aibox gitlab start)${C_RST:-}"
   fi
-  dash_row "auth" "root / password (see: aibox gitlab credentials, verified live)"
-  dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/gitlab/"
+  status_row "auth" "root / password (see: aibox gitlab credentials, verified live)"
+  status_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/gitlab/"
 }
 
 # ---------- GitLab upgrade path (required upgrade stops) ----------

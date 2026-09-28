@@ -1,5 +1,5 @@
 name: clash
-version: 1.8.1
+version: 1.9.0
 module_iface: 1
 description: "Clash subscription proxy pool — mihomo kernel orchestration (auto speed-test/switch/failover)"
 platform: ""
@@ -35,7 +35,6 @@ actions:
   - stop
   - restart
   - status
-  - dashboard
   - refresh
   - set
   - select
@@ -55,7 +54,6 @@ usage:
   stop: "Stop the kernel (egress falls back)"
   restart: "Stop + start"
   status: "Kernel + subscription state + node latency table"
-  dashboard: "Alias of status"
   refresh: "Force-refresh the subscription (auto: 1 week)"
   set: "<subscription-url> — store the subscription + generate config"
   select: "<node-name> — switch the active node"
@@ -69,7 +67,7 @@ upstream:
   homepage: https://github.com/MetaCubeX/mihomo
   docs: https://wiki.metacubex.one/
 
-dashboard:
+status:
   endpoints:
     - "mixed: socks5://127.0.0.1:31790  api: http://127.0.0.1:31791"
   hint: "Egress socks5://127.0.0.1:31790; API 127.0.0.1:31791 (state CLASH_SECRET; 7890/9090 stay free for your own client)"

@@ -79,7 +79,7 @@ needed to compute a path (only per-hop patch resolution hits Docker Hub's tag AP
 `?name=<major.minor>` — substring filter, anchored by the module's tag pattern).
 
 **Engine**: the manager's `cmd_upgrade` detects `upgrade_stops()` in the module's
-cached lib (the same implicit-function contract as `render_dashboard`/`deploy_root`),
+cached lib (the same implicit-function contract as `render_status`/`deploy_root`),
 computes the hop sequence (`_upgrade_path_compute`, pure + table-tested), and loops
 `_upgrade_multi_hop`: pull → per-hop `.env` backup → rewrite → `svc.sh start`
 (health gate) → settle knob → mark. Failure rolls back to the previous hop (exit 20).

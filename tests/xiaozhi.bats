@@ -271,10 +271,10 @@ teardown() {
   [ "$status" -ne 0 ]
 }
 
-@test "dashboard_info: emits version/endpoint/credential/ws/db/health fields" {
+@test "status_info: emits version/endpoint/credential/ws/db/health fields" {
   export PATH="$FAKEBIN:$PATH"
   unset XIAOZHI_CONSOLE_PORT || true
-  out="$(dashboard_info)"
+  out="$(status_info)"
   printf '%s\n' "$out" | grep -q '^version=0\.9\.6 / 0\.9\.6$'
   printf '%s\n' "$out" | grep -q '^endpoint=http://127\.0\.0\.1:31131$'
   printf '%s\n' "$out" | grep -q '^credential=console: first registered user becomes the super admin'
@@ -283,8 +283,8 @@ teardown() {
   printf '%s\n' "$out" | grep -q '^health=stopped'     # fake docker ps: empty
 }
 
-@test "render_dashboard: keyline header (server/web app versions) + sunk module row" {
-  run bash -c ". '$REPO_ROOT/tools/xiaozhi/lib.sh'; render_dashboard"
+@test "render_status: keyline header (server/web app versions) + sunk module row" {
+  run bash -c ". '$REPO_ROOT/tools/xiaozhi/lib.sh'; render_status"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" != *"· module"* ]] || false
   [[ "$output" == *"xiaozhi 0.9.6 / 0.9.6"* ]] || false
@@ -342,8 +342,8 @@ teardown() {
   ! grep -qE '(PASSWORD|SECRET)=[^$]' "$y"
 }
 
-@test "render_dashboard: no docker → degrades, exit 0 under set -euo pipefail" {
-  run bash -c "set -euo pipefail; PATH=/usr/bin:/bin; . '$REPO_ROOT/tools/xiaozhi/lib.sh'; render_dashboard"
+@test "render_status: no docker → degrades, exit 0 under set -euo pipefail" {
+  run bash -c "set -euo pipefail; PATH=/usr/bin:/bin; . '$REPO_ROOT/tools/xiaozhi/lib.sh'; render_status"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"not running (aibox xiaozhi start)"* ]] || false
 }

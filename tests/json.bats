@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Machine-readable output (`--json`): a manager whose consumers are scripts,
 # timers and CI must answer with JSON, not with prose to be scraped.
-# Shape contract: dashboard = {aibox_version, profile, modules[]}; check =
+# Shape contract: status = {aibox_version, profile, modules[]}; check =
 # {module, ok, exit, details[]}. stdout carries JSON ONLY; exit codes unchanged.
 
 load test_helper
@@ -36,8 +36,8 @@ _json_field() { # $1=json $2=python expression over d
   printf '%s' "$1" | python3 -c "import json,sys; d=json.loads(sys.stdin.buffer.read().decode('utf-8')); print($2)" 2>/dev/null || true
 }
 
-@test "dashboard --json: valid JSON, documented keys, no ANSI escapes" {
-  run bash -c "export AIBOX_HOME='$AIBOX_HOME'; source '$AIBOX_BIN'; cmd_dashboard_json"
+@test "status --json: valid JSON, documented keys, no ANSI escapes" {
+  run bash -c "export AIBOX_HOME='$AIBOX_HOME'; source '$AIBOX_BIN'; cmd_status_json"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "$(_json_valid <<<"$output")" = "ok" ] || { printf '%s\n' "$output" | _json_error; false; }
   [ "$(_json_field "$output" 'sorted(d.keys())')" = "['aibox_version', 'modules', 'profile']" ] || { echo "$output" | head -3; false; }
@@ -45,11 +45,11 @@ _json_field() { # $1=json $2=python expression over d
   ! printf '%s' "$output" | grep -q $'\033' || false
 }
 
-@test "dashboard --json: one object per installed module with the full field set" {
+@test "status --json: one object per installed module with the full field set" {
   mkdir -p "$AIBOX_MOD_DIR/new-api"
   cp "$REPO_ROOT/tools/new-api/module.yaml" "$AIBOX_MOD_DIR/new-api/"
   printf 'AIBOX_INSTALLED_new_api="1.3.0"\n' >"$AIBOX_INSTALLED"
-  run bash -c "export AIBOX_HOME='$AIBOX_HOME'; source '$AIBOX_BIN'; cmd_dashboard_json"
+  run bash -c "export AIBOX_HOME='$AIBOX_HOME'; source '$AIBOX_BIN'; cmd_status_json"
   [ "$(_json_valid <<<"$output")" = "ok" ] || { printf '%s\n' "$output" | _json_error; false; }
   [ "$(_json_field "$output" 'len(d["modules"])')" = "1" ] || false
   [ "$(_json_field "$output" 'd["modules"][0]["name"]')" = "new-api" ] || false
@@ -58,20 +58,20 @@ _json_field() { # $1=json $2=python expression over d
   [ "$(_json_field "$output" 'sorted(d["modules"][0].keys())')" = "['app_version', 'endpoint', 'module_version', 'name', 'ports', 'profile', 'state']" ] || { echo "$output"; false; }
 }
 
-@test "dashboard --json: a profile-scoped install reports its profile" {
+@test "status --json: a profile-scoped install reports its profile" {
   printf 'AIBOX_INSTALLED_new_api__prod="1.3.0"\n' >"$AIBOX_INSTALLED"
   mkdir -p "$AIBOX_MOD_DIR/new-api"
   cp "$REPO_ROOT/tools/new-api/module.yaml" "$AIBOX_MOD_DIR/new-api/"
-  run bash -c "export AIBOX_HOME='$AIBOX_HOME'; source '$AIBOX_BIN'; cmd_dashboard_json"
+  run bash -c "export AIBOX_HOME='$AIBOX_HOME'; source '$AIBOX_BIN'; cmd_status_json"
   [ "$(_json_field "$output" 'd["modules"][0]["profile"]')" = "prod" ] || { echo "$output"; false; }
 }
 
-@test "dashboard --json: upgrade state is embedded when a state file exists" {
+@test "status --json: upgrade state is embedded when a state file exists" {
   printf 'AIBOX_INSTALLED_new_api="1.3.0"\n' >"$AIBOX_INSTALLED"
   mkdir -p "$AIBOX_MOD_DIR/new-api" "$AIBOX_HOME/upgrades"
   cp "$REPO_ROOT/tools/new-api/module.yaml" "$AIBOX_MOD_DIR/new-api/"
   printf 'status=ok\nfrom=v0.13.1\nto=v0.13.2\n' >"$AIBOX_HOME/upgrades/new-api.state"
-  run bash -c "export AIBOX_HOME='$AIBOX_HOME'; source '$AIBOX_BIN'; cmd_dashboard_json"
+  run bash -c "export AIBOX_HOME='$AIBOX_HOME'; source '$AIBOX_BIN'; cmd_status_json"
   [ "$(_json_field "$output" 'd["modules"][0]["upgrade"]["status"]')" = "ok" ] || { echo "$output"; false; }
   [ "$(_json_field "$output" 'd["modules"][0]["upgrade"]["to"]')" = "v0.13.2" ] || false
 }
@@ -111,8 +111,8 @@ tab	here'"
   [ "$output" = '"ports": []' ] || { echo "$output"; false; }
 }
 
-@test "help documents --json for dashboard and check" {
-  run bash -c "source '$AIBOX_BIN'; _verb_help dashboard"
+@test "help documents --json for status and check" {
+  run bash -c "source '$AIBOX_BIN'; _verb_help status"
   [[ "$output" == *"--json"* ]] || false
   run bash -c "source '$AIBOX_BIN'; _verb_help check"
   [[ "$output" == *"--json"* ]] || false

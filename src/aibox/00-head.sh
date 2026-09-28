@@ -8,7 +8,7 @@
 #   aibox uninstall <module>|self [--purge] [--yes]
 #   aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks]
 #   aibox check <module>|self [--json]  module preflight / environment check
-#   aibox dashboard [--available|--json] [<module>]   overview(+ports) / catalog / detail
+#   aibox status [--available|--json] [<module>]   overview(+ports) / catalog / detail
 #   aibox autoclean [<module>...|self] [--apply] [--stop] [--yes]
 #   aibox <module> <action> [args]      module action pass-through
 #   aibox proxy {set <url>|on|off|unset|check [url]|env}
@@ -57,7 +57,7 @@ if [ -z "${AIBOX_BIN_DIR:-}" ]; then
     ;;
   esac
 fi
-AIBOX_VERSION="0.25.1"
+AIBOX_VERSION="0.26.0"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 

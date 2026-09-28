@@ -1,6 +1,6 @@
-# ---------- dashboard keyline template (spec §Dashboard template) ----------
+# ---------- status keyline template (spec §Status template) ----------
 
-# Shared render helpers for module-owned rich views (render_dashboard); the
+# Shared render helpers for module-owned rich views (render_status); the
 # manager (bin/aibox, a single-file CLI that cannot source this file) inlines
 # the SAME shapes — keep them in sync via the spec. Plain (NO_COLOR) shapes:
 #   <name> <appver> · ✓ running
@@ -14,7 +14,7 @@
 # TTY branch would never fire (live-caught by review: width was dead-fixed
 # 64 everywhere). Rules repeat COMPLETE ─ literals — never sliced (#6).
 
-_dash_w() { # prints the rule width; $1 = stdout-is-tty flag ("1"/"0")
+_status_w() { # prints the rule width; $1 = stdout-is-tty flag ("1"/"0")
   local w=64
   if [ "${1:-0}" = "1" ]; then
     # stty talks to the CONTROLLING terminal via /dev/tty — works even inside
@@ -34,7 +34,7 @@ _dash_w() { # prints the rule width; $1 = stdout-is-tty flag ("1"/"0")
 }
 
 # state word → colored "<icon> <word>" segment; empty for na/unknown words
-_dash_state_seg() { # $1=state word (ok|running|starting|stopped|na|"")
+_status_state_seg() { # $1=state word (ok|running|starting|stopped|na|"")
   case "${1:-}" in
   ok | running) printf '%s✓ %s%s' "${C_GRN:-}" "${1}" "${C_RST:-}" ;;
   starting) printf '%s⚠ %s%s' "${C_YEL:-}" "${1}" "${C_RST:-}" ;;
@@ -43,28 +43,28 @@ _dash_state_seg() { # $1=state word (ok|running|starting|stopped|na|"")
   esac
 }
 
-dash_header() { # $1=name $2=app_version (""=omit) $3=state word (see _dash_state_seg)
+status_header() { # $1=name $2=app_version (""=omit) $3=state word (see _status_state_seg)
   local seg
   printf '%s%s%s' "${C_BOLD:-}" "${1}" "${C_RST:-}"
   [ -n "${2}" ] && printf ' %s%s%s' "${C_CYA:-}" "${2}" "${C_RST:-}"
-  seg="$(_dash_state_seg "${3:-}")"
+  seg="$(_status_state_seg "${3:-}")"
   [ -n "${seg}" ] && printf ' %s·%s %s' "${C_DIM:-}" "${C_RST:-}" "${seg}"
   printf '\n'
-  dash_rule
+  status_rule
 }
 
-dash_row() { # $1=label (ASCII, ≤10 chars) $2=value (verbatim; may embed color spans)
+status_row() { # $1=label (ASCII, ≤10 chars) $2=value (verbatim; may embed color spans)
   printf '  %s%-10s%s %s\n' "${C_DIM:-}" "${1}" "${C_RST:-}" "${2}"
 }
 
-dash_module_row() { # $1=module_version $2=module_dir — sunk, whole row dim
+status_module_row() { # $1=module_version $2=module_dir — sunk, whole row dim
   printf '  %s%-10s %s · %s%s\n' "${C_DIM:-}" "module" "${1:-?}" "${2:-}" "${C_RST:-}"
 }
 
-dash_rule() { # the dim horizontal rule (width per the header comment)
+status_rule() { # the dim horizontal rule (width per the header comment)
   local w i=0 out=""
   if [ -t 1 ] 2>/dev/null; then
-    w="$(_dash_w 1)"
+    w="$(_status_w 1)"
   else
     w=64
   fi
@@ -75,10 +75,10 @@ dash_rule() { # the dim horizontal rule (width per the header comment)
   printf '%s%s%s\n' "${C_DIM:-}" "${out}" "${C_RST:-}"
 }
 
-dash_secheader() { # $1=title (ASCII) → "── title ───…" to the rule width
+status_secheader() { # $1=title (ASCII) → "── title ───…" to the rule width
   local w n i=0 out=""
   if [ -t 1 ] 2>/dev/null; then
-    w="$(_dash_w 1)"
+    w="$(_status_w 1)"
   else
     w=64
   fi

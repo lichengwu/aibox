@@ -124,7 +124,7 @@ actions:
   - stop
   - restart
   - status
-  - dashboard
+  - status
   - doctor
   - logs
   - logs
@@ -156,7 +156,7 @@ usage:
   restart: "TODO what restart does"
   status: "TODO what status shows"
   logs: "TODO which container/service"
-  dashboard: "TODO module-owned rich view (see lib.sh render_dashboard)"
+  status: "TODO module-owned rich view (see lib.sh render_status)"
   doctor: "Deep diagnostics: deps, docker, state, declared ports (shared module_doctor)"
   logs: "TODO which log (maps to the CLI's own logs)"
 
@@ -164,7 +164,7 @@ upstream:
   homepage: https://example.com/TODO
   docs: https://example.com/TODO/docs
 
-dashboard:
+status:
   endpoints: http://127.0.0.1:8080
   hint: TODO where credentials live (file/env), one line
 
@@ -208,7 +208,7 @@ actions:
   - stop
   - restart
   - status
-  - dashboard
+  - status
   - doctor
   - logs
 
@@ -235,7 +235,7 @@ usage:
   stop: "Stop the upstream stack (alias)"
   restart: "Restart the upstream stack (alias)"
   status: "TODO what status shows"
-  dashboard: "TODO module-owned rich view (see lib.sh render_dashboard)"
+  status: "TODO module-owned rich view (see lib.sh render_status)"
   doctor: "Deep diagnostics: deps, docker, state, declared ports (shared module_doctor)"
   logs: "TODO which log (maps to the CLI's own logs)"
 
@@ -282,7 +282,7 @@ deploy_root() {
 # hook; direct execution uses the ONE shared reader (never hand-parse module.yaml).
 MODULE_VERSION="${AIBOX_MODULE_VERSION:-$(meta_version "${LIB_SELF}/module.yaml")}"
 
-# ---------- dashboard (keyline template; spec §Dashboard template) ----------
+# ---------- status (keyline template; spec §Status template) ----------
 # App version = the DEPLOYED software's version (npm package / image tag /
 # kernel tag — whatever THIS module manages). Empty when not locally knowable.
 app_version() {
@@ -292,9 +292,9 @@ app_version() {
   printf ''
 }
 
-# Dashboard interface (machine-readable; the manager's overview + detail views
+# Status interface (machine-readable; the manager's overview + detail views
 # render it). version= is the app version (validator S19 WARNs without it).
-dashboard_info() {
+status_info() {
   local v
   v="$(app_version)"
   [ -n "${v}" ] && echo "version=${v}"
@@ -304,15 +304,15 @@ dashboard_info() {
   echo "health=TODO probe verdict (one line)"
 }
 
-# The module's rich view (aibox __NAME__ dashboard) — keyline via the shared
-# helpers (_common.sh ships them; spec §Dashboard template).
-render_dashboard() {
+# The module's rich view (aibox __NAME__ status) — keyline via the shared
+# helpers (_common.sh ships them; spec §Status template).
+render_status() {
   local v
   v="$(app_version)"
-  dash_header "__NAME__" "${v}" "stopped"
-  dash_row "endpoint" "http://127.0.0.1:TODO_PORT"
-  dash_row "health" "TODO probe verdict"
-  dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-${HOME:-~}/.aibox}/modules/__NAME__/"
+  status_header "__NAME__" "${v}" "stopped"
+  status_row "endpoint" "http://127.0.0.1:TODO_PORT"
+  status_row "health" "TODO probe verdict"
+  status_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-${HOME:-~}/.aibox}/modules/__NAME__/"
 }
 EOF
 
@@ -409,8 +409,8 @@ case "$action" in
   status)
     docker compose ps
     ;;
-  dashboard)
-    render_dashboard
+  status)
+    render_status
     ;;
   doctor)
     module_doctor __NAME__
@@ -428,7 +428,7 @@ else
 #!/usr/bin/env bash
 # __NAME__ module — CLI-dispatch hook (no compose file of its own): the module's
 # own CLI does the work. The STANDARD verbs must still work (spec §CLI surface):
-# aibox __NAME__ start|stop|restart|status|dashboard|logs|doctor.
+# aibox __NAME__ start|stop|restart|status|status|logs|doctor.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
@@ -448,7 +448,7 @@ case "$action" in
   start)     action="TODO-up" ;;
   stop)      action="TODO-down" ;;
   restart)   action="TODO-restart" ;;
-  dashboard) action="status" ;;
+  status) action="status" ;;
   doctor)    module_doctor __NAME__; exit $? ;;
 esac
 exec "$CLI" "$action" "$@"

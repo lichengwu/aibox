@@ -346,9 +346,9 @@ module_doctor() { # $1=module name (defaults to $AIBOX_MODULE)
   else
     info "dep         (none declared)"
   fi
-  # 2) the module's own state report (dashboard_info is the module's contract)
-  if type dashboard_info >/dev/null 2>&1; then
-    info="$(dashboard_info 2>/dev/null || true)"
+  # 2) the module's own state report (status_info is the module's contract)
+  if type status_info >/dev/null 2>&1; then
+    info="$(status_info 2>/dev/null || true)"
     ver="$(printf '%s\n' "${info}" | sed -n 's/^version=//p' | head -1)"
     state="$(printf '%s\n' "${info}" | sed -n 's/^state=//p' | head -1)"
     ep="$(printf '%s\n' "${info}" | sed -n 's/^endpoint=//p' | head -1)"
@@ -362,7 +362,7 @@ module_doctor() { # $1=module name (defaults to $AIBOX_MODULE)
     esac
     [ -n "${ep}" ] && info "endpoint    ${ep}${health:+ ${C_DIM:-}· ${C_RST:-}${health}}"
   else
-    info "state       (module has no dashboard_info)"
+    info "state       (module has no status_info)"
   fi
   # 3) declared ports
   local ports="" entry
@@ -393,9 +393,9 @@ module_doctor() { # $1=module name (defaults to $AIBOX_MODULE)
 
 # Usage errors in module hooks are exit 2 (same convention as the manager).
 
-# ---------- dashboard keyline template (spec §Dashboard template) ----------
+# ---------- status keyline template (spec §Status template) ----------
 
-# Shared render helpers for module-owned rich views (render_dashboard); the
+# Shared render helpers for module-owned rich views (render_status); the
 # manager (bin/aibox, a single-file CLI that cannot source this file) inlines
 # the SAME shapes — keep them in sync via the spec. Plain (NO_COLOR) shapes:
 #   <name> <appver> · ✓ running
@@ -409,7 +409,7 @@ module_doctor() { # $1=module name (defaults to $AIBOX_MODULE)
 # TTY branch would never fire (live-caught by review: width was dead-fixed
 # 64 everywhere). Rules repeat COMPLETE ─ literals — never sliced (#6).
 
-_dash_w() { # prints the rule width; $1 = stdout-is-tty flag ("1"/"0")
+_status_w() { # prints the rule width; $1 = stdout-is-tty flag ("1"/"0")
   local w=64
   if [ "${1:-0}" = "1" ]; then
     # stty talks to the CONTROLLING terminal via /dev/tty — works even inside
@@ -429,7 +429,7 @@ _dash_w() { # prints the rule width; $1 = stdout-is-tty flag ("1"/"0")
 }
 
 # state word → colored "<icon> <word>" segment; empty for na/unknown words
-_dash_state_seg() { # $1=state word (ok|running|starting|stopped|na|"")
+_status_state_seg() { # $1=state word (ok|running|starting|stopped|na|"")
   case "${1:-}" in
   ok | running) printf '%s✓ %s%s' "${C_GRN:-}" "${1}" "${C_RST:-}" ;;
   starting) printf '%s⚠ %s%s' "${C_YEL:-}" "${1}" "${C_RST:-}" ;;
@@ -438,28 +438,28 @@ _dash_state_seg() { # $1=state word (ok|running|starting|stopped|na|"")
   esac
 }
 
-dash_header() { # $1=name $2=app_version (""=omit) $3=state word (see _dash_state_seg)
+status_header() { # $1=name $2=app_version (""=omit) $3=state word (see _status_state_seg)
   local seg
   printf '%s%s%s' "${C_BOLD:-}" "${1}" "${C_RST:-}"
   [ -n "${2}" ] && printf ' %s%s%s' "${C_CYA:-}" "${2}" "${C_RST:-}"
-  seg="$(_dash_state_seg "${3:-}")"
+  seg="$(_status_state_seg "${3:-}")"
   [ -n "${seg}" ] && printf ' %s·%s %s' "${C_DIM:-}" "${C_RST:-}" "${seg}"
   printf '\n'
-  dash_rule
+  status_rule
 }
 
-dash_row() { # $1=label (ASCII, ≤10 chars) $2=value (verbatim; may embed color spans)
+status_row() { # $1=label (ASCII, ≤10 chars) $2=value (verbatim; may embed color spans)
   printf '  %s%-10s%s %s\n' "${C_DIM:-}" "${1}" "${C_RST:-}" "${2}"
 }
 
-dash_module_row() { # $1=module_version $2=module_dir — sunk, whole row dim
+status_module_row() { # $1=module_version $2=module_dir — sunk, whole row dim
   printf '  %s%-10s %s · %s%s\n' "${C_DIM:-}" "module" "${1:-?}" "${2:-}" "${C_RST:-}"
 }
 
-dash_rule() { # the dim horizontal rule (width per the header comment)
+status_rule() { # the dim horizontal rule (width per the header comment)
   local w i=0 out=""
   if [ -t 1 ] 2>/dev/null; then
-    w="$(_dash_w 1)"
+    w="$(_status_w 1)"
   else
     w=64
   fi
@@ -470,10 +470,10 @@ dash_rule() { # the dim horizontal rule (width per the header comment)
   printf '%s%s%s\n' "${C_DIM:-}" "${out}" "${C_RST:-}"
 }
 
-dash_secheader() { # $1=title (ASCII) → "── title ───…" to the rule width
+status_secheader() { # $1=title (ASCII) → "── title ───…" to the rule width
   local w n i=0 out=""
   if [ -t 1 ] 2>/dev/null; then
-    w="$(_dash_w 1)"
+    w="$(_status_w 1)"
   else
     w=64
   fi
@@ -754,7 +754,7 @@ docker_pool_prepull() { # $@ = image refs
 }
 
 # ---------- docker hub tag resolution (the TAGS family) ----------
-# Shared: both the manager (component upgrades, dashboards) and module hooks
+# Shared: both the manager (component upgrades, statuss) and module hooks
 # (upgrade stanzas) resolve a repo's tag list through the same direct →
 # local-mirror → pool order the image pulls use, with the sticky winner cached
 # in $AIBOX_HOME/dockerpool.cache.
@@ -1277,7 +1277,7 @@ _managed_record() { # $1=manifest $2=path $3=sha256
 # ---------- module.yaml readers (ONE implementation of the dialect) ----------
 # The registry dialect is a tiny YAML subset (scalars, flat lists, two-space
 # maps) and it used to be parsed in five places — the manager's registry loader,
-# three dashboard readers, the validator, and seven module libs. Every copy was
+# three status readers, the validator, and seven module libs. Every copy was
 # a place where the dialect's semantics could drift (and the validator's copy was
 # never even defined: parse_one died silently, so its cross-module rules were
 # no-ops). Readers:
@@ -1286,7 +1286,7 @@ _managed_record() { # $1=manifest $2=path $3=sha256
 #   meta_map_value <yaml> <k> <c>  two-space map member (e.g. usage.<action>)
 #   meta_version <yaml>            the version field (module libs / display)
 
-# Capability version of the manager↔module CONTRACT SURFACE: the dashboard_info
+# Capability version of the manager↔module CONTRACT SURFACE: the status_info
 # keys, the residue: stanza, the upgrade: stanza and the hook behaviour. Bump it
 # on any RENAME/REMOVAL in that surface (additions do not need a bump); a module
 # declares the version it targets via module_iface in module.yaml. The manager
@@ -1399,7 +1399,7 @@ meta_sub_field() { # $1 = module.yaml path, $2 = parent key, $3 = child key
 }
 # ---------- JSON emission (bash 3.2, no jq/python) ----------
 # Machine-readable output is a first-class surface for a manager whose main
-# consumers are scripts, timers and CI (`aibox dashboard --json`,
+# consumers are scripts, timers and CI (`aibox status --json`,
 # `aibox check --json`). These helpers keep the escaping in ONE place; callers
 # own the shape. stdout carries JSON only — colors/log lines go to stderr.
 

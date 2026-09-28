@@ -140,7 +140,7 @@ effective_port() {
   printf '%s' "${DIFY_WEB_PORT:-${DEFAULT_PORT}}"
 }
 
-# Dashboard interface (called by `aibox dashboard`).
+# Status interface (called by `aibox status`).
 # Deployed app version: the api container image tag (cosmetic leading v
 # stripped — display + updates-comparison normalization).
 app_version() {
@@ -151,7 +151,7 @@ app_version() {
   printf '%s' "${tag#v}"
 }
 
-dashboard_info() {
+status_info() {
   local port url v
   load_env
   port="$(effective_port)"
@@ -179,8 +179,8 @@ dashboard_info() {
   fi
 }
 
-# ---------- dashboard (the module's rich view — keyline template) ----------
-render_dashboard() {
+# ---------- status (the module's rich view — keyline template) ----------
+render_status() {
   load_env
   local port n="" state
   port="$(effective_port)"
@@ -192,22 +192,22 @@ render_dashboard() {
   else
     state="stopped"
   fi
-  dash_header "dify" "$(app_version)" "${state}"
+  status_header "dify" "$(app_version)" "${state}"
   if [ "${n}" -gt 0 ]; then
-    dash_row "stack" "${n} containers ${C_DIM:-}·${C_RST:-} $(docker ps --filter 'name=dify-' --filter 'status=running' --format '{{.Names}}' 2>/dev/null | head -3 | tr '\n' ' ' | sed 's/ $//')…"
+    status_row "stack" "${n} containers ${C_DIM:-}·${C_RST:-} $(docker ps --filter 'name=dify-' --filter 'status=running' --format '{{.Names}}' 2>/dev/null | head -3 | tr '\n' ' ' | sed 's/ $//')…"
   else
-    dash_row "stack" "${C_YEL:-}not running (aibox dify start)${C_RST:-}"
+    status_row "stack" "${C_YEL:-}not running (aibox dify start)${C_RST:-}"
   fi
   if http_up "${port}"; then
-    dash_row "console" "http://127.0.0.1:${port} ${C_DIM:-}·${C_RST:-} ${C_GRN:-}✓ HTTP up${C_RST:-}"
+    status_row "console" "http://127.0.0.1:${port} ${C_DIM:-}·${C_RST:-} ${C_GRN:-}✓ HTTP up${C_RST:-}"
   elif [ "${n}" -gt 0 ]; then
-    dash_row "console" "http://127.0.0.1:${port} ${C_DIM:-}·${C_RST:-} ${C_YEL:-}starting (1-2 min)${C_RST:-}"
+    status_row "console" "http://127.0.0.1:${port} ${C_DIM:-}·${C_RST:-} ${C_YEL:-}starting (1-2 min)${C_RST:-}"
   fi
   if shared_base_enabled; then
-    dash_row "db" "shared base (PG + redis via base.env)"
+    status_row "db" "shared base (PG + redis via base.env)"
   else
-    dash_row "db" "bundled postgres/redis"
+    status_row "db" "bundled postgres/redis"
   fi
-  dash_row "auth" "first-visit INIT_PASSWORD (see: aibox dify credentials)"
-  dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/dify/"
+  status_row "auth" "first-visit INIT_PASSWORD (see: aibox dify credentials)"
+  status_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/dify/"
 }

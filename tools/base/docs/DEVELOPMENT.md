@@ -71,7 +71,7 @@ bats tests/integration/base-profiles.bats   # needs docker: dual-profile E2E
   `PING` before writing `AIBOX_BASE_READY=1`; the multi-profile integration suite used to
   catch a race where a consumer created its DB while PG was still initializing.
 - **State file shared with the manager.** `upgrades/base.state` uses the manager's keys
-  (`from`/`to`/`ts`/`envbak`/`databak`/`status`) so `aibox dashboard base` renders it and
+  (`from`/`to`/`ts`/`envbak`/`databak`/`status`) so `aibox status base` renders it and
   `aibox upgrade base --rollback` restores the same pin file.
 - **Reverse-dependency awareness.** The manager lists installed dependents
   (`_base_dependents`) and gates `base stop` / `uninstall base` / `purge base`; purge also

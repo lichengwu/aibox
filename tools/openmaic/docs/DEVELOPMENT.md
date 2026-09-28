@@ -40,7 +40,7 @@ openmaic's DB connection lives in `.env.local` (`DATABASE_URL=postgres://openmai
 is **CLI-driven** (enabled by `OPENMAIC_SHARED_PG=1`); no manual edits to the upstream compose are needed anymore:
 
 1. Start the shared base: `aibox base start` — the live PG port + container name come from
-   **`aibox dashboard base`** (default profile: 35432 / `aibox-base-postgres`; named profiles
+   **`aibox status base`** (default profile: 35432 / `aibox-base-postgres`; named profiles
    derive both)
 2. Enable shared mode: write `OPENMAIC_SHARED_PG=1` to `/etc/openmaic/openmaic.conf`
    (or temporarily `OPENMAIC_SHARED_PG=1 openmaic install`)

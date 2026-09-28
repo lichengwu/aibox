@@ -110,7 +110,7 @@ cmd_install() {
   # scripts that must branch on it.
   if [ "$svc_rc" != "0" ]; then
     warn "⚠ ${name} is installed, but its service dependency is NOT running — the module can't work yet"
-    warn "  fix: aibox base start   (then verify: aibox dashboard ${name})"
+    warn "  fix: aibox base start   (then verify: aibox status ${name})"
     if [ "${AIBOX_STRICT_SERVICES:-0}" = "1" ]; then
       die "install ${name}: service dependency not ready (AIBOX_STRICT_SERVICES=1)"
     fi

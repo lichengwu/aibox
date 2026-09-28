@@ -148,7 +148,7 @@ Cross-platform: installation is copying a single file; the CLI is bash 3.2 compa
 
 ## Standard actions
 
-`aibox openmaic start|stop|restart|status|logs` — the shared lifecycle; `dashboard` is the
+`aibox openmaic start|stop|restart|status|logs` — the shared lifecycle; `status` is the
 rich view (alias of `status`), and `doctor` is the standard diagnostic (deps, docker,
 state, declared ports; see below).
 
@@ -158,7 +158,6 @@ state, declared ports; see below).
 | `start` | Alias of up (standard lifecycle) |
 | `stop` | Alias of down (standard lifecycle) |
 | `status` | Version / health / containers / resources overview |
-| `dashboard` | Same as status (dispatched to the CLI) |
 | `health` | [--wait N] — health check (exit code is probe-friendly) |
 | `doctor` | Environment self-check |
 | `version` | [--check] — version info / upstream release check |

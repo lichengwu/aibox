@@ -1,5 +1,5 @@
 name: new-api
-version: 1.5.1
+version: 1.6.0
 module_iface: 1
 description: "New API self-hosted (docker compose): LLM API gateway (OpenAI-compatible relay, key/quota management, usage analytics)"
 platform: ""
@@ -50,7 +50,6 @@ actions:
   - stop
   - restart
   - status
-  - dashboard
   - doctor
   - logs
   - credentials
@@ -73,7 +72,6 @@ usage:
   stop: "Stop the container"
   restart: "Recreate the container"
   status: "Container + API health + rich view"
-  dashboard: "Alias of status"
   doctor: "Deep diagnostics: deps, docker, state, declared ports"
   logs: "Container logs"
   credentials: "First login hint + secret location"
@@ -83,7 +81,7 @@ upstream:
   homepage: https://github.com/QuantumNous/new-api
   docs: https://docs.newapi.dev/
 
-dashboard:
+status:
   endpoints: http://127.0.0.1:30300
   hint: "First login: root / 123456 (change it immediately); tokens/keys live in the app DB (shared PG new_api)"
 

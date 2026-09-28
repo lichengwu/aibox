@@ -13,7 +13,7 @@
 
 These are planning/design records for already-completed work; they're kept for traceability, not as current spec. If they conflict with the active spec above, the active spec wins.
 
-- [`module-system-spec.md`](module-system-spec.md) — the original design draft that drove the `module.yaml` migration (`module.yaml` fields, port-conflict detection, dashboard TUI, shared base components). Superseded by [`module-spec.md`](module-spec.md); read only for design history.
+- [`module-system-spec.md`](module-system-spec.md) — the original design draft that drove the `module.yaml` migration (`module.yaml` fields, port-conflict detection, status TUI, shared base components). Superseded by [`module-spec.md`](module-spec.md); read only for design history.
 - [`design/module-yaml-refactor-design.md`](design/module-yaml-refactor-design.md) — the design for the `registry.sh` → `module.yaml` migration + shared-component `base.env` propagation.
 - [`design/windmill-module-plan.md`](design/windmill-module-plan.md) — the planning doc for the `windmill` module.
 

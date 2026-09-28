@@ -12,7 +12,7 @@ when it drifts from the sources.
 - `00-head.sh` — shebang, `set -euo pipefail`, the `AIBOX_*` paths/consts (only this
   fragment may carry a shebang or top-level shell settings)
 - `05-env.sh` … `90-main.sh` — one file per domain (ui/download/registry/state/proxy/
-  preflight/modules/base/upgrade/dashboard/purge/main); `90-main.sh` holds the dispatch
+  preflight/modules/base/upgrade/status/purge/main); `90-main.sh` holds the dispatch
   guard, so sourcing `bin/aibox` from tests still never dispatches
 - `tools/_shared/lib/*.sh` — the shared library used by BOTH the manager bundle and module
   hooks; `tools/_shared/common.sh` is the generated module-side include
@@ -29,7 +29,7 @@ as a second copy inside `src/aibox/`.
 ### Contract capability version (`module_iface`)
 
 The manager and a module share a CONTRACT SURFACE beyond the hook names: the
-`dashboard_info` keys, the `residue:` stanza, the `upgrade:` stanza and the hook
+`status_info` keys, the `residue:` stanza, the `upgrade:` stanza and the hook
 behaviour. Modules declare the surface they target:
 
 ```yaml
@@ -93,7 +93,7 @@ Three zones are refused, each for a concrete reason:
 Rules:
 
 - Every host-published port a module ships MUST be declared in `module.yaml` `ports:`
-  (the declaration feeds `aibox dashboard`, the port-conflict check and the validator).
+  (the declaration feeds `aibox status`, the port-conflict check and the validator).
   Container-internal ports (80/443/5432/6379/3000 …) are unaffected by this policy.
 - Profile-derived ports are allocated from the infrastructure band by
   `tools/_shared/lib/60-profile.sh` (`profile_port`), never hand-picked.
@@ -166,7 +166,7 @@ Rules:
 2. **One writer per file.** Contract files are written by their provider only
    (`base start` writes `base.env`; the manager's `create` writes the per-module
    Redis env). Consumers read.
-3. **Derived values are never hand-written** into docs — `aibox dashboard` is
+3. **Derived values are never hand-written** into docs — `aibox status` is
    the authoritative view (spec §Doc hygiene).
 
 ### Supply chain (content verification)
@@ -227,7 +227,7 @@ with exactly this flow.
 2. **`module.yaml`**: real `version`/`description`/`upstream` links; `ports` declared (unique across modules — the validator detects conflicts); `deps` (strict-checked at preflight); `services: base:<component>#<name>[_usage]` when consuming the shared base; **`checks:` is MANDATORY** (§Preflight checks below); `usage:` entries for every declared action (§Per-action help).
 3. **Hooks**: `install/uninstall/update/svc.sh` per §Hook contract — bash shebang, `set -euo pipefail`, idempotent, `${VAR}` braces (AGENTS.md pitfalls #1/#8), no bash-4-only syntax (pitfall #2); shared code in `lib.sh` (sourced library: no shebang/strict line).
 4. **Deploy conventions**: root `$AIBOX_HOME/apps/<name>`, config under `/etc/<name>/`, named volumes only, no hardcoded credentials (§Deploy directory & config path conventions).
-5. **Service modules**: `actions` containing `start` MUST provide the full lifecycle `start/stop/restart/status/logs` (+ module-specific actions like `credentials`); a `dashboard` action with a module-owned rich view (`render_dashboard` in `lib.sh` — the manager prefers module-owned over its generic fallback); self-starting services use the platform-native init system (AGENTS.md rule 9).
+5. **Service modules**: `actions` containing `start` MUST provide the full lifecycle `start/stop/restart/status/logs` (+ module-specific actions like `credentials`); a `status` action with a module-owned rich view (`render_status` in `lib.sh` — the manager prefers module-owned over its generic fallback); self-starting services use the platform-native init system (AGENTS.md rule 9).
 6. **Docs**: `README.md` (commands / ports / env overrides / preflight — ERROR if missing) + `docs/DEVELOPMENT.md` (upstream links, version-pin policy, design decisions, known quirks — WARN if missing).
 7. **Prove**: `scripts/validate-module.sh <name>` → 0 errors; `bats tests/*.bats` green; live smoke on a docker host: `aibox install <name>` → `<name> start` → `status` → `logs` → `stop` → `uninstall`.
 8. **Residue declaration**: add a `residue:` stanza to `module.yaml` —
@@ -239,7 +239,7 @@ with exactly this flow.
    generically (deploy root + every profile variant, module cache, `/etc/<name>`).
    Dynamic cases override `residue_paths()` in `lib.sh` (base does). Validator WARNs when
    a module declares neither.
-9. **Register in docs**: add the module row to `README.md` / `README.zh.md`; `aibox dashboard --available` picks the module up automatically (`module.yaml` is the registry).
+9. **Register in docs**: add the module row to `README.md` / `README.zh.md`; `aibox status --available` picks the module up automatically (`module.yaml` is the registry).
 
 ## Directory layout
 
@@ -545,7 +545,7 @@ snapshot) and `aibox base upgrade [--check|--pg <tag>|--redis <tag>|--rollback]`
 pins live in the deploy root's `.env` (never in the module cache, which an update
 overwrites); the verb dumps first, rewrites the pin, recreates through the readiness gate,
 rolls the pin back on failure (exit 10, or 20 when the rollback is unhealthy too) and writes
-the SAME `$AIBOX_HOME/upgrades/base.state` the manager uses, so `aibox dashboard base` and
+the SAME `$AIBOX_HOME/upgrades/base.state` the manager uses, so `aibox status base` and
 `aibox upgrade base --rollback` work with it.
 
 ## Proxy
@@ -732,7 +732,7 @@ upstream release **without any aibox release**:
    cross-major needs an explicit `--to`. EXCEPTION: modules providing a multi-hop path
    (see below) — the hop sequence IS the migration-safe path.
 3. **Multi-hop path (optional, gitlab-style)**: when the module's cached `lib.sh` defines
-   `upgrade_stops()` (same implicit-function contract as `render_dashboard`), the engine
+   `upgrade_stops()` (same implicit-function contract as `render_status`), the engine
    computes the required-upgrade-stops sequence between current and target
    (`_upgrade_path_compute`), resolves each intermediate stop's **latest patch** from the
    tags API, and executes one hop at a time — pull → per-hop `.env` backup → rewrite →
@@ -752,8 +752,8 @@ upstream release **without any aibox release**:
 7. **Recorded rollback point**: every phase is recorded in `$AIBOX_HOME/upgrades/<module>.state`
    (+ `<module>.log`): `from`, `to`, `ts`, `envbak`, `databak`, `status`
    (`started`/`ok`/`rolled-back`/`manual`) and `live` (the version the RUNNING app reports after
-   the upgrade, read from the module's `dashboard_info`). `--history` prints it; `--rollback`
-   restores the recorded pin and swaps the point (undo-the-undo); the dashboard's detail view
+   the upgrade, read from the module's `status_info`). `--history` prints it; `--rollback`
+   restores the recorded pin and swaps the point (undo-the-undo); the status's detail view
    shows `upgrade`/`rollback` rows from the same file (local, zero network).
 8. **Data snapshot when knowable**: a module whose `services:` declares `base:postgres#<db>`
    consumes the shared base, so the engine dumps that database (`base.env` carries the container
@@ -773,7 +773,7 @@ version — the app version lives in the state file (overwriting the marker made
 report bogus transitions on its next run).
 
 The current live version is reported by `--check` (which also prints the recorded rollback
-point) and by `dashboard` (the module's `dashboard_info` prints `version=…` from its own probe).
+point) and by `status` (the module's `status_info` prints `version=…` from its own probe).
 A downgrade (`--to <older>`) is allowed but warned: data migrations are usually one-way, so the
 recorded data snapshot is the honest way back.
 
@@ -812,7 +812,7 @@ Rules:
 One selector concept, per-family transports, shared state. Applies to every
 Docker-touching download: **image pulls** (compose `up`/`update`, family PULL
 + family GHCR in `tools/_shared/common.sh`) and **version resolution**
-(`aibox upgrade`'s dockerhub-tags + the dashboard's async update probes,
+(`aibox upgrade`'s dockerhub-tags + the status's async update probes,
 family TAGS in `tools/_shared/lib/32-docker-tags.sh`; the bundler injects it
 into `bin/aibox`, so the manager and module hooks run the SAME code).
 
@@ -967,7 +967,7 @@ aibox check <module>           # that module's full preflight (usable before ins
 aibox install <module> [--skip-checks]
 aibox update  <module> [--skip-checks] [--all] [--restart|--no-restart]
 aibox upgrade <module> [--check|--rollback|--history] [--to <ver>] [--no-backup]
-aibox dashboard [--available] [<module>]
+aibox status [--available] [<module>]
 AIBOX_SKIP_CHECKS=1 aibox install <module>   # script-friendly bypass
 AIBOX_CHECK_TIMEOUT=3 aibox check <module>   # per-probe timeout (default 8s)
 ```
@@ -983,8 +983,8 @@ exit `4` with the `--skip-checks` hint.
 | Convention | Rule |
 | --- | --- |
 | lifecycle | a module declaring `start` MUST declare `stop`, `restart`, `status`, `logs` |
-| `dashboard` | MUST exist for service modules (the rich view; `status` is the alias) |
-| `doctor` | MUST exist: the standard diagnostic. Default = the shared `module_doctor` (`_common.sh`) — deps + docker daemon + the module's `dashboard_info` state + declared port listeners; exit `0` healthy / `3` dep missing / `30` not ready. A module with deeper domain checks (clash) may implement its own `doctor` as long as it covers those four |
+| `status` | MUST exist for service modules (the rich view; `status` is the alias) |
+| `doctor` | MUST exist: the standard diagnostic. Default = the shared `module_doctor` (`_common.sh`) — deps + docker daemon + the module's `status_info` state + declared port listeners; exit `0` healthy / `3` dep missing / `30` not ready. A module with deeper domain checks (clash) may implement its own `doctor` as long as it covers those four |
 | dispatch CLIs | a module that passes actions through to its own CLI (openmaic `up`/`down`, windmill) MUST alias `start`/`stop`/`restart` onto that CLI's spelling, so `aibox <module> start` works everywhere |
 | usage errors | hooks die with `usage_die` (exit `2`), never `die`, for `Usage:`/`unknown action:`/`unknown option` |
 
@@ -1035,16 +1035,16 @@ Modules declare a `deps` field in `module.yaml` (command names, list); `aibox in
 
 ### module.yaml fields (normative schema: docs/module-spec.md §Registering a module)
 
-name/version/description/platform/dir/deps/ports/files/hooks/actions/upstream/dashboard.
+name/version/description/platform/dir/deps/ports/files/hooks/actions/upstream/status.
 
 ### ports field (port/proto:usage)
 
-CI `port-conflict` checks port+proto uniqueness (spec §3). The `aibox dashboard` overview lists the assignment table + does an lsof listen probe.
+CI `port-conflict` checks port+proto uniqueness (spec §3). The `aibox status` overview lists the assignment table + does an lsof listen probe.
 
-### dashboard_info() interface (spec §4.4)
+### status_info() interface (spec §4.4)
 
-Each module's `lib.sh` implements `dashboard_info()`, outputting key=value lines.
-Called by `aibox dashboard` / `aibox <module> dashboard`.
+Each module's `lib.sh` implements `status_info()`, outputting key=value lines.
+Called by `aibox status` / `aibox <module> status`.
 
 | key | meaning | notes |
 | --- | --- | --- |
@@ -1058,7 +1058,7 @@ Called by `aibox dashboard` / `aibox <module> dashboard`.
 Example (new-api):
 
 ```bash
-dashboard_info() {
+status_info() {
   …
   if container_running; then
     if api_up "${port}"; then echo "state=ok"; echo "health=ok (api answers on :${port})"
@@ -1069,14 +1069,14 @@ dashboard_info() {
 }
 ```
 
-### Dashboard template (keyline)
+### Status template (keyline)
 
-Spec source: `docs/superpowers/specs/2026-09-23-dashboard-app-version-keyline-design.md`.
+Spec source: `docs/superpowers/specs/2026-09-23-status-app-version-keyline-design.md`.
 
-Every dashboard surface (module rich view via `render_dashboard`, manager
+Every status surface (module rich view via `render_status`, manager
 overview, manager detail view) renders the SAME keyline template, from shared
-helpers in `tools/_shared/common.sh` (`dash_header` / `dash_row` /
-`dash_module_row` / `dash_rule` / `dash_secheader`; the bundler injects the same
+helpers in `tools/_shared/common.sh` (`status_header` / `status_row` /
+`status_module_row` / `status_rule` / `status_secheader`; the bundler injects the same
 fragment into bin/aibox, so both views run identical code):
 
 ```text
@@ -1093,39 +1093,39 @@ Rules:
 
 - **Two versions, two places**: the **app version** (deployed software: npm
   package / image tag / kernel tag / dispatched CLI) is the cyan header
-  segment, reported by `dashboard_info`'s `version=` and, in rich views, an
+  segment, reported by `status_info`'s `version=` and, in rich views, an
   `app_version()` helper; the **module version** (aibox packaging,
   module.yaml `version:`) is the SUNK last row — whole row dim. Never show
   the module version where the app version is expected.
-- `dash_header <name> <appver> <state>`: appver `""` omits the segment;
+- `status_header <name> <appver> <state>`: appver `""` omits the segment;
   states `ok|running` → `✓`, `starting` → `⚠`, `stopped` → `○`,
   `na`/`""` → no segment. Manager overview headers show the icon only.
-- `dash_row <label> <value>`: ASCII label ≤10 chars in a `%-10s` grid, NO
+- `status_row <label> <value>`: ASCII label ≤10 chars in a `%-10s` grid, NO
   colon; values verbatim — never byte-truncate (CJK stays ragged-right,
   pitfall #6).
 - Rule width: TTY → `tput cols` clamped [40,72]; non-TTY → 64. `─` literals
   are complete characters, never sliced.
 - `health=` merges into the endpoint row (`<url> · <health>`); `state=stopped`
   appends the dim `(stopped — aibox <module> start)` hint instead.
-- `dashboard`/`status` actions render the keyline view only; raw
+- `status`/`status` actions render the keyline view only; raw
   launchctl/systemctl/lsof dumps belong to `diagnose`.
 - New modules: the scaffolder emits the skeleton (app_version TODO +
-  dashboard_info with `version=` + render_dashboard via dash_header);
+  status_info with `version=` + render_status via status_header);
   the validator WARNs on gaps (S18/S19).
 
-### Doc hygiene: dynamic values live in the dashboard (normative)
+### Doc hygiene: dynamic values live in the status (normative)
 
 Ports, container names, env-file paths and credentials are **derived** (profile suffix, hash,
 per-instance override), so a doc that hardcodes them goes stale the moment anyone uses a named
 profile — and the README is part of the module contract (validator checks it). Rule:
 
 - State the **default-profile default** if it helps orientation, and label it as such.
-- Point readers at the authoritative view: **`aibox dashboard <module>`** (endpoint · provider
-  containers · env file · config-key count · upgrade/rollback state), `aibox dashboard` (overview
+- Point readers at the authoritative view: **`aibox status <module>`** (endpoint · provider
+  containers · env file · config-key count · upgrade/rollback state), `aibox status` (overview
   + the port table + listeners) or `aibox <module> config list` for knobs.
 - Never present a derived value as the value (the validator WARNs when a module whose ports are
-  profile-derived documents numeric ports without any `aibox dashboard` pointer).
-- The same applies to the dashboard itself: expose derived values there (base prints
+  profile-derived documents numeric ports without any `aibox status` pointer).
+- The same applies to the status itself: expose derived values there (base prints
   `containers`/`env`) rather than only in prose.
 
 ### DB naming convention (shared base, spec §5.4)
@@ -1138,4 +1138,4 @@ Single DB: `<module>`; multiple DBs: `<module>_<usage>`. `aibox base create post
 
 ### hooks field parsing
 
-The awk parser strips the parent prefix for `hooks:` nesting (`hooks.install` → `AIBOX_MODULE_<name>_install`, compatible with `module_field`); upstream/dashboard keep the prefix (`_upstream_homepage`, `_dashboard_hint`).
+The awk parser strips the parent prefix for `hooks:` nesting (`hooks.install` → `AIBOX_MODULE_<name>_install`, compatible with `module_field`); upstream/status keep the prefix (`_upstream_homepage`, `_status_hint`).

@@ -43,14 +43,14 @@ teardown() {
   run bash "$AIBOX_BIN" basee --help
   [ "$status" -ne 0 ] || false
   [[ "$output" == *"did you mean: aibox base?"* ]] || false
-  [[ "$output" == *"dashboard --available"* ]] || false
+  [[ "$output" == *"status --available"* ]] || false
 }
 
 @test "unknown module: no near match still gets the catalog hint, no suggestion" {
   run bash "$AIBOX_BIN" zzzznope --help
   [ "$status" -ne 0 ] || false
   [[ "$output" == *"Unknown module: zzzznope"* ]] || false
-  [[ "$output" == *"dashboard --available"* ]] || false
+  [[ "$output" == *"status --available"* ]] || false
   [[ "$output" != *"did you mean"* ]] || false
 }
 
@@ -176,7 +176,7 @@ teardown() {
 # ---------- catalog + environment check --------------------------------------
 
 @test "catalog: the VERSION column is explained (module vs app version)" {
-  run bash "$AIBOX_BIN" dashboard --available
+  run bash "$AIBOX_BIN" status --available
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"VERSION = the aibox module version"* ]] || false
   [[ "$output" == *"base"* ]] || false

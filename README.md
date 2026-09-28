@@ -22,7 +22,7 @@ dependencies, no package manager, works on the bash 3.2 that ships with macOS.
 ## Features
 
 - **One grammar** — `aibox <verb> <module>` for everything: `install`, `update`,
-  `uninstall`, `check`, `upgrade`, `dashboard`, `autoclean`. One mental model, no sub-family verbs.
+  `uninstall`, `check`, `upgrade`, `status`, `autoclean`. One mental model, no sub-family verbs.
 - **Preflight-gated installs** — deps, disk, domains, docker daemon reachability and
   shared-service readiness are probed *before* anything is touched; a bad network tries the
   configured alternative routes (direct / clash / mirror) automatically.
@@ -45,7 +45,7 @@ dependencies, no package manager, works on the bash 3.2 that ships with macOS.
   for shared-PG consumers (`--no-backup` skips). GitLab's official required-upgrade-stops rule
   is automated (multi-hop path computed, each hop on the latest patch, readiness-gated between
   hops).
-- **Local-first dashboards** — `aibox dashboard` renders state (✓ ok / ⚠ starting /
+- **Local-first statuss** — `aibox status` renders state (✓ ok / ⚠ starting /
   ○ stopped), endpoints, credentials, port listeners from local metadata; async probes
   never block the view. Every block leads with the deployed **app version** (npm
   package / image tag / kernel tag; the aibox module packaging version is the dim
@@ -123,7 +123,7 @@ optional check for the CLI itself: `curl … | AIBOX_SHA256=<hex> bash` (or
 ```bash
 aibox install pi-web        # preflight-gated module install
 aibox pi-web start          # service lifecycle: start / stop / restart / status / logs
-aibox dashboard             # all modules: app versions, state, endpoints, credentials, ports
+aibox status             # all modules: app versions, state, endpoints, credentials, ports
 ```
 
 Deploy a shared PostgreSQL + Redis base, then a module that uses it:
@@ -164,8 +164,8 @@ aibox upgrade <module> [flags]    bump the deployed UPSTREAM version (dockerhub 
                                   shared-PG snapshot. update ≠ upgrade:
                                   scripts vs upstream app version
 aibox check <module>|self         preflight dry-run; self = environment check
-aibox dashboard [--available]     overview (installed modules) / catalog
-aibox dashboard <module>          single-module detail + health probe (app version in the header)
+aibox status [--available]     overview (installed modules) / catalog
+aibox status <module>          single-module detail + health probe (app version in the header)
 aibox autoclean [<module>...|self]    residue scan/cleanup (dry-run by default; --apply
                                   confirms, then asks about RUNNING containers)
 aibox proxy {show|set|on|off|…}   static egress proxy config (global)
@@ -187,7 +187,7 @@ aibox <module> <action> --help    the single action's usage (args + description)
 ```
 
 Every service module implements the same standard set —
-`start / stop / restart / status / logs`, `dashboard` (the rich view: containers,
+`start / stop / restart / status / logs`, `status` (the rich view: containers,
 health, endpoints, credentials, port listeners) and `doctor` (deps + docker daemon
 + reported state + declared port listeners; exit `0` healthy / `3` dep missing /
 `30` not ready) — plus its own domain actions (`base create postgres <db>`,
@@ -206,8 +206,8 @@ windmill) alias the lifecycle verbs onto their own CLI's spelling, so
 Find the actual ports and endpoints at any time:
 
 ```bash
-aibox dashboard            # versions + the port table + listeners for every installed module
-aibox dashboard <module>   # the single module's app version + endpoint + health
+aibox status            # versions + the port table + listeners for every installed module
+aibox status <module>   # the single module's app version + endpoint + health
 aibox <module> status      # same, from the module itself
 ```
 
@@ -288,7 +288,7 @@ implementation: [`tools/gitlab/`](tools/gitlab/).
 - **Single-file main CLI** (~3.4k lines): the curl|bash one-line install constraint. Internally sectioned.
 - **Pure bash, zero deps**: runs on stock macOS bash 3.2; the repo's pitfall log (AGENTS.md) turns every platform gotcha into a CI assertion.
 - **Registry = `tools/*/module.yaml`**: adding a module is creating a directory; no central registry to edit.
-- **Local-first dashboards**: the default view needs no network; version probes are async.
+- **Local-first statuss**: the default view needs no network; version probes are async.
 
 </details>
 

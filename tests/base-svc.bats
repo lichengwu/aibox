@@ -74,27 +74,27 @@ teardown() {
   [[ "$output" == *"aibox base --help"* ]]
 }
 
-@test "status|dashboard merge: module-level dashboard is an alias of status (same output)" {
+@test "status|status merge: module-level status is an alias of status (same output)" {
   # merged 2026-09: one "show state" verb — operational facts + the rich view;
-  # the manager-level aibox dashboard stays separate. Both action names must
+  # the manager-level aibox status stays separate. Both action names must
   # produce IDENTICAL output (fall-through case, not two implementations).
   run env AIBOX_MODULE=base bash "$SVC" status
   local st_out="$output" st_rc=$status
-  run env AIBOX_MODULE=base bash "$SVC" dashboard
+  run env AIBOX_MODULE=base bash "$SVC" status
   [ "$status" -eq "$st_rc" ]
   [ "$output" = "$st_out" ]
 }
 
-@test "render_dashboard: keyline header + module row with no docker" {
-  run bash -c ". '$REPO_ROOT/tools/base/lib.sh'; PATH=/usr/bin:/bin; render_dashboard"
+@test "render_status: keyline header + module row with no docker" {
+  run bash -c ". '$REPO_ROOT/tools/base/lib.sh'; PATH=/usr/bin:/bin; render_status"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" != *"· module"* ]] || false
   [[ "$output" == *"base"* ]] || false
   [[ "$output" == *"module"*"·"*"modules/base/"* ]] || false
 }
 
-@test "dashboard_info: no docker → degrades, exit 0 under set -euo pipefail" {
-  run bash -c "set -euo pipefail; PATH=/usr/bin:/bin; . '$REPO_ROOT/tools/base/lib.sh'; dashboard_info"
+@test "status_info: no docker → degrades, exit 0 under set -euo pipefail" {
+  run bash -c "set -euo pipefail; PATH=/usr/bin:/bin; . '$REPO_ROOT/tools/base/lib.sh'; status_info"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   printf '%s\n' "$output" | grep -q '^state=stopped$' || false
 }

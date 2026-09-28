@@ -142,8 +142,8 @@ restart)
     _staged_up || exit 1
   fi
   ;;
-# dashboard is an alias of status (merged 2026-09: one "show state" verb —
-# operational facts + the rich view; the manager-level aibox dashboard stays separate)
+# status is an alias of status (merged 2026-09: one "show state" verb —
+# operational facts + the rich view; the manager-level aibox status stays separate)
 # config: the deploy .env is the store (spec §Configuration).
 config)
   ROOT="$(deploy_root)"
@@ -152,7 +152,7 @@ config)
     CFG_APPLY="aibox xiaozhi restart" \
     cfg_action "$@"
   ;;
-status | dashboard)
+status)
   compose ps
   cport="$(effective_console_port)"
   wport="$(effective_ws_port)"
@@ -172,7 +172,7 @@ status | dashboard)
   else
     warn "stack not running (start: aibox ${MODULE_NAME} start)"
   fi
-  render_dashboard
+  render_status
   ;;
 logs)
   compose logs --tail "${XIAOZHI_LOG_TAIL:-200}" "$@"

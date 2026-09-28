@@ -31,7 +31,7 @@ aibox pi-web diagnose
 
 > **`PI_WEB_PORT`'s value below is the DEFAULT profile's port** — a named profile
 > (`aibox --profile <name>`) derives its own port and service label. Read the live values
-> from **`aibox dashboard pi-web`** (endpoint · service) instead of copying the number.
+> from **`aibox status pi-web`** (endpoint · service) instead of copying the number.
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -97,7 +97,7 @@ Cross-platform: macOS uses launchd (`~/Library/LaunchAgents` plist + `KeepAlive`
 ## Diagnostics
 
 `aibox pi-web doctor` — declared deps, docker daemon reachability, the module's own
-reported state (`dashboard_info`) and its declared port listeners. Shared
+reported state (`status_info`) and its declared port listeners. Shared
 implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
 exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.
 
@@ -108,7 +108,6 @@ exit `0` healthy · `3` a dependency is missing · `30` the service is not ready
 | `stop` | Stop the service |
 | `restart` | Recreate the service (applies config changes) |
 | `status` | Service + HTTP health + rich view |
-| `dashboard` | Alias of status |
 | `doctor` | Deep diagnostics: deps, docker, state, declared ports |
 | `logs` | Follow the app log |
 | `diagnose` | Self-check (port/auth/process/log) |

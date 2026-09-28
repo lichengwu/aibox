@@ -69,9 +69,9 @@ module_doctor() { # $1=module name (defaults to $AIBOX_MODULE)
   else
     info "dep         (none declared)"
   fi
-  # 2) the module's own state report (dashboard_info is the module's contract)
-  if type dashboard_info >/dev/null 2>&1; then
-    info="$(dashboard_info 2>/dev/null || true)"
+  # 2) the module's own state report (status_info is the module's contract)
+  if type status_info >/dev/null 2>&1; then
+    info="$(status_info 2>/dev/null || true)"
     ver="$(printf '%s\n' "${info}" | sed -n 's/^version=//p' | head -1)"
     state="$(printf '%s\n' "${info}" | sed -n 's/^state=//p' | head -1)"
     ep="$(printf '%s\n' "${info}" | sed -n 's/^endpoint=//p' | head -1)"
@@ -85,7 +85,7 @@ module_doctor() { # $1=module name (defaults to $AIBOX_MODULE)
     esac
     [ -n "${ep}" ] && info "endpoint    ${ep}${health:+ ${C_DIM:-}· ${C_RST:-}${health}}"
   else
-    info "state       (module has no dashboard_info)"
+    info "state       (module has no status_info)"
   fi
   # 3) declared ports
   local ports="" entry

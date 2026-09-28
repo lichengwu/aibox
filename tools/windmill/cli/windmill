@@ -2113,11 +2113,14 @@ cmd_init() {
 
   # --- Harden -------------------------------------------------------------
   local adminpass=""
+  harden_ok=0
   if [ "$do_harden" = 1 ]; then
     log ""
     step "Harden: set Base URL and admin password"
     adminpass=$(gen_password 28)
-    harden_instance "$ver" "$adminpass" || warn "Hardening did not fully succeed; you can run $CLI_NAME credentials later"
+    harden_ok=0
+  if harden_instance "$ver" "$adminpass"; then harden_ok=1
+  else warn "Hardening did not fully succeed; the admin password was NOT rotated — change it in the UI (User settings → Password)"; fi
   fi
 
   if [ "$do_systemd" = 1 ]; then
@@ -2154,7 +2157,14 @@ cmd_init() {
       echo "# Windmill credentials  $(ts)"
       echo "URL=$(instance_url)"
       echo "ADMIN_USER=admin@windmill.dev"
-      echo "ADMIN_PASSWORD=$adminpass"
+      if [ "${harden_ok:-0}" = 1 ]; then
+    echo "ADMIN_PASSWORD=$adminpass"
+    echo "# set by aibox and VERIFIED to work (login test passed)"
+  else
+    echo "# admin password: NOT on record — aibox's rotation did not verify, so the value"
+    echo "# is whatever the instance had (possibly the windmill default 'changeme')."
+    echo "# Change it in the UI now: User settings → Password, then run: $CLI_NAME credentials set <pw>"
+  fi
       echo "DB_USER=postgres"
       echo "DB_PASSWORD=$(get_env POSTGRES_PASSWORD)"
       echo "VERSION=$ver"

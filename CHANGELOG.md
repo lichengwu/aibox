@@ -7,6 +7,49 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.26.0] — 2026-09-28
+
+### Changed
+
+- **BREAKING: `dashboard` is gone — `status` is the one view.** The verb and the
+  per-module action were merged, because two names for one question ("what is the state?")
+  split the answer in two half-views: `aibox dashboard` = the manager overview/detail,
+  `aibox <module> dashboard` = the module's rich view, `aibox <module> status` = a plain
+  status. Now: `aibox status` (overview) · `aibox status <module>` (detail + health) ·
+  `aibox status --available` (catalog) · `aibox status --json` · `aibox <module> status`
+  (the module's own rich view — node latency for clash, databases for base, the CLI's
+  status for windmill/openmaic). Both removed names answer with a pointer:
+  `aibox dashboard` → *"merged into `status` — use: aibox status"* (exit 2), and
+  `aibox <module> dashboard` says the same at the module level.
+- Module contract renames so names match reality: `render_dashboard` → `render_status`,
+  `dashboard_info` → `status_info`, the shared `dash_*` helpers → `status_*`,
+  `module.yaml`'s `dashboard:` metadata block → `status:`, and the async probe env knob
+  `AIBOX_DASH_UPDATE_TIMEOUT` → `AIBOX_STATUS_UPDATE_TIMEOUT`. Docs point at
+  `aibox status`; the test-file rename (`dash-template.bats` → `status-template.bats`)
+  keeps the inventory honest.
+
+### Fixed
+
+- **Credentials are recorded only when they are TRUE.** windmill's `init --harden` writes
+  `ADMIN_PASSWORD=<generated>` into `CREDENTIALS.txt` even when the rotation failed — the
+  file then claims a password that never worked, and the operator is locked out while the
+  app quietly keeps its old (default!) one. Live-caught on the deploy host: the file's
+  28-char password returned `400 Invalid login` while `changeme` still worked. Now the
+  file records the password **only after a login test with it succeeds**; otherwise it
+  writes an explicit "NOT on record — rotation did not verify; change it in the UI" note,
+  and `init` warns instead of silently lying. `credentials` keeps showing "not on record"
+  as before.
+- Module credential audit (the same class of lie elsewhere): new-api now labels
+  `root / 123456` as "upstream default for a virgin DB" (a pre-existing DB keeps its own
+  password); gitlab's already-correct "applies at first boot with fresh volumes" stays;
+  base/clash/pi-web/xiaozhi generate and own their secrets (verified authoritative in
+  code, no fabricated values).
+
+### Module versions
+
+base 1.10.0 · clash 1.9.0 · dify 1.24.0 · gitlab 1.10.0 · new-api 1.6.0 · openmaic 1.7.0 ·
+pi-web 1.9.0 · windmill 1.9.0 · xiaozhi 1.7.0
+
 ## [0.25.1] — 2026-09-28
 
 ### Fixed
@@ -1712,6 +1755,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.26.0]: https://github.com/lichengwu/aibox/compare/v0.25.1...v0.26.0
 [0.25.1]: https://github.com/lichengwu/aibox/compare/v0.25.0...v0.25.1
 [0.25.0]: https://github.com/lichengwu/aibox/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/lichengwu/aibox/compare/v0.24.0...v0.24.1

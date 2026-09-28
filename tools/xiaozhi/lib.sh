@@ -209,7 +209,7 @@ stack_running() {
   [ "${n}" -gt 0 ]
 }
 
-# Dashboard interface (called by `aibox dashboard xiaozhi`).
+# Status interface (called by `aibox status xiaozhi`).
 # Deployed app version: "server <tag> / web <tag>" (two images).
 app_version() {
   local sver hver
@@ -219,7 +219,7 @@ app_version() {
   printf '%s / %s' "${sver##*:server_}" "${hver##*:web_}"
 }
 
-dashboard_info() {
+status_info() {
   local cport wport v
   load_env
   cport="$(effective_console_port)"
@@ -247,8 +247,8 @@ dashboard_info() {
   fi
 }
 
-# ---------- dashboard (the module's rich view) ----------
-render_dashboard() {
+# ---------- status (the module's rich view) ----------
+render_status() {
   load_env
   local cport wport state
   cport="$(effective_console_port)"
@@ -262,32 +262,32 @@ render_dashboard() {
   else
     state="stopped"
   fi
-  dash_header "xiaozhi" "$(app_version)" "${state}"
+  status_header "xiaozhi" "$(app_version)" "${state}"
   # server container
   local st=""
   st="$(docker ps --filter "name=${SERVER_CONTAINER}" --format '{{.Image}} {{.Status}}' 2>/dev/null | head -1 || true)"
   if [ -n "${st}" ]; then
-    dash_row "server" "${st}"
+    status_row "server" "${st}"
   else
-    dash_row "server" "${C_YEL:-}not running (aibox xiaozhi start)${C_RST:-}"
+    status_row "server" "${C_YEL:-}not running (aibox xiaozhi start)${C_RST:-}"
   fi
   # web + mysql
   local web_st mysql_st
   web_st="$(docker ps --filter "name=${WEB_CONTAINER}" --format '{{.Status}}' 2>/dev/null | head -1 || true)"
-  [ -n "${web_st}" ] && dash_row "console" "http://127.0.0.1:${cport} ${C_DIM:-}·${C_RST:-} ${web_st}"
+  [ -n "${web_st}" ] && status_row "console" "http://127.0.0.1:${cport} ${C_DIM:-}·${C_RST:-} ${web_st}"
   mysql_st="$(docker ps --filter "name=${MYSQL_CONTAINER}" --format '{{.Status}}' 2>/dev/null | head -1 || true)"
-  [ -n "${mysql_st}" ] && dash_row "mysql" "${MYSQL_CONTAINER} ${C_DIM:-}·${C_RST:-} ${mysql_st}"
+  [ -n "${mysql_st}" ] && status_row "mysql" "${MYSQL_CONTAINER} ${C_DIM:-}·${C_RST:-} ${mysql_st}"
   # ws + device URL
   if ws_listening "${wport}"; then
-    dash_row "ws" ":${wport} ${C_DIM:-}·${C_RST:-} ${C_GRN:-}✓ listening${C_RST:-} ${C_DIM:-}·${C_RST:-} devices: ws://$(_lan_ip):${wport}/xiaozhi/v1/"
+    status_row "ws" ":${wport} ${C_DIM:-}·${C_RST:-} ${C_GRN:-}✓ listening${C_RST:-} ${C_DIM:-}·${C_RST:-} devices: ws://$(_lan_ip):${wport}/xiaozhi/v1/"
   fi
   # secret state
   local secret_set
   secret_set="$(grep -A3 '^manager-api:' "$(config_file)" 2>/dev/null | sed -n 's/.*secret:[[:space:]]*//p' | tr -d '"' || true)"
   if [ -n "${secret_set}" ] && [ "${secret_set}" != '""' ]; then
-    dash_row "secret" "${C_GRN:-}✓ configured${C_RST:-}"
+    status_row "secret" "${C_GRN:-}✓ configured${C_RST:-}"
   else
-    dash_row "secret" "${C_YEL:-}not set (start auto-applies; manual: aibox xiaozhi secret <value>)${C_RST:-}"
+    status_row "secret" "${C_YEL:-}not set (start auto-applies; manual: aibox xiaozhi secret <value>)${C_RST:-}"
   fi
-  dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/xiaozhi/"
+  status_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/xiaozhi/"
 }

@@ -82,7 +82,7 @@ _load_registry_remote() {
 # Read a module field: module_field <name> <field> — requires load_registry already done.
 # A module declares the contract surface it targets (module.yaml module_iface).
 # Warn ONCE per run when it is newer than this manager: a silent mismatch would
-# surface later as a missing dashboard key or an ignored stanza. Absent = 1
+# surface later as a missing status key or an ignored stanza. Absent = 1
 # (pre-contract modules keep working — the surface only ever grew so far).
 _iface_check() { # $1=module
   local m="${1:-}" declared
@@ -200,7 +200,7 @@ download_module() {
   done
   # Standard set (module.yaml + lib.sh/install.sh/uninstall.sh/update.sh/svc.sh)
   # is implicitly downloaded — module.yaml rides along so the LOCAL cache carries
-  # the module's own metadata (per-module help / dashboard / ports work offline).
+  # the module's own metadata (per-module help / status / ports work offline).
   dl="module.yaml lib.sh install.sh uninstall.sh update.sh svc.sh"
   for extra in $files; do
     case " $dl " in *" $extra "*) ;; *) dl="${dl:+$dl }$extra" ;; esac

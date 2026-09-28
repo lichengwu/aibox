@@ -543,7 +543,7 @@ validate_module() {
 
   # --- S13h: contract capability version (spec §Contract capability version) ---
   # module_iface declares which manager↔module contract surface the module targets
-  # (dashboard_info keys, residue:/upgrade: stanzas, hook behaviour). RENAME/REMOVAL
+  # (status_info keys, residue:/upgrade: stanzas, hook behaviour). RENAME/REMOVAL
   # in that surface bumps the number; the manager warns when a module is newer.
   local _iface
   _iface="$(awk '/^module_iface:/{gsub(/^module_iface:[ ]*/,""); gsub(/[ \t\r]/,""); print; exit}' "$f" 2>/dev/null)"
@@ -601,7 +601,7 @@ validate_module() {
     # openmaic) as long as it covers deps/state/ports; the shared module_doctor
     # in tools/_shared/common.sh is the default.
     printf '%s\n' $acts | grep -qx doctor || err "service-type module missing the standard 'doctor' action (see spec §CLI surface)"
-    printf '%s\n' $acts | grep -qx dashboard || err "service-type module missing the 'dashboard' action (rich view; alias of status)"
+    printf '%s\n' $acts | grep -qx status || err "service-type module missing the 'status' action (rich view; alias of status)"
   fi
   # Dispatch-CLI modules must alias the standard lifecycle verbs onto their own
   # CLI's spelling (e.g. openmaic up/down): `aibox <module> start` works everywhere.
@@ -619,12 +619,12 @@ validate_module() {
       && warn "$(basename "$hf"): usage errors must exit 2 — use usage_die (not die) for 'Usage:'/'unknown action:'"
   done
 
-  # --- S17: dashboard subfields (endpoints/hint only) ---
-  if grep -qE '^dashboard:' "$f"; then
+  # --- S17: status subfields (endpoints/hint only) ---
+  if grep -qE '^status:' "$f"; then
     local bad_sub
-    bad_sub="$(awk '/^dashboard:/{inb=1;next} /^[A-Za-z0-9_]/{inb=0} inb && /^  [a-z_-]+:/{gsub(/:.*/,"");gsub(/ /,"");print}' "$f" |
+    bad_sub="$(awk '/^status:/{inb=1;next} /^[A-Za-z0-9_]/{inb=0} inb && /^  [a-z_-]+:/{gsub(/:.*/,"");gsub(/ /,"");print}' "$f" |
       grep -vE '^(endpoints|hint)$' | tr '\n' ' ')"
-    [ -n "$bad_sub" ] && err "dashboard allows only endpoints/hint; got: $bad_sub"
+    [ -n "$bad_sub" ] && err "status allows only endpoints/hint; got: $bad_sub"
   fi
 
   # --- S17b: per-action usage entries (help framework; WARN for un-covered actions) ---
@@ -636,16 +636,16 @@ validate_module() {
     [ -n "$missing" ] && warn "actions without usage: entries (aibox <module> --help renders bare action names): ${missing}"
   fi
 
-  # --- S18: dashboard keyline template (rich views use the shared header) ---
-  if printf '%s\n' $acts | grep -qx dashboard && [ -f "$d/lib.sh" ] && grep -q 'render_dashboard()' "$d/lib.sh"; then
-    grep -q 'dash_header' "$d/lib.sh" ||
-      warn "render_dashboard must render via dash_header (spec §Dashboard template)"
+  # --- S18: status keyline template (rich views use the shared header) ---
+  if printf '%s\n' $acts | grep -qx status && [ -f "$d/lib.sh" ] && grep -q 'render_status()' "$d/lib.sh"; then
+    grep -q 'status_header' "$d/lib.sh" ||
+      warn "render_status must render via status_header (spec §Status template)"
   fi
 
-  # --- S19: dashboard_info must report the app version ---
-  if [ -f "$d/lib.sh" ] && grep -q 'dashboard_info()' "$d/lib.sh"; then
-    sed -n '/dashboard_info()/,/^}/p' "$d/lib.sh" | grep -q 'version=' ||
-      warn "dashboard_info must report the deployed app version (version=…; spec §Dashboard template)"
+  # --- S19: status_info must report the app version ---
+  if [ -f "$d/lib.sh" ] && grep -q 'status_info()' "$d/lib.sh"; then
+    sed -n '/status_info()/,/^}/p' "$d/lib.sh" | grep -q 'version=' ||
+      warn "status_info must report the deployed app version (version=…; spec §Status template)"
   fi
 
   # --- S17c: shared-library includes — entry resolves to tools/_shared/<inc>.sh;
@@ -696,11 +696,11 @@ $(sed -n '/^env:/,/^[a-zA-Z]/p' "$f" | sed -n 's/^  //p' | grep -vE '^(env:)?$')
 ENVLIST
     # Doc hygiene (spec §Doc hygiene): a module that DERIVES ports from a profile
     # (lib.sh hashes the profile name) must not document numeric ports without an
-    # 'aibox dashboard' pointer — those numbers are only the default profile's.
+    # 'aibox status' pointer — those numbers are only the default profile's.
     # WARN, not ERROR: prose judgment stays human; the rule catches the drift class.
     if [ -f "$d/README.md" ] && grep -qE '_profile_load|_profile_hash' "$d/lib.sh" 2>/dev/null; then
-      if grep -qE '[0-9]{4,5}' "$d/README.md" 2>/dev/null && ! grep -q 'aibox dashboard' "$d/README.md" 2>/dev/null; then
-        warn "README documents numeric ports while the module derives them per profile — add an 'aibox dashboard <name>' pointer (spec §Doc hygiene)"
+      if grep -qE '[0-9]{4,5}' "$d/README.md" 2>/dev/null && ! grep -q 'aibox status' "$d/README.md" 2>/dev/null; then
+        warn "README documents numeric ports while the module derives them per profile — add an 'aibox status <name>' pointer (spec §Doc hygiene)"
       fi
     fi
     # README cross-check (bidirectional, exact names): the declaration is the

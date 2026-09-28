@@ -1,6 +1,6 @@
 # ---------- JSON emission (bash 3.2, no jq/python) ----------
 # Machine-readable output is a first-class surface for a manager whose main
-# consumers are scripts, timers and CI (`aibox dashboard --json`,
+# consumers are scripts, timers and CI (`aibox status --json`,
 # `aibox check --json`). These helpers keep the escaping in ONE place; callers
 # own the shape. stdout carries JSON only — colors/log lines go to stderr.
 

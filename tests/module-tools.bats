@@ -129,22 +129,22 @@ actions:\
   run bash "$REPO_ROOT/scripts/new-module.sh" tmplmod --desc "T" --out "$OUT"
   [ "$status" -eq 0 ] || echo "$output"
   grep -q 'app_version()' "$OUT/tmplmod/lib.sh" || false
-  grep -q 'dash_header' "$OUT/tmplmod/lib.sh" || false
-  sed -n '/dashboard_info()/,/^}/p' "$OUT/tmplmod/lib.sh" | grep -q 'version=' || false
-  grep -q 'render_dashboard' "$OUT/tmplmod/svc.sh" || false
+  grep -q 'status_header' "$OUT/tmplmod/lib.sh" || false
+  sed -n '/status_info()/,/^}/p' "$OUT/tmplmod/lib.sh" | grep -q 'version=' || false
+  grep -q 'render_status' "$OUT/tmplmod/svc.sh" || false
 }
 
-@test "validator: S18 — dashboard action whose render_dashboard skips dash_header WARNs" {
+@test "validator: S18 — status action whose render_status skips status_header WARNs" {
   bash "$REPO_ROOT/scripts/new-module.sh" s18mod --desc "T" --out "$OUT" >/dev/null 2>&1
-  printf 'render_dashboard() { printf "custom view\\n"; }\n' >"$OUT/s18mod/lib.sh"
+  printf 'render_status() { printf "custom view\\n"; }\n' >"$OUT/s18mod/lib.sh"
   run env VALIDATE_TOOLS_DIR="$OUT" bash "$REPO_ROOT/scripts/validate-module.sh" s18mod
   [ "$status" -eq 0 ] || echo "$output"        # WARN, not ERROR
-  [[ "$output" == *"dash_header"* ]] || false
+  [[ "$output" == *"status_header"* ]] || false
 }
 
-@test "validator: S19 — dashboard_info without version= WARNs" {
+@test "validator: S19 — status_info without version= WARNs" {
   bash "$REPO_ROOT/scripts/new-module.sh" s19mod --desc "T" --out "$OUT" >/dev/null 2>&1
-  printf 'dashboard_info() { echo "endpoint=http://x"; }\n' >"$OUT/s19mod/lib.sh"
+  printf 'status_info() { echo "endpoint=http://x"; }\n' >"$OUT/s19mod/lib.sh"
   run env VALIDATE_TOOLS_DIR="$OUT" bash "$REPO_ROOT/scripts/validate-module.sh" s19mod
   [ "$status" -eq 0 ] || echo "$output"        # WARN, not ERROR
   [[ "$output" == *"version="* ]] || false

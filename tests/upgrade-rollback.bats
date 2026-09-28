@@ -11,7 +11,7 @@
 #     skips it); modules without a declared DB say so explicitly
 #   - the installed marker keeps the MODULE version (the app version lives in the
 #     state file) — overwriting it made `aibox update` report bogus transitions
-#   - the dashboard detail shows config/upgrade/rollback rows (the docs point there)
+#   - the status detail shows config/upgrade/rollback rows (the docs point there)
 # Offline: a file:// fixture module, stubbed docker + svc hooks.
 
 setup() {
@@ -67,7 +67,7 @@ YAML
     'printf "1.0.0" >"$root/live"' >"$r/tools/fixture/install.sh"
   printf '%s\n' '#!/usr/bin/env bash' \
     'deploy_root() { printf "%s/apps/fixture" "${AIBOX_HOME}"; }' \
-    'dashboard_info() { printf "version=%s\n" "$(cat "${AIBOX_HOME}/apps/fixture/live" 2>/dev/null || echo 1.0.0)"; printf "state=ok\n"; }' \
+    'status_info() { printf "version=%s\n" "$(cat "${AIBOX_HOME}/apps/fixture/live" 2>/dev/null || echo 1.0.0)"; printf "state=ok\n"; }' \
     >"$r/tools/fixture/lib.sh"
   printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
     'n=$(( $(cat "${WM_SVC_COUNT:-/tmp/fx.count}" 2>/dev/null || echo 0) + 1 ))' \
@@ -267,34 +267,34 @@ _state() { # $1=module $2=key
   [[ "$output" == *"one-way"* ]] || false
 }
 
-# ---------- dashboard surface (the docs point here) -------------------------
+# ---------- status surface (the docs point here) -------------------------
 
-@test "dashboard <module>: shows the upgrade state, the rollback point and config keys" {
+@test "status <module>: shows the upgrade state, the rollback point and config keys" {
   local repo="$SANDBOX/fx"
   _fixture_repo "$repo"
   _install_fixture "$repo"
   _run_upgrade 'cmd_upgrade fixture --yes'
-  run bash "$AIBOX_BIN" dashboard fixture
+  run bash "$AIBOX_BIN" status fixture
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"upgrade"*"1.0.0 → 1.1.0"* ]] || { echo "$output"; false; }
   [[ "$output" == *"rollback"*"aibox upgrade fixture --rollback"* ]] || { echo "$output"; false; }
 }
 
-@test "dashboard <module>: without a recorded upgrade it points at --check" {
+@test "status <module>: without a recorded upgrade it points at --check" {
   local repo="$SANDBOX/fx"
   _fixture_repo "$repo"
   _install_fixture "$repo"
-  run bash "$AIBOX_BIN" dashboard fixture
+  run bash "$AIBOX_BIN" status fixture
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"no upgrade recorded"*"aibox upgrade fixture --check"* ]] || { echo "$output"; false; }
 }
 
-@test "dashboard <module>: config row counts the declared knobs" {
+@test "status <module>: config row counts the declared knobs" {
   local repo="$SANDBOX/fx"
   _fixture_repo "$repo"
   _install_fixture "$repo"
   printf 'env:\n  FX_KNOB: "1 — a knob"\n  FX_OTHER: "(unset) — another"\n' >>"$AIBOX_MOD_DIR/fixture/module.yaml"
-  run bash "$AIBOX_BIN" dashboard fixture
+  run bash "$AIBOX_BIN" status fixture
   [[ "$output" == *"2 key(s) · aibox fixture config list"* ]] || { echo "$output"; false; }
 }
 

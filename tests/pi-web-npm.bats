@@ -206,27 +206,27 @@ teardown() {
   [ -z "$output" ] || false
 }
 
-@test "dashboard_info: keeps the endpoint/state contract; state ok on redirects" {
+@test "status_info: keeps the endpoint/state contract; state ok on redirects" {
   local sb
   sb="$(mktemp -d)"
-  out="$(HOME="$sb" bash -c ". '$REPO_ROOT/tools/pi-web/lib.sh'; dashboard_info" 2>/dev/null)"
+  out="$(HOME="$sb" bash -c ". '$REPO_ROOT/tools/pi-web/lib.sh'; status_info" 2>/dev/null)"
   printf '%s\n' "$out" | grep -q '^endpoint=http://127.0.0.1:30141$' || false
   printf '%s\n' "$out" | grep -q '^state=stopped$' || false   # nothing listens in the sandbox
   printf '%s\n' "$out" | grep -q '^credential=Username pi / password ' || false
   rm -rf "$sb"
 }
 
-@test "render_dashboard: keyline template, no unbound variables under set -u" {
-  # live-caught history: after update to module 1.3.2, `aibox pi-web dashboard`
+@test "render_status: keyline template, no unbound variables under set -u" {
+  # live-caught history: after update to module 1.3.2, `aibox pi-web status`
   # died at lib.sh line 590 — SERVICE_ID was never assigned anywhere in the
-  # module. render_dashboard must degrade gracefully with NO deployment at
+  # module. render_status must degrade gracefully with NO deployment at
   # all (fresh sandbox HOME: no plist, no unit, no listener → HTTP 000 path).
   # NOTE: the sandbox still sees the machine-global npm package and a
   # possibly-live :30141 — asserts are union-shaped on purpose (structure
   # only, no environment-dependent values).
   local sb
   sb="$(mktemp -d)"
-  run bash -c "set -euo pipefail; HOME='$sb'; . '$REPO_ROOT/tools/pi-web/lib.sh'; render_dashboard"
+  run bash -c "set -euo pipefail; HOME='$sb'; . '$REPO_ROOT/tools/pi-web/lib.sh'; render_status"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" != *"· module"* ]] || false                  # ambiguous header gone
   [ "${lines[1]}" = "$(printf '─%.0s' $(seq 1 64))" ] || false   # rule, non-TTY width
@@ -240,11 +240,11 @@ teardown() {
   rm -rf "$sb"
 }
 
-@test "render_dashboard: service state via the label (running service detected)" {
+@test "render_status: service state via the label (running service detected)" {
   # only meaningful where a pi-web launchd service actually runs (the dev
   # machine); CI skips — the unbound-variable guard is the portable part above
   launchctl print "gui/$(id -u)/pi-web" >/dev/null 2>&1 || skip "no local pi-web service"
-  run bash -c ". '$REPO_ROOT/tools/pi-web/lib.sh'; render_dashboard"
+  run bash -c ". '$REPO_ROOT/tools/pi-web/lib.sh'; render_status"
   [ "$status" -eq 0 ] || false
   [[ "$output" == *"launchd"*"pid "* ]] || false
   # NOTE: patterns use containment (*"X"*) — *"X" alone anchors at end-of-string

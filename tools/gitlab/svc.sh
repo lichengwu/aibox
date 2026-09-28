@@ -50,8 +50,8 @@ restart)
   compose restart "$@"
   ok "restarted (the entrypoint re-runs omnibus reconfigure on boot)"
   ;;
-# dashboard is an alias of status (merged 2026-09: one "show state" verb —
-# operational facts + the rich view; the manager-level aibox dashboard stays separate)
+# status is an alias of status (merged 2026-09: one "show state" verb —
+# operational facts + the rich view; the manager-level aibox status stays separate)
 # config: the deploy .env is the store (spec §Configuration).
 config)
   load_env
@@ -61,7 +61,7 @@ config)
     CFG_APPLY="aibox gitlab restart" \
     cfg_action "$@"
   ;;
-status | dashboard)
+status)
   compose ps
   port="${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
   if container_running; then
@@ -76,7 +76,7 @@ status | dashboard)
   else
     warn "container ${CONTAINER_NAME} is not running (start: aibox gitlab start)"
   fi
-  render_dashboard
+  render_status
   ;;
 logs)
   compose logs --tail "${GITLAB_LOG_TAIL:-200}" "$@"

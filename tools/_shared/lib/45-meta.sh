@@ -1,7 +1,7 @@
 # ---------- module.yaml readers (ONE implementation of the dialect) ----------
 # The registry dialect is a tiny YAML subset (scalars, flat lists, two-space
 # maps) and it used to be parsed in five places — the manager's registry loader,
-# three dashboard readers, the validator, and seven module libs. Every copy was
+# three status readers, the validator, and seven module libs. Every copy was
 # a place where the dialect's semantics could drift (and the validator's copy was
 # never even defined: parse_one died silently, so its cross-module rules were
 # no-ops). Readers:
@@ -10,7 +10,7 @@
 #   meta_map_value <yaml> <k> <c>  two-space map member (e.g. usage.<action>)
 #   meta_version <yaml>            the version field (module libs / display)
 
-# Capability version of the manager↔module CONTRACT SURFACE: the dashboard_info
+# Capability version of the manager↔module CONTRACT SURFACE: the status_info
 # keys, the residue: stanza, the upgrade: stanza and the hook behaviour. Bump it
 # on any RENAME/REMOVAL in that surface (additions do not need a bump); a module
 # declares the version it targets via module_iface in module.yaml. The manager

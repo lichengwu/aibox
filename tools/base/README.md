@@ -38,7 +38,7 @@ consuming module's compose (--env-file base.env)
 > **Default-profile defaults, not universal truth.** A named profile
 > (`aibox --profile <name>`) derives its own ports, container names and env file, and a
 > live instance may have been overridden — read the authoritative values from
-> **`aibox dashboard base`** (endpoint · containers · env) or `aibox profile list`
+> **`aibox status base`** (endpoint · containers · env) or `aibox profile list`
 > instead of copying the numbers below.
 
 | Variable | Default | Notes |
@@ -67,7 +67,7 @@ The image pins live in the deploy root's `.env` (`apps/base[-<profile>]/.env`,
 `AIBOX_BASE_PG_IMAGE` / `AIBOX_BASE_REDIS_IMAGE`) — a module update never touches that file,
 so pins float and roll back cleanly. The transition is recorded in
 `$AIBOX_HOME/upgrades/base.state` (the same file the manager's upgrades use: see
-`aibox dashboard base`, `aibox upgrade base --rollback`). Exit codes follow the spec:
+`aibox status base`, `aibox upgrade base --rollback`). Exit codes follow the spec:
 `10` = failed but rolled back, `20` = manual intervention needed.
 PG MAJOR upgrades are one-way — the dump is taken automatically before any switch.
 
@@ -90,7 +90,7 @@ PG MAJOR upgrades are one-way — the dump is taken automatically before any swi
 ## Files & state
 
 > Named profiles live in `apps/base-<profile>/` with `base-<profile>.env` —
-> `aibox dashboard base` prints both (plus the derived container names).
+> `aibox status base` prints both (plus the derived container names).
 
 | Path | What |
 | --- | --- |
@@ -175,14 +175,14 @@ Notes from the field (Alibaba Cloud Linux 4, 2026-09):
 
 ## Standard actions
 
-`aibox base start|stop|restart|status|logs` — the shared lifecycle; `dashboard` is the
+`aibox base start|stop|restart|status|logs` — the shared lifecycle; `status` is the
 rich view (alias of `status`), and `doctor` is the standard diagnostic (deps, docker,
 state, declared ports; see below).
 
 ## Diagnostics
 
 `aibox base doctor` — declared deps, docker daemon reachability, the module's own
-reported state (`dashboard_info`) and its declared port listeners. Shared
+reported state (`status_info`) and its declared port listeners. Shared
 implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
 exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.
 
@@ -193,7 +193,6 @@ exit `0` healthy · `3` a dependency is missing · `30` the service is not ready
 | `stop` | Stop containers (data preserved) |
 | `restart` | Stop + start |
 | `status` | Container states + PG/Redis rich view |
-| `dashboard` | Alias of status |
 | `doctor` | Deep diagnostics: deps, docker, state, declared ports |
 | `logs` | Container logs |
 | `create` | <component> <resource> — create a resource (e.g. create postgres dify) |

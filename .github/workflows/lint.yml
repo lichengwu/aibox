@@ -98,7 +98,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y shellcheck
       # Single rule source: scripts/validate-module.sh implements every module rule
       # (required fields, §2.2 awk-subset, ports format+conflicts, files, deps,
-      # services/provides cross-refs, mandatory checks:, lifecycle, dashboard,
+      # services/provides cross-refs, mandatory checks:, lifecycle, status,
       # upstream, README/docs, hook script quality incl. gotchas #1/#8, and the
       # no-hardcoded-credentials compose scan). Local runs use the same script.
       - name: validate all modules

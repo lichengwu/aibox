@@ -288,10 +288,10 @@ exit 0'
   grep -q "gh-proxy.com" "$FAKE_CURL_LOG"
 }
 
-@test "render_dashboard: keyline header degrades with no state file" {
+@test "render_status: keyline header degrades with no state file" {
   local sb
   sb="$(mktemp -d)"
-  run bash -c "HOME='$sb'; . '$REPO_ROOT/tools/clash/lib.sh'; render_dashboard"
+  run bash -c "HOME='$sb'; . '$REPO_ROOT/tools/clash/lib.sh'; render_status"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" != *"· module"* ]] || false
   [[ "$output" == *"module"*"·"*"modules/clash/"* ]] || false

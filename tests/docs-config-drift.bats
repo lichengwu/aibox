@@ -6,7 +6,7 @@
 # table promised 10/20 while the code only ever returned 20.
 # These tests keep both classes from returning:
 #   - env: key ↔ code reference (declared but unread = not really settable)
-#   - profile-deriving modules must point at `aibox dashboard` for derived values
+#   - profile-deriving modules must point at `aibox status` for derived values
 #   - the convention itself is documented (spec §Doc hygiene + AGENTS rule) and
 #     enforced by the validator
 #   - the documented exit-code contract is implemented
@@ -35,38 +35,38 @@ setup() {
   [ -z "${missing}" ] || { echo "declared but never referenced in code:${missing}"; false; }
 }
 
-@test "doc hygiene: profile-deriving modules point at the dashboard for derived values" {
+@test "doc hygiene: profile-deriving modules point at the status for derived values" {
   local m f bad="" rd
   for f in "$REPO_ROOT"/tools/*/lib.sh; do
     m="$(basename "$(dirname "$f")")"
     grep -qE '_profile_load|_profile_hash' "$f" 2>/dev/null || continue
     rd="$REPO_ROOT/tools/$m/README.md"
     [ -f "${rd}" ] || continue
-    if grep -qE '[0-9]{4,5}' "${rd}" 2>/dev/null && ! grep -q 'aibox dashboard' "${rd}" 2>/dev/null; then
+    if grep -qE '[0-9]{4,5}' "${rd}" 2>/dev/null && ! grep -q 'aibox status' "${rd}" 2>/dev/null; then
       bad="${bad} ${m}"
     fi
   done
-  [ -z "${bad}" ] || { echo "numeric values documented with no dashboard pointer:${bad}"; false; }
+  [ -z "${bad}" ] || { echo "numeric values documented with no status pointer:${bad}"; false; }
 }
 
-@test "doc hygiene: base/pi-web docs label the default-profile values and point at the dashboard" {
-  grep -q 'aibox dashboard base' "$REPO_ROOT/tools/base/README.md" || { false; }
+@test "doc hygiene: base/pi-web docs label the default-profile values and point at the status" {
+  grep -q 'aibox status base' "$REPO_ROOT/tools/base/README.md" || { false; }
   grep -q 'Default-profile defaults, not universal truth' "$REPO_ROOT/tools/base/README.md" || false
-  grep -q 'aibox dashboard pi-web' "$REPO_ROOT/tools/pi-web/README.md" || false
+  grep -q 'aibox status pi-web' "$REPO_ROOT/tools/pi-web/README.md" || false
   grep -q 'DEFAULT profile' "$REPO_ROOT/tools/pi-web/README.md" || false
-  grep -q 'aibox dashboard pi-web' "$REPO_ROOT/tools/pi-web/docs/DEVELOPMENT.md" || false
+  grep -q 'aibox status pi-web' "$REPO_ROOT/tools/pi-web/docs/DEVELOPMENT.md" || false
 }
 
 @test "doc hygiene: the convention is normative (spec + AGENTS) and validator-enforced" {
   grep -q 'Doc hygiene' "$REPO_ROOT/docs/module-spec.md" || false
-  grep -q 'aibox dashboard <module>' "$REPO_ROOT/docs/module-spec.md" || { false; }
+  grep -q 'aibox status <module>' "$REPO_ROOT/docs/module-spec.md" || { false; }
   grep -q 'Never hardcode derived values' "$REPO_ROOT/AGENTS.md" || { false; }
   grep -q 'Doc hygiene' "$REPO_ROOT/scripts/validate-module.sh" || { false; }
 }
 
-@test "dashboard surfaces the derived values the docs point at" {
-  grep -q 'dash_row "containers"' "$REPO_ROOT/tools/base/lib.sh" || { false; }
-  grep -q 'dash_row "env"' "$REPO_ROOT/tools/base/lib.sh" || false
+@test "status surfaces the derived values the docs point at" {
+  grep -q 'status_row "containers"' "$REPO_ROOT/tools/base/lib.sh" || { false; }
+  grep -q 'status_row "env"' "$REPO_ROOT/tools/base/lib.sh" || false
   grep -q '_upgrade_state_get "\$name" status' "$REPO_ROOT/bin/aibox" || false
   grep -q 'key(s) · aibox \${name} config list' "$REPO_ROOT/bin/aibox" || false
 }
@@ -90,20 +90,20 @@ setup() {
   grep -qi 'Superseded by' "$REPO_ROOT/docs/README.md" || false
 }
 
-@test "port tables: no module README presents a derived port without the dashboard" {
+@test "port tables: no module README presents a derived port without the status" {
   local rd bad="" m
   for rd in "$REPO_ROOT"/tools/*/README.md; do
     m="$(basename "$(dirname "$rd")")"
     # only the modules that actually derive ports from the profile are at risk
     grep -qE '_profile_load|_profile_hash' "$REPO_ROOT/tools/$m/lib.sh" 2>/dev/null || continue
     grep -qE '\| `?[A-Z_]*PORT' "${rd}" 2>/dev/null || continue
-    grep -q 'aibox dashboard' "${rd}" 2>/dev/null || bad="${bad} ${m}"
+    grep -q 'aibox status' "${rd}" 2>/dev/null || bad="${bad} ${m}"
   done
-  [ -z "${bad}" ] || { echo "PORT row documented without a dashboard pointer:${bad}"; false; }
+  [ -z "${bad}" ] || { echo "PORT row documented without a status pointer:${bad}"; false; }
 }
 
 @test "port declarations: every declared port is actually published by the module" {
-  # A declared port is rendered by `aibox dashboard` (with a listen mark) and
+  # A declared port is rendered by `aibox status` (with a listen mark) and
   # reserved by the port-conflict gate — declaring one that nothing publishes is
   # drift that misleads both. Live catch: openmaic declared 5432/tcp:postgres
   # while the upstream compose publishes ONLY 3000 (its PG is compose-internal).

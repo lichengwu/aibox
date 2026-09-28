@@ -45,7 +45,7 @@ if [ -z "${CLI}" ]; then
   die "windmill command not found, run first: aibox install windmill"
 fi
 
-# dashboard maps to the CLI's own status (dispatch-only module — the CLI's
+# status maps to the CLI's own status (dispatch-only module — the CLI's
 # output IS the rich view; no separate render here)
 case "${action}" in
 # Standard lifecycle aliases: this is a dispatch CLI whose own spelling is
@@ -71,7 +71,7 @@ start | restart)
   fi
   ;;
 stop)    action="down" ;;
-dashboard) action="status" ;;
+status) action="status" ;;
 # Standard diagnostic verb: the CLI calls it `check`.
 doctor) module_doctor windmill ;;
 esac

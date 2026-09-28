@@ -24,11 +24,11 @@ restart)
   stop_kernel
   start_kernel
   ;;
-# dashboard is an alias of status (merged 2026-09: one "show state" verb —
-# operational facts + the rich view; the manager-level aibox dashboard stays separate)
-status | dashboard)
+# status is an alias of status (merged 2026-09: one "show state" verb —
+# operational facts + the rich view; the manager-level aibox status stays separate)
+status)
   show_status
-  render_dashboard
+  render_status
   ;;
 use-external)
   # Reuse a local clash client (Verge etc.) as the aibox egress — no kernel of

@@ -22,7 +22,7 @@ Run everything: `tests/docker/run.sh` (or `bats tests/*.bats` locally).
 | 8 | `local a="x" b="${a}/y"` same-line self-reference → unbound on bash 3.2 | `tests/module-tools.bats` (detector + split-lines negative case) + validator gotcha-#8 scanner |
 | 9 | `exec 9>>f 2>/dev/null` permanently swallows stderr | stderr assertions across the suite (`tests/install-sh.bats`, `tests/module-install.bats`, …) — the docker harness would show them as empty-output failures |
 | 10 | macOS bash 3.2: a failing `[[ ]]` does not trip `set -e` (mid-test assertions silently pass) | CI `macos-bash32` job runs the full suite under 3.2; `tests/history-cases.bats` asserts the job + the documented rule exist |
-| 11 | `*"X"` is a SUFFIX glob, not containment (misdiagnosed as a 3.2 multibyte bug) | `tests/dash-template.bats` ("bash glob semantics pin") |
+| 11 | `*"X"` is a SUFFIX glob, not containment (misdiagnosed as a 3.2 multibyte bug) | `tests/status-template.bats` ("bash glob semantics pin") |
 
 ## CHANGELOG `### Fixed` classes (by release)
 
@@ -30,7 +30,7 @@ Run everything: `tests/docker/run.sh` (or `bats tests/*.bats` locally).
 | --- | --- | --- |
 | 0.4–0.9 | registry auto-discovery, profile derivation contract, base.env KEY=VALUE only | `tests/registry.bats`, `tests/profile.bats`, `tests/base-env.bats` |
 | 0.10 | `save_config` heredoc executing backticks into the config file | `tests/config.bats` |
-| 0.11–0.12 | dashboard keyline template + app/module version rows | `tests/dash-template.bats` |
+| 0.11–0.12 | status keyline template + app/module version rows | `tests/status-template.bats` |
 | 0.12.1 | gitlab deterministic root password (seed + verify + reset recipe) | `tests/gitlab-credentials.bats` |
 | 0.13.0 | docker source selector (TAGS/PULL/GHCR families, ranking cache, sticky winner) | `tests/docker-tags-pool.bats`, `tests/gh-pool.bats`, `tests/dify-docker-pool.bats`, `tests/node-pool.bats`, `tests/clash-pool.bats` |
 | 0.13.2–0.13.4 | update semantics: version transition report, no-op gate, hook-always-runs | `tests/command-surface.bats` |
@@ -80,12 +80,12 @@ Run everything: `tests/docker/run.sh` (or `bats tests/*.bats` locally).
 | a profile port collision | two profile names could derive the same slot, and nothing checked before starting | `tests/profile.bats` (registry + live check) |
 | a state file sourced as code | config/cache/state/deploy-.env were executed — a corrupted file would run as the user | `tests/state.bats` (parsed readers + gate) |
 | an unverified module download | the fetched code could differ from the repo (tampered cache/mirror) with nothing noticing | `tests/verify.bats` (modules.SHA256SUMS) |
-| automation scraping human output | scripts/CI had to parse prose for state/versions | `tests/json.bats` (`--json` dashboards + checks) |
+| automation scraping human output | scripts/CI had to parse prose for state/versions | `tests/json.bats` (`--json` statuss + checks) |
 | a shared helper with two implementations | manager/`tools/_shared` twins drifted (base-env checks, profile suffix, exit codes, help) | `tests/bundle.bats` (artifact == sources; one source per helper) |
 
-| a module list hardcoded in the manager | `aibox purge`/dashboard carried `PURGE_MODULES_KNOWN`; a new module was never scanned, with no gate to notice | `tests/purge.bats` (derived candidates) |
+| a module list hardcoded in the manager | `aibox purge`/status carried `PURGE_MODULES_KNOWN`; a new module was never scanned, with no gate to notice | `tests/purge.bats` (derived candidates) |
 | docs describing a build that no longer exists | the normative spec still said the manager "inlines twins" after the bundler refactor — contradicting its own §Source layout | `tests/bundle.bats`, `tests/docs-integrity.bats` |
-| an unversioned cross-boundary contract | `dashboard_info`/`residue:`/`upgrade:` shapes had no version, so a newer module could silently lose behaviour | `tests/base-contract.bats` (`module_iface`) |
+| an unversioned cross-boundary contract | `status_info`/`residue:`/`upgrade:` shapes had no version, so a newer module could silently lose behaviour | `tests/base-contract.bats` (`module_iface`) |
 | a 342-line function | `cmd_upgrade` mixed parsing, resolution, backup, apply and reporting | `tests/upgrade*.bats` (unchanged behaviour after the split) |
 | duplicated platform-service shapes | launchd/systemd unit knowledge existed in pi-web and windmill | `tests/service-units.bats` (shared renderers) |
 ## Adding a case

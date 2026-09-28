@@ -75,8 +75,8 @@ restart)
   warn "api did not answer within ${timeout_s}s — inspect: aibox ${MODULE_NAME} logs"
   exit 1
   ;;
-# dashboard is an alias of status (merged 2026-09: one "show state" verb —
-# operational facts + the rich view; the manager-level aibox dashboard stays separate)
+# status is an alias of status (merged 2026-09: one "show state" verb —
+# operational facts + the rich view; the manager-level aibox status stays separate)
 # config: the deploy .env is the store (spec §Configuration). set offers the
 # apply (restart recreates containers with the new env).
 config)
@@ -87,7 +87,7 @@ config)
     CFG_APPLY="aibox new-api restart" \
     cfg_action "$@"
   ;;
-status | dashboard)
+status)
   compose ps
   port="$(effective_port)"
   if container_running; then
@@ -100,7 +100,7 @@ status | dashboard)
   else
     warn "no container running (start: aibox ${MODULE_NAME} start)"
   fi
-  render_dashboard
+  render_status
   ;;
 logs)
   compose logs --tail "${NEW_API_LOG_TAIL:-200}" "$@"

@@ -11,7 +11,7 @@ aibox install xiaozhi
 aibox xiaozhi start|stop|restart|status|logs
 aibox xiaozhi secret <value>       # manual override of the auto-applied server.secret
 aibox xiaozhi credentials
-aibox xiaozhi dashboard            # endpoint + health
+aibox xiaozhi status            # endpoint + health
 aibox update xiaozhi [--restart|--no-restart]
 aibox upgrade xiaozhi [--check]    # float to a newer upstream release
 aibox uninstall xiaozhi [--purge]
@@ -93,7 +93,7 @@ refuses auto-jumps; `--to` pins. Auto-rollback on failed health check.
 ## Diagnostics
 
 `aibox xiaozhi doctor` — declared deps, docker daemon reachability, the module's own
-reported state (`dashboard_info`) and its declared port listeners. Shared
+reported state (`status_info`) and its declared port listeners. Shared
 implementation (`module_doctor`, `tools/_shared/common.sh`), local-only:
 exit `0` healthy · `3` a dependency is missing · `30` the service is not ready.
 
@@ -104,7 +104,6 @@ exit `0` healthy · `3` a dependency is missing · `30` the service is not ready
 | `stop` | Stop containers |
 | `restart` | Recreate containers (applies .env changes) |
 | `status` | Container + console + ws + secret state + rich view |
-| `dashboard` | Alias of status |
 | `doctor` | Deep diagnostics: deps, docker, state, declared ports |
 | `logs` | Container logs |
 | `credentials` | Admin login + secret location |

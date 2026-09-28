@@ -1,11 +1,11 @@
-# ---------- dashboard (local-first; the default view needs NO network) ----------
+# ---------- status (local-first; the default view needs NO network) ----------
 # Installed state lives in installed.sh + the module caches under
 # $AIBOX_MOD_DIR/<name>/ — both LOCAL. The registry (network) is only needed
 # for --available (the catalog) and detail views of NOT-installed modules.
 # Latest upstream versions ARE fetched, but asynchronously: probes launch
 # BEFORE rendering, the local content renders instantly, and the updates
-# section waits at most AIBOX_DASH_UPDATE_TIMEOUT (8s) — a slow/dead network
-# never blocks the dashboard (the previous design died on load_registry).
+# section waits at most AIBOX_STATUS_UPDATE_TIMEOUT (8s) — a slow/dead network
+# never blocks the status (the previous design died on load_registry).
 
 # "module profile version" lines for every installed (module, profile) pair
 # (installed.sh keys: AIBOX_INSTALLED_<mu>[__<profile>]="<version>").
@@ -52,7 +52,7 @@ _module_version_local() { # $1=module
 # upgrade: stanza (network; runs as a background probe). Empty = no stanza /
 # unresolved. Uses gh_pool_fetch (the pooled fetcher) + the engine's own tag
 # picker; the AUTHORITATIVE comparison stays `aibox upgrade <m> --check`.
-_dash_probe_latest() { # $1=module → prints the latest version
+_status_probe_latest() { # $1=module → prints the latest version
   local m="$1" mu src repo pattern out yaml_body
   mu="${1//-/_}"
   src="$(_module_meta_local "${m}" upgrade_source)"
@@ -61,7 +61,7 @@ _dash_probe_latest() { # $1=module → prints the latest version
   if [ -z "${src}" ]; then
     # stanza missing from the LOCAL registry cache (stale/absent) → fetch the
     # live module.yaml (pooled; this runs in the background probe — never
-    # blocks the dashboard) and extract the flat stanza fields.
+    # blocks the status) and extract the flat stanza fields.
     yaml_body="$(gh_pool_fetch "${AIBOX_RAW%/}/tools/${m}/module.yaml" 2>/dev/null || true)"
     [ -n "${yaml_body}" ] || return 0
     src="$(printf '%s\n' "${yaml_body}" | awk '/^upgrade:/{inup=1;next} /^[^ ]/{inup=0} inup&&$1=="source:"{gsub(/"/,"");print $2;exit}')"
@@ -84,7 +84,7 @@ _dash_probe_latest() { # $1=module → prints the latest version
   [ -n "${out}" ] && printf '%s\n' "${out}"
 }
 
-# keyline template: the shared helpers (spec §Dashboard template) are injected
+# keyline template: the shared helpers (spec §Status template) are injected
 # into this bundle by scripts/bundle.sh — same code, not a copy of
 # tools/_shared/common.sh's dash_* helpers; keep in sync via the spec. The
 # manager is the single-file CLI: it does NOT source the shared include, so it
@@ -94,21 +94,21 @@ _dash_probe_latest() { # $1=module → prints the latest version
 # substitution turns stdout into a pipe; the branch would be dead code —
 # live-caught by review).
 
-# Render ONE module block from LOCAL data (cache lib.sh dashboard_info +
-# cache module.yaml ports) — keyline template (spec §Dashboard template).
-# The app version (dashboard_info version=, v-stripped, full string shown) is
+# Render ONE module block from LOCAL data (cache lib.sh status_info +
+# cache module.yaml ports) — keyline template (spec §Status template).
+# The app version (status_info version=, v-stripped, full string shown) is
 # the cyan header segment; its FIRST token is written to $3 for the async
 # updates comparison. Module version is the dim fallback when version= is
 # absent (stale caches) — and the sunk module row always.
 # $4 = profile: module-level state marking is default-profile only — a named
 # profile's ports are DERIVED (base prod → 35177), so the declared-port probe
 # would false-mark them stopped.
-_dash_block() { # $1=module $2=module-version $3=cur-upstream-outfile $4=profile
+_status_block() { # $1=module $2=module-version $3=cur-upstream-outfile $4=profile
   local m="$1" mver="$2" cur_out="$3" prof="${4:-base}" info aver
   local mstate ports entry port h down="0" sym="" running="0"
   info=""
   [ -f "$AIBOX_MOD_DIR/$m/lib.sh" ] && \
-    info="$(AIBOX_MODULE="$m" AIBOX_HOME="$AIBOX_HOME" bash -c ". '$AIBOX_MOD_DIR/$m/lib.sh' 2>/dev/null && type dashboard_info >/dev/null 2>&1 && dashboard_info 2>/dev/null || true" 2>/dev/null)"
+    info="$(AIBOX_MODULE="$m" AIBOX_HOME="$AIBOX_HOME" bash -c ". '$AIBOX_MOD_DIR/$m/lib.sh' 2>/dev/null && type status_info >/dev/null 2>&1 && status_info 2>/dev/null || true" 2>/dev/null)"
   aver="$(printf '%s\n' "${info}" | sed -n 's/^version=//p' | head -1)"
   aver="${aver#v}"
   if [ -n "${cur_out}" ]; then
@@ -183,32 +183,32 @@ _dash_block() { # $1=module $2=module-version $3=cur-upstream-outfile $4=profile
   printf '     %s%-10s %s · %s%s\n' "${C_DIM}" "module" "${mver}" "${AIBOX_MOD_DIR}/${m}/" "${C_RST}"
 }
 
-# The probe's process entry (invoked as `aibox __dash-probe <module> <outfile>`):
+# The probe's process entry (invoked as `aibox __status-probe <module> <outfile>`):
 # writes the latest version to <outfile> on success; removes it on failure.
-_dash_probe_cmd() {
+_status_probe_cmd() {
   local m="$1" out="$2" v
-  if v="$(_dash_probe_latest "${m}" 2>/dev/null)" && [ -n "${v}" ]; then
+  if v="$(_status_probe_latest "${m}" 2>/dev/null)" && [ -n "${v}" ]; then
     printf '%s\n' "${v}" >"${out}"
   else
     rm -f "${out}" 2>/dev/null || true
   fi
 }
 
-# `aibox dashboard --json` — the machine-readable overview: everything the human
+# `aibox status --json` — the machine-readable overview: everything the human
 # view shows (installed modules with module/app version, state, endpoint, ports,
 # upgrade state) as ONE JSON object on stdout. Local-first (no network), colors
 # never leak (they are TTY-gated) and log lines stay on stderr.
-_dash_info_field() { # $1=module $2=key → the dashboard_info contract field
+_status_info_field() { # $1=module $2=key → the status_info contract field
   local m="$1" key="$2"
   [ -f "$AIBOX_MOD_DIR/$m/lib.sh" ] || return 0
   AIBOX_MODULE="$m" AIBOX_HOME="$AIBOX_HOME" bash -c "
     . '$AIBOX_MOD_DIR/$m/lib.sh' 2>/dev/null || exit 0
-    type dashboard_info >/dev/null 2>&1 || exit 0
-    dashboard_info 2>/dev/null
+    type status_info >/dev/null 2>&1 || exit 0
+    status_info 2>/dev/null
   " 2>/dev/null | sed -n "s/^${key}=//p" | head -1
 }
 
-cmd_dashboard_json() {
+cmd_status_json() {
   local pairs m prof ver aver state ep ports p st info_lines=0 first=1
   pairs="$(_installed_pairs)"
   printf '{\n'
@@ -219,9 +219,9 @@ cmd_dashboard_json() {
   # ("name profile version"); `IFS= read` would swallow the whole line as the name
   while read -r m prof ver; do
     [ -n "${m}" ] || continue
-    aver="$(_dash_info_field "$m" version)"
-    state="$(_dash_info_field "$m" state)"
-    ep="$(_dash_info_field "$m" endpoint)"
+    aver="$(_status_info_field "$m" version)"
+    state="$(_status_info_field "$m" state)"
+    ep="$(_status_info_field "$m" endpoint)"
     ports="$(_module_meta_local "$m" ports)"
     st="$(_upgrade_state_get "$m" status)"
     [ "${first}" = "1" ] || printf ','
@@ -250,7 +250,7 @@ PAIRS
   printf '\n}\n'
 }
 
-cmd_dashboard_overview() {
+cmd_status_overview() {
   # ZERO-network default view: installed state (installed.sh) + module caches
   # are LOCAL; latest-version probes run ASYNC (bounded) so a dead network
   # never blocks the display. Default shows ONLY installed modules (grouped
@@ -260,14 +260,14 @@ cmd_dashboard_overview() {
   pairs="$(_installed_pairs)"
 
   # async probes: launch BEFORE rendering so the network overlaps the render.
-  # Each probe is a SEPARATE PROCESS (bash $0 __dash-probe …) — see the verb's
+  # Each probe is a SEPARATE PROCESS (bash $0 __status-probe …) — see the verb's
   # comment: the pool misbehaves inside nested background subshells.
   local tmpd pid pids="" waited timeout_s
   tmpd="$(mktemp -d "${TMPDIR:-/tmp}/dashupd.XXXXXX" 2>/dev/null)" || tmpd=""
   if [ -n "${tmpd}" ] && [ -n "${pairs}" ]; then
     while read -r m prof ver; do
       [ -n "${m}" ] || continue
-      bash "${0}" __dash-probe "${m}" "${tmpd}/${m}.latest" >/dev/null 2>&1 &
+      bash "${0}" __status-probe "${m}" "${tmpd}/${m}.latest" >/dev/null 2>&1 &
       pids="${pids} $!"
     done <<DASHPROBES
 ${pairs}
@@ -278,7 +278,7 @@ DASHPROBES
 
   if [ -z "${pairs}" ]; then
     printf '\n'
-    info "no modules installed (catalog: aibox dashboard --available)"
+    info "no modules installed (catalog: aibox status --available)"
     [ -n "${tmpd}" ] && rm -rf "${tmpd}"
     return 0
   fi
@@ -301,10 +301,10 @@ DASHPROFS
   for p in ${dash_profiles}; do
     local tag=""
     [ "${p}" = "${AIBOX_PROFILE:-base}" ] && tag=" (active)"
-    dash_secheader "profile ${p}${tag}"
+    status_secheader "profile ${p}${tag}"
     while read -r m prof ver; do
       [ "${prof}" = "${p}" ] || continue
-      _dash_block "${m}" "${ver}" "${tmpd}/${m}.cur"
+      _status_block "${m}" "${ver}" "${tmpd}/${m}.cur"
       printf '\n'
     done <<DASHBLOCKS
 ${pairs}
@@ -322,7 +322,7 @@ DASHBLOCKS
     # a new module shows up here without touching the manager
     for m2 in $(_purge_candidate_modules); do _purge_scan_module "${m2}" 2>/dev/null || true; done
     if [ "${PURGE_COUNT}" -gt 0 ]; then
-      dash_secheader "residue"
+      status_secheader "residue"
       printf '%s' "${PURGE_FINDINGS}" | awk -F'\t' -v inst=" ${installed_names} " '
         $1 != "" && index(inst, " " $1 " ") == 0 { cnt[$1]++ }
         END { for (s in cnt) printf "  · %s — %d item(s) · aibox autoclean %s\n", s, cnt[s], s }
@@ -333,7 +333,7 @@ DASHBLOCKS
   # updates: bounded wait for the async probes, then the section (omitted
   # entirely when nothing resolved — no noise on offline/unchanged)
   if [ -n "${tmpd}" ] && [ -n "${pids}" ]; then
-    timeout_s="${AIBOX_DASH_UPDATE_TIMEOUT:-10}"
+    timeout_s="${AIBOX_STATUS_UPDATE_TIMEOUT:-10}"
     waited=0
     while [ "${waited}" -lt "${timeout_s}" ]; do
       local alive=0
@@ -359,17 +359,17 @@ DASHBLOCKS
       fi
     done
     if [ -n "${upd_out}" ]; then
-      dash_secheader "updates"
+      status_secheader "updates"
       printf '%b' "${upd_out}"
     fi
     rm -rf "${tmpd}"
   fi
 
   printf '\n'
-  info "detail: aibox dashboard <module>  ·  catalog: aibox dashboard --available"
+  info "detail: aibox status <module>  ·  catalog: aibox status --available"
 }
 
-cmd_dashboard_detail() {
+cmd_status_detail() {
   local name="$1" ver hint
   # local-first: installed (or cached) modules render WITHOUT the registry —
   # the version/hint come from the LOCAL cache module.yaml; only genuinely
@@ -382,14 +382,14 @@ cmd_dashboard_detail() {
   [ -n "${ver}" ] || ver="$(module_field "$name" version)"
   if ! is_installed "$name"; then
     warn "$name is not installed"
-    hint="$(module_field "$name" dashboard_hint)"
-    [ -n "${hint}" ] || hint="(registry offline; catalog: aibox dashboard --available)"
+    hint="$(module_field "$name" status_hint)"
+    [ -n "${hint}" ] || hint="(registry offline; catalog: aibox status --available)"
     info "credentials: ${hint}"
     info "install: aibox install $name"
     return
   fi
   local info endpoint cred logf health state sym aver code ports entry port mark plist
-  info="$(AIBOX_MODULE="$name" AIBOX_HOME="$AIBOX_HOME" bash -c ". '$AIBOX_MOD_DIR/$name/lib.sh' 2>/dev/null && dashboard_info 2>/dev/null || true" 2>/dev/null)"
+  info="$(AIBOX_MODULE="$name" AIBOX_HOME="$AIBOX_HOME" bash -c ". '$AIBOX_MOD_DIR/$name/lib.sh' 2>/dev/null && status_info 2>/dev/null || true" 2>/dev/null)"
   aver="$(printf '%s\n' "$info" | sed -n 's/^version=//p' | head -1)"
   aver="${aver#v}"
   endpoint=$(printf '%s\n' "$info" | sed -n 's/^endpoint=//p')
@@ -397,7 +397,7 @@ cmd_dashboard_detail() {
   logf=$(printf '%s\n' "$info" | sed -n 's/^log=//p')
   health=$(printf '%s\n' "$info" | sed -n 's/^health=//p')
   state="$(printf '%s\n' "$info" | sed -n 's/^state=//p' | head -1)"
-  # keyline header (spec §Dashboard template): name + app version (dim
+  # keyline header (spec §Status template): name + app version (dim
   # module-version fallback) + state word; then the rule
   sym=""
   case "${state}" in
@@ -413,7 +413,7 @@ cmd_dashboard_detail() {
   fi
   [ -n "$sym" ] && printf ' %s·%s %s' "$C_DIM" "$C_RST" "$sym"
   printf '\n'
-  dash_rule
+  status_rule
   # endpoint row: live HTTP probe verdict merged (same 3s curl the old view
   # ran — local-first holds); non-http endpoints use the module's health=
   if [ -n "$endpoint" ]; then
@@ -663,17 +663,21 @@ cmd_module_action() {
     cmd_dev_guide "$name"
     return
   fi
-  # dashboard: module-OWNED rich view wins when the module declares a dashboard
-  # action (its svc.sh renders domain data — clash shows nodes+latency, base shows
-  # databases...); otherwise the manager's generic view (dashboard_info + health).
   if [ "${action}" = "dashboard" ]; then
+    usage_die "the 'dashboard' action was merged into 'status' — run: aibox ${name} status"
+  fi
+  # status: module-OWNED rich view wins when the module declares a status action
+  # (its svc.sh renders domain data — clash shows nodes+latency, base shows
+  # databases, windmill forwards its own status...); otherwise the manager's
+  # generic view (status_info + health). `status` was merged into `status`.
+  if [ "${action}" = "status" ]; then
     local _acts=""
     _acts="$(_module_meta_local "${name}" actions)"
     [ -z "${_acts}" ] && _acts="$(module_field "${name}" actions 2>/dev/null || true)"
     case " ${_acts} " in
-    *" dashboard "*) ;; # module-owned: fall through to the svc.sh dispatch
+    *" status "*) ;; # module-owned: fall through to the svc.sh dispatch
     *)
-      cmd_dashboard_detail "${name}"
+      cmd_status_detail "${name}"
       return
       ;;
     esac

@@ -118,8 +118,8 @@ app_version() {
   printf '%s' "${tag#v}"
 }
 
-# Dashboard interface (called by `aibox dashboard new-api`).
-dashboard_info() {
+# Status interface (called by `aibox status new-api`).
+status_info() {
   local port url v
   load_env
   port="$(effective_port)"
@@ -127,9 +127,9 @@ dashboard_info() {
   v="$(app_version)"
   [ -n "${v}" ] && echo "version=${v}"
   echo "endpoint=${url}"
-  echo "credential=first login: root / 123456 (change it immediately)"
+  echo "credential=upstream default for a virgin DB: root / 123456 — change it on first login (a pre-existing DB keeps its own password)"
   echo "db=shared base (PG database new_api + Redis via base.env)"
-  # state= is the machine-readable contract (aibox dashboard renders the icon:
+  # state= is the machine-readable contract (aibox status renders the icon:
   # ok=✓ / starting=⚠ / stopped=○); health= stays the human detail line.
   if container_running 2>/dev/null; then
     if api_up "${port}"; then
@@ -145,8 +145,8 @@ dashboard_info() {
   fi
 }
 
-# ---------- dashboard (the module's rich view — keyline template) ----------
-render_dashboard() {
+# ---------- status (the module's rich view — keyline template) ----------
+render_status() {
   load_env
   local port st state tbl="0"
   port="$(effective_port)"
@@ -158,24 +158,24 @@ render_dashboard() {
   else
     state="stopped"
   fi
-  dash_header "new-api" "$(app_version)" "${state}"
+  status_header "new-api" "$(app_version)" "${state}"
   # container
   if [ -n "${st}" ]; then
-    dash_row "container" "${st}"
+    status_row "container" "${st}"
   else
-    dash_row "container" "${C_YEL:-}not running (aibox new-api start)${C_RST:-}"
+    status_row "container" "${C_YEL:-}not running (aibox new-api start)${C_RST:-}"
   fi
   # app health
   if api_up "${port}"; then
-    dash_row "app" "http://127.0.0.1:${port} ${C_DIM:-}·${C_RST:-} ${C_GRN:-}✓ API up${C_RST:-}"
+    status_row "app" "http://127.0.0.1:${port} ${C_DIM:-}·${C_RST:-} ${C_GRN:-}✓ API up${C_RST:-}"
   elif [ -n "${st}" ]; then
-    dash_row "app" "http://127.0.0.1:${port} ${C_DIM:-}·${C_RST:-} ${C_YEL:-}starting${C_RST:-}"
+    status_row "app" "http://127.0.0.1:${port} ${C_DIM:-}·${C_RST:-} ${C_YEL:-}starting${C_RST:-}"
   else
-    dash_row "app" "http://127.0.0.1:${port}"
+    status_row "app" "http://127.0.0.1:${port}"
   fi
   # db
   tbl="$(docker exec aibox-base-postgres psql -U aibox -d new_api -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" 2>/dev/null || echo 0)"
-  [ "${tbl}" != "0" ] && dash_row "db" "shared PG new_api ${C_DIM:-}·${C_RST:-} ${tbl} tables"
-  dash_row "auth" "first login: root / 123456 (change it immediately)"
-  dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/new-api/"
+  [ "${tbl}" != "0" ] && status_row "db" "shared PG new_api ${C_DIM:-}·${C_RST:-} ${tbl} tables"
+  status_row "auth" "first login: root / 123456 (change it immediately)"
+  status_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/new-api/"
 }

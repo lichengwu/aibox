@@ -137,7 +137,7 @@ high-priority candidates (raced, not pinned — the fastest route serves).
 
 ## Standard actions
 
-`aibox clash start|stop|restart|status|logs` — the shared lifecycle; `dashboard` is the
+`aibox clash start|stop|restart|status|logs` — the shared lifecycle; `status` is the
 rich view (alias of `status`), and `doctor` is the standard diagnostic (deps, docker,
 state, declared ports; see below).
 
@@ -148,7 +148,6 @@ state, declared ports; see below).
 | `stop` | Stop the kernel (egress falls back) |
 | `restart` | Stop + start |
 | `status` | Kernel + subscription state + node latency table |
-| `dashboard` | Alias of status |
 | `refresh` | Force-refresh the subscription (auto: 1 week) |
 | `set` | <subscription-url> — store the subscription + generate config |
 | `select` | <node-name> — switch the active node |

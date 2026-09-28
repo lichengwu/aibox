@@ -159,8 +159,8 @@ wm_deploy_root() {
   printf '%s/windmill' "${base}"
 }
 
-# Dashboard interface (called by aibox dashboard): outputs endpoint/credential/health
-dashboard_info() {
+# Dashboard interface (called by aibox status): outputs endpoint/credential/health
+status_info() {
   # app version: the installed ops CLI's version (the dispatched CLI is this
   # module's deployable; the REMOTE deploy's own version is the CLI status's
   # business, not locally knowable)

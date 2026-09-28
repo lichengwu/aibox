@@ -185,9 +185,9 @@ _wait_http() { # $1 = port
   _kill_srv "$srv"
 }
 
-@test "dashboard_info: emits version/endpoint/credential/db/health fields" {
+@test "status_info: emits version/endpoint/credential/db/health fields" {
   unset NEW_API_PORT || true
-  out="$(dashboard_info)"
+  out="$(status_info)"
   printf '%s\n' "$out" | grep -q '^version=0\.13\.2$'   # app_version strips the cosmetic v
   printf '%s\n' "$out" | grep -q '^endpoint=http://127\.0\.0\.1:30300$'
   printf '%s\n' "$out" | grep -q '^credential=first login: root / 123456'
@@ -195,8 +195,8 @@ _wait_http() { # $1 = port
   printf '%s\n' "$out" | grep -q '^health=stopped'   # fake docker ps: empty
 }
 
-@test "render_dashboard: keyline header (app version) + sunk module row" {
-  run bash -c ". '$REPO_ROOT/tools/new-api/lib.sh'; render_dashboard"
+@test "render_status: keyline header (app version) + sunk module row" {
+  run bash -c ". '$REPO_ROOT/tools/new-api/lib.sh'; render_status"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   # app version in the header (image tag from .env), not the module version
   [[ "$output" == *"new-api 0.13.2"* ]] || false
@@ -260,8 +260,8 @@ _wait_http() { # $1 = port
   ! grep -qE '(PASSWORD|SECRET_KEY|API_KEY)=[^$]' "$y"
 }
 
-@test "render_dashboard: no docker → degrades, exit 0 under set -euo pipefail" {
-  run bash -c "set -euo pipefail; PATH=/usr/bin:/bin; . '$REPO_ROOT/tools/new-api/lib.sh'; render_dashboard"
+@test "render_status: no docker → degrades, exit 0 under set -euo pipefail" {
+  run bash -c "set -euo pipefail; PATH=/usr/bin:/bin; . '$REPO_ROOT/tools/new-api/lib.sh'; render_status"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"not running (aibox new-api start)"* ]] || false
 }

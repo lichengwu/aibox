@@ -86,7 +86,7 @@ For a complete teardown use `windmill --yes destroy --all` (it first relocates b
 
 ## Standard actions
 
-`aibox windmill start|stop|restart|status|logs` — the shared lifecycle; `dashboard` is the
+`aibox windmill start|stop|restart|status|logs` — the shared lifecycle; `status` is the
 rich view (alias of `status`), and `doctor` is the standard diagnostic (deps, docker,
 state, declared ports; see below).
 
@@ -97,7 +97,6 @@ state, declared ports; see below).
 | `stop` | Stop the stack |
 | `restart` | Recreate containers |
 | `status` | Stack health + version info |
-| `dashboard` | Same as status (dispatched to the CLI) |
 | `doctor` | Deep diagnostics (the CLI\'s check) |
 | `logs` | Container logs |
 | `shell` | Open a shell in the server container |

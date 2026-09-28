@@ -1,5 +1,5 @@
 name: xiaozhi
-version: 1.6.1
+version: 1.7.0
 module_iface: 1
 description: "Xiaozhi ESP32 server (docker compose): backend for xiaozhi-esp32 AI voice devices (manager console + websocket relay + bundled MySQL)"
 platform: ""
@@ -55,7 +55,6 @@ actions:
   - stop
   - restart
   - status
-  - dashboard
   - doctor
   - logs
   - credentials
@@ -81,7 +80,6 @@ usage:
   stop: "Stop containers"
   restart: "Recreate containers (applies .env changes)"
   status: "Container + console + ws + secret state + rich view"
-  dashboard: "Alias of status"
   doctor: "Deep diagnostics: deps, docker, state, declared ports"
   logs: "Container logs"
   credentials: "Admin login + secret location"
@@ -92,7 +90,7 @@ upstream:
   homepage: https://github.com/xinnan-tech/xiaozhi-esp32-server
   docs: https://github.com/xinnan-tech/xiaozhi-esp32-server/tree/main/docs
 
-dashboard:
+status:
   endpoints: http://127.0.0.1:31131
   hint: "Console: first registered user becomes the super admin; devices connect ws://<host>:31130/xiaozhi/v1/ (see: aibox xiaozhi status)"
 

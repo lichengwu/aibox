@@ -384,11 +384,11 @@ show_status() {
   curl -s -o /dev/null --max-time 3 -w "HTTP %{http_code} (pi/${PASSWORD})\n" -u "pi:${PASSWORD}" "http://127.0.0.1:${PORT}/" || echo "curl probe failed"
 }
 
-# Dashboard interface (machine-readable; the manager's views render it).
-# version= is the app version contract key (spec §Dashboard template).
+# Status interface (machine-readable; the manager's views render it).
+# version= is the app version contract key (spec §Status template).
 # Health classes align with the manager's verdict table: 2xx + 3xx + 401 =
 # alive (a 307 redirect to the UI was previously mis-reported "starting").
-dashboard_info() {
+status_info() {
   resolve_password
   local v code
   v="$(app_version)"
@@ -413,8 +413,8 @@ dashboard_info() {
   esac
 }
 
-# ---------- dashboard (the module's rich view — keyline template) ----------
-render_dashboard() {
+# ---------- status (the module's rich view — keyline template) ----------
+render_status() {
   resolve_password
   local aver code state svc="" _pid="" _lcout
   aver="$(app_version)"
@@ -463,18 +463,18 @@ render_dashboard() {
     fi
     ;;
   esac
-  dash_header "pi-web" "${aver}" "${state}"
-  dash_row "service" "${svc}"
+  status_header "pi-web" "${aver}" "${state}"
+  status_row "service" "${svc}"
   if [ "${code}" = "000" ]; then
-    dash_row "endpoint" "http://127.0.0.1:${PORT} ${C_DIM:-}(stopped — aibox pi-web start)${C_RST:-}"
+    status_row "endpoint" "http://127.0.0.1:${PORT} ${C_DIM:-}(stopped — aibox pi-web start)${C_RST:-}"
   else
     local mark=""
     case "${code}" in
     200 | 204 | 301 | 302 | 307 | 308 | 401) mark=" ${C_GRN:-}✓${C_RST:-}" ;;
     esac
-    dash_row "endpoint" "http://127.0.0.1:${PORT}${C_DIM:-} · ${C_RST:-}HTTP ${code}${mark}"
+    status_row "endpoint" "http://127.0.0.1:${PORT}${C_DIM:-} · ${C_RST:-}HTTP ${code}${mark}"
   fi
-  dash_row "auth" "pi / ${PASSWORD}"
-  dash_row "log" "${LOG_DIR}/pi-web.log"
-  dash_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/pi-web/"
+  status_row "auth" "pi / ${PASSWORD}"
+  status_row "log" "${LOG_DIR}/pi-web.log"
+  status_module_row "${MODULE_VERSION:-}" "${AIBOX_HOME:-$HOME/.aibox}/modules/pi-web/"
 }

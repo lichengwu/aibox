@@ -48,7 +48,7 @@ restart)
   sleep 3
   show_status
   ;;
-# dashboard is an alias of status — ONE merged "show state" verb, now the
+# status is an alias of status — ONE merged "show state" verb, now the
 # keyline rich view only: it carries the service state + pid, endpoint + HTTP
 # verdict, auth, log, module row. Raw launchctl/systemctl/lsof dumps live in
 # `diagnose` (they were interleaved above the rich view before — 精修 removes
@@ -136,8 +136,8 @@ config)
     ;;
   esac
   ;;
-status | dashboard)
-  render_dashboard
+status)
+  render_status
   ;;
 logs)
   tail -f "$LOG_DIR/pi-web.log" "$LOG_DIR/pi-web.err.log"
