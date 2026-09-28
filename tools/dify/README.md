@@ -182,7 +182,9 @@ exit `0` healthy · `3` a dependency is missing · `30` the service is not ready
 <!-- BEGIN GENERATED: config (scripts/gen-docs.sh) -->
 | key | default | notes |
 | --- | --- | --- |
-| `DIFY_PORT` | `8088` | host port (EXPOSE_NGINX_PORT; upstream default 80 collides) |
+| `DIFY_PORT` | `31101` | host port (EXPOSE_NGINX_PORT; upstream default 80 is privileged) |
+| `EXPOSE_NGINX_SSL_PORT` | `31443` | host HTTPS port (container stays 443; set 443 only with a public domain) |
+| `EXPOSE_PLUGIN_DEBUGGING_PORT` | `31503` | host port for the plugin debugger (container stays 5003) |
 | `SECRET_KEY` | `auto-generated (hex 32)` | session signing (secret) |
 | `INIT_PASSWORD` | `auto-generated (24 chars)` | admin initial password (secret) |
 | `DIFY_API_IMAGE` | `pinned 1.17.1 tag` | api image (pairs with _WEB/_SANDBOX/_PLUGIN_DAEMON/_AGENT_BACKEND/_DB/_REDIS/_WEAVIATE) |

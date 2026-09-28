@@ -186,7 +186,7 @@ state, declared ports; see below).
 | `OPENMAIC_BIN_DIR` | `${AIBOX_BIN_DIR:-~/.local/bin}` | install target of the dispatched CLI (knob) |
 | `OPENMAIC_CONF_DIR` | `/etc/openmaic` | conf file location (knob) |
 | `OPENMAIC_BASE_DIR` | `$AIBOX_HOME/apps/openmaic` | deploy root (knob) |
-| `OPENMAIC_HEALTH_URL` | `http://127.0.0.1:3000/api/health` | health probe URL (knob) |
+| `OPENMAIC_HEALTH_URL` | `http://127.0.0.1:31140/api/health` | health probe URL (host port; container stays 3000) (knob) |
 | `OPENMAIC_HEALTH_TIMEOUT` | `300` | health-wait seconds (knob) |
 | `OPENMAIC_BACKUP_KEEP` | `14` | backup retention count (knob) |
 | `OPENMAIC_RENDER_ENABLED` | `1` | render component switch (knob) |

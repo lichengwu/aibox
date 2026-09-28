@@ -294,6 +294,16 @@ scripts/validate-module.sh <name> | --all                                  # con
     files). The manager carries NO per-module residue map — validator WARNs when a module
     declares neither; spec: `docs/module-spec.md` §Residue cleanup.
 
+14. **Host ports MUST live in the aibox reserved band** (spec §Port allocation):
+    **30000–32999** — existing services **30000–30999**, new services **31000–31999**,
+    infrastructure **32000–32999**. Never ship a default on a
+    privileged port (<1024), a common-service port (3000/5000/8080/8443/8888/9000/9090/
+    7890/8000…), or inside Linux's ephemeral range (**32768–60999** — the kernel gives
+    those to outbound connections first). Container-internal ports are exempt. A genuinely
+    public port is declared explicitly with `:public` (e.g. `443/tcp:https:public`), and
+    every host port a module publishes must appear in `module.yaml` `ports:`. Enforced by
+    validator **S13j**; `port_policy_hint` explains a violation at runtime (doctor).
+
 ### #12 `while IFS= read -r a b c` reads the WHOLE line into the first variable
 
 **Symptom**: a JSON emitter iterated `"name profile version"` lines and every module came out

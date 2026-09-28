@@ -16,9 +16,9 @@ services:
     shm_size: 256m
     ports:
       # host port == container port (external_url must match what nginx listens on)
-      - "${GITLAB_HTTP_PORT:-8929}:${GITLAB_HTTP_PORT:-8929}"
+      - "${GITLAB_HTTP_PORT:-31110}:${GITLAB_HTTP_PORT:-31110}"
       # git-over-SSH: host 8922 → container 22 (gitlab-shell keeps listening on 22)
-      - "${GITLAB_SSH_PORT:-8922}:22"
+      - "${GITLAB_SSH_PORT:-31222}:22"
     volumes:
       - gitlab_config:/etc/gitlab
       - gitlab_logs:/var/log/gitlab
@@ -32,11 +32,11 @@ services:
       # `docker compose up` (bypassing aibox) from erroring on an unset var.
       GITLAB_ROOT_PASSWORD: "${GITLAB_ROOT_PASSWORD:-}"
       GITLAB_OMNIBUS_CONFIG: |
-        external_url '${GITLAB_EXTERNAL_URL:-http://localhost:8929}'
-        nginx['listen_port'] = ${GITLAB_HTTP_PORT:-8929}
+        external_url '${GITLAB_EXTERNAL_URL:-http://localhost:31110}'
+        nginx['listen_port'] = ${GITLAB_HTTP_PORT:-31110}
         nginx['listen_https'] = false
         prometheus_monitoring['enable'] = false
-        gitlab_rails['gitlab_shell_ssh_port'] = ${GITLAB_SSH_PORT:-8922}
+        gitlab_rails['gitlab_shell_ssh_port'] = ${GITLAB_SSH_PORT:-31222}
         puma['worker_processes'] = ${GITLAB_PUMA_WORKERS:-2}
         sidekiq['max_concurrency'] = ${GITLAB_SIDEKIQ_CONCURRENCY:-10}
         postgresql['shared_buffers'] = '256MB'

@@ -56,12 +56,12 @@ teardown() {
   grep -q 'PROFILE_HASH=1073' "$AIBOX_HOME/profiles/prod.conf"
 }
 
-@test "profile derivation: prod → PG 35177 / Redis 36336 / prod containers" {
+@test "profile derivation: prod → PG 32177 / Redis 32836 / prod containers" {
   export AIBOX_PROFILE=prod
   # shellcheck disable=SC1091
   source "$BATS_TEST_DIRNAME/../tools/base/lib.sh"
-  [ "$PG_PORT" = "35177" ]
-  [ "$REDIS_PORT" = "36336" ]
+  [ "$PG_PORT" = "32177" ]
+  [ "$REDIS_PORT" = "32836" ]
   [ "$POSTGRES_CONTAINER" = "aibox-base-prod-postgres" ]
   [ "$REDIS_CONTAINER" = "aibox-base-prod-redis" ]
   [ "$(base_deploy_root)" = "$AIBOX_HOME/apps/base-prod" ]
@@ -69,8 +69,8 @@ teardown() {
 
 @test "default profile: base → repo defaults unchanged" {
   # setup() sourced with AIBOX_PROFILE unset → base defaults
-  [ "$PG_PORT" = "35432" ]
-  [ "$REDIS_PORT" = "36379" ]
+  [ "$PG_PORT" = "32432" ]
+  [ "$REDIS_PORT" = "32379" ]
   [ "$POSTGRES_CONTAINER" = "aibox-base-postgres" ]
   [ "$ENV_FILE" = "$AIBOX_HOME/base.env" ]
   [ "$(base_deploy_root)" = "$AIBOX_HOME/apps/base" ]

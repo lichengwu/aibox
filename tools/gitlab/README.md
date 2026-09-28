@@ -142,9 +142,9 @@ exit `0` healthy · `3` a dependency is missing · `30` the service is not ready
 <!-- BEGIN GENERATED: config (scripts/gen-docs.sh) -->
 | key | default | notes |
 | --- | --- | --- |
-| `GITLAB_EXTERNAL_URL` | `http://localhost:8929` | external URL GitLab renders in links |
-| `GITLAB_HTTP_PORT` | `8929` | host HTTP port (upstream default 80 collides) |
-| `GITLAB_SSH_PORT` | `8922` | host SSH clone port |
+| `GITLAB_EXTERNAL_URL` | `http://localhost:31110` | external URL GitLab renders in links |
+| `GITLAB_HTTP_PORT` | `31110` | host HTTP port (upstream default 80 is privileged; the aibox band avoids collisions) |
+| `GITLAB_SSH_PORT` | `31222` | host SSH clone port |
 | `GITLAB_ROOT_PASSWORD` | `random` | root password seeded at install; applies at first boot with fresh volumes (verify: aibox gitlab credentials) (secret) |
 | `GITLAB_PUMA_WORKERS` | `2` | rails workers |
 | `GITLAB_SIDEKIQ_CONCURRENCY` | `10` | background job workers |

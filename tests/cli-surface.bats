@@ -68,8 +68,8 @@ EOF
   mkdir -p "$AIBOX_HOME/modules/base"
   # state=ok pins the header icon (without it the fallback port-probe is
   # environment-dependent: file:// registry provides base's ports → on a
-  # docker-less CI host 35432 never listens → ○ stopped, and the ✓ asserts fail)
-  printf 'dashboard_info() { echo "state=ok"; echo "endpoint=pg://127.0.0.1:35432"; echo "health=ok"; }\n' \
+  # docker-less CI host 32432 never listens → ○ stopped, and the ✓ asserts fail)
+  printf 'dashboard_info() { echo "state=ok"; echo "endpoint=pg://127.0.0.1:32432"; echo "health=ok"; }\n' \
     >"$AIBOX_HOME/modules/base/lib.sh"
   mkdir -p "$AIBOX_HOME/modules/new-api"
   printf 'dashboard_info() { echo "endpoint=http://127.0.0.1:30300"; echo "credential=first login"; echo "version=v0.13.2"; }\n' \
@@ -86,7 +86,7 @@ EOF
   [[ "$output" == *"✓ base 1.2.1"* ]] || false
   [[ "$output" == *"✓ new-api 0.13.2"* ]] || false
   # rows: colon-free grid, health merged into the endpoint row
-  [[ "$output" == *"pg://127.0.0.1:35432 · ok"* ]] || false
+  [[ "$output" == *"pg://127.0.0.1:32432 · ok"* ]] || false
   [[ "$output" == *"endpoint"*"http://127.0.0.1:30300"* ]] || false
   [[ "$output" == *"auth"*"first login"* ]] || false
   # version= is header-only now (upstream: label retired); sunk module row
@@ -123,14 +123,14 @@ EOF
 AIBOX_INSTALLED_base="1.2.1"
 EOF
   mkdir -p "$AIBOX_HOME/modules/base"
-  printf 'dashboard_info() { echo "endpoint=pg://127.0.0.1:35432"; echo "health=ok"; }\n' \
+  printf 'dashboard_info() { echo "endpoint=pg://127.0.0.1:32432"; echo "health=ok"; }\n' \
     >"$AIBOX_HOME/modules/base/lib.sh"
   run bash "$REPO_ROOT/bin/aibox" dashboard base
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   # keyline: dim module-version fallback (no version= in this mock), rule,
   # health merged into the endpoint row, sunk module row
   [[ "$output" == *"base 1.2.1"* ]] || false
-  [[ "$output" == *"pg://127.0.0.1:35432 · ok"* ]] || false
+  [[ "$output" == *"pg://127.0.0.1:32432 · ok"* ]] || false
   [[ "$output" == *"module"*"1.2.1 · "*"modules/base/"* ]] || false
   [[ "$output" != *"Failed to fetch module list"* ]] || false
 }
@@ -180,7 +180,7 @@ YAML
 AIBOX_INSTALLED_base="1.2.1"
 EOF2
   mkdir -p "$AIBOX_HOME/modules/base"
-  printf 'name: base\nversion: 1.2.1\ndescription: "Shared base (PG + Redis)"\nactions:\n  - start\n  - stop\nports:\n  - 35432/tcp:postgres\n' \
+  printf 'name: base\nversion: 1.2.1\ndescription: "Shared base (PG + Redis)"\nactions:\n  - start\n  - stop\nports:\n  - 32432/tcp:postgres\n' \
     >"$AIBOX_HOME/modules/base/module.yaml"
   for form in "" "help" "-h" "--help"; do
     run bash "$REPO_ROOT/bin/aibox" base ${form}
@@ -188,7 +188,7 @@ EOF2
     [[ "$output" == *"base · module 1.2.1"* ]]
     [[ "$output" == *"Shared base (PG + Redis)"* ]]
     [[ "$output" == *"usage:  aibox base <action>"* ]]
-    [[ "$output" == *"ports:    35432/tcp:postgres"* ]]
+    [[ "$output" == *"ports:    32432/tcp:postgres"* ]]
     [[ "$output" == *"module:   "*"/modules/base/"* ]]
     [[ "$output" != *"Failed to fetch module list"* ]]
   done

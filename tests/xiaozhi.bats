@@ -139,9 +139,9 @@ teardown() {
   # .config.yaml contract: manager-api url → the web container, secret empty,
   # device-facing ws URL with a LAN IP, ports from the defaults
   cfg="$AIBOX_HOME/apps/xiaozhi/data/.config.yaml"
-  grep -q '^  websocket: ws://[0-9.]*:8000/xiaozhi/v1/$' "$cfg"
-  grep -q '^  http_port: 8003$' "$cfg"
-  grep -q '^  vision_explain: http://[0-9.]*:8003/mcp/vision/explain$' "$cfg"
+  grep -q '^  websocket: ws://[0-9.]*:31130/xiaozhi/v1/$' "$cfg"
+  grep -q '^  http_port: 31132$' "$cfg"
+  grep -q '^  vision_explain: http://[0-9.]*:31132/mcp/vision/explain$' "$cfg"
   grep -q '^  url: http://aibox-xiaozhi-web:8002/xiaozhi$' "$cfg"
   grep -q '^  secret: ""$' "$cfg"
   # regression: the heredoc is UNQUOTED — unescaped backticks in comments would
@@ -159,9 +159,9 @@ teardown() {
 }
 
 @test "effective ports: defaults + XIAOZHI_*_PORT overrides honored" {
-  [ "$(effective_ws_port)" = "8000" ]
-  [ "$(effective_console_port)" = "8002" ]
-  [ "$(effective_http_port)" = "8003" ]
+  [ "$(effective_ws_port)" = "31130" ]
+  [ "$(effective_console_port)" = "31131" ]
+  [ "$(effective_http_port)" = "31132" ]
   XIAOZHI_WS_PORT=18000 XIAOZHI_CONSOLE_PORT=18002 XIAOZHI_HTTP_PORT=18003
   [ "$(effective_ws_port)" = "18000" ]
   [ "$(effective_console_port)" = "18002" ]
@@ -276,9 +276,9 @@ teardown() {
   unset XIAOZHI_CONSOLE_PORT || true
   out="$(dashboard_info)"
   printf '%s\n' "$out" | grep -q '^version=0\.9\.6 / 0\.9\.6$'
-  printf '%s\n' "$out" | grep -q '^endpoint=http://127\.0\.0\.1:8002$'
+  printf '%s\n' "$out" | grep -q '^endpoint=http://127\.0\.0\.1:31131$'
   printf '%s\n' "$out" | grep -q '^credential=console: first registered user becomes the super admin'
-  printf '%s\n' "$out" | grep -q '^ws=ws://[0-9.]*:8000/xiaozhi/v1/'
+  printf '%s\n' "$out" | grep -q '^ws=ws://[0-9.]*:31130/xiaozhi/v1/'
   printf '%s\n' "$out" | grep -q '^db=bundled MySQL mysql:8\.0 + shared base redis'
   printf '%s\n' "$out" | grep -q '^health=stopped'     # fake docker ps: empty
 }
@@ -326,9 +326,9 @@ teardown() {
   grep -q 'container_name: aibox-xiaozhi-server' "$y"
   grep -q 'container_name: aibox-xiaozhi-web' "$y"
   grep -q 'container_name: aibox-xiaozhi-mysql' "$y"
-  grep -q '"\${XIAOZHI_WS_PORT:-8000}:8000"' "$y"
-  grep -q '"\${XIAOZHI_CONSOLE_PORT:-8002}:8002"' "$y"
-  grep -q '"\${XIAOZHI_HTTP_PORT:-8003}:8003"' "$y"
+  grep -q '"\${XIAOZHI_WS_PORT:-31130}:8000"' "$y"
+  grep -q '"\${XIAOZHI_CONSOLE_PORT:-31131}:8002"' "$y"
+  grep -q '"\${XIAOZHI_HTTP_PORT:-31132}:8003"' "$y"
   # volumes with deterministic names
   grep -q 'name: \${XIAOZHI_MODELS_VOLUME:-aibox_xiaozhi_models}' "$y"
   grep -q 'name: \${XIAOZHI_UPLOAD_VOLUME:-aibox_xiaozhi_uploadfile}' "$y"

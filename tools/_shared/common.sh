@@ -189,6 +189,30 @@ shared_base_up() {
   net="$(base_network_name)"
   docker network inspect "${net}" >/dev/null 2>&1
 }
+# Host ports must live in the aibox RESERVED BAND (spec §Port allocation):
+# 31000-31999 services, 32000-32999 infrastructure. Three zones are refused:
+# privileged (<1024), Linux's ephemeral range (32768-60999 — the kernel hands
+# those to outbound connections first) and the common-service conventions
+# (3000/5000/8080/8443/8888/9000/9090/7890 …), which collide with whatever else
+# runs on the host. Prints a one-line reason for a non-compliant port ("" = ok).
+port_policy_hint() { # $1=port
+  local p="${1:-}"
+  case "${p}" in *[!0-9]*) return 0 ;; esac
+  if [ "${p}" -lt 1024 ]; then
+    printf 'privileged port (<1024) — needs CAP_NET_BIND and collides with real services'
+    return 0
+  fi
+  if [ "${p}" -ge 32768 ] && [ "${p}" -le 60999 ]; then
+    printf "inside Linux's ephemeral range (32768-60999) — the kernel may hand it to an outbound connection first"
+    return 0
+  fi
+  case "${p}" in
+  3000 | 3128 | 3306 | 4000 | 5000 | 5432 | 5555 | 6379 | 7000 | 7890 | 8000 | 8002 | 8003 | 8080 | 8081 | 8088 | 8443 | 8888 | 8929 | 9000 | 9090 | 10000)
+    printf 'a common service convention — likely to collide with another service on this host' ;;
+  esac
+  return 0
+}
+
 # ---------- shared diagnostics (`doctor`) ----------
 # Every module exposes a `doctor` action with the SAME shape (the audit found
 # doctor/check/diagnose/-none across modules and a hint pointing at a
@@ -261,6 +285,8 @@ module_doctor() { # $1=module name (defaults to $AIBOX_MODULE)
     local pnum="${entry%%/*}"
     case "${pnum}" in ''|*[!0-9]*) continue ;; esac
     if port_listening "${pnum}"; then ok "port        ${entry} listening"
+    local _phint; _phint="$(port_policy_hint "${pnum}")"
+    [ -n "${_phint}" ] && warn "port        ${pnum} is ${_phint} (spec §Port allocation: 31000-31999 services / 32000-32999 infra)"
     else info "port        ${entry} — (not listening)"; fi
   done
   [ -n "${ports}" ] || info "port        (none declared)"
@@ -1399,15 +1425,16 @@ profile_hash() { # $1=profile name → deterministic hash (stable across machine
   printf '%d' "${sum}"
 }
 
-# Port families: fixed ranges keep a family's instances far apart, and the +hash
+# Port families: fixed ranges inside the aibox reserved band (spec §Port allocation —
+# never Linux's ephemeral 32768-60999) keep a family's instances far apart, and the +hash
 # offsets spread instances inside the range. The DEFAULT profile never uses these
 # (it keeps the module's declared ports).
 profile_port() { # $1=family (pg|redis|web) $2=hash → port
   local fam="${1:-}" h="${2:-0}"
   case "${fam}" in
-  pg)    printf '%d' $(( 35100 + h % 332 )) ;;
-  redis) printf '%d' $(( 36100 + h % 279 )) ;;
-  web)   printf '%d' $(( 37100 + h % 100 )) ;;
+  pg)    printf '%d' $(( 32100 + h % 332 )) ;;
+  redis) printf '%d' $(( 32600 + h % 279 )) ;;
+  web)   printf '%d' $(( 31150 + h % 100 )) ;;
   *) return 1 ;;
   esac
 }

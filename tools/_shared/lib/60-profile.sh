@@ -16,15 +16,16 @@ profile_hash() { # $1=profile name → deterministic hash (stable across machine
   printf '%d' "${sum}"
 }
 
-# Port families: fixed ranges keep a family's instances far apart, and the +hash
+# Port families: fixed ranges inside the aibox reserved band (spec §Port allocation —
+# never Linux's ephemeral 32768-60999) keep a family's instances far apart, and the +hash
 # offsets spread instances inside the range. The DEFAULT profile never uses these
 # (it keeps the module's declared ports).
 profile_port() { # $1=family (pg|redis|web) $2=hash → port
   local fam="${1:-}" h="${2:-0}"
   case "${fam}" in
-  pg)    printf '%d' $(( 35100 + h % 332 )) ;;
-  redis) printf '%d' $(( 36100 + h % 279 )) ;;
-  web)   printf '%d' $(( 37100 + h % 100 )) ;;
+  pg)    printf '%d' $(( 32100 + h % 332 )) ;;
+  redis) printf '%d' $(( 32600 + h % 279 )) ;;
+  web)   printf '%d' $(( 31150 + h % 100 )) ;;
   *) return 1 ;;
   esac
 }

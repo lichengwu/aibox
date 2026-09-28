@@ -46,7 +46,7 @@ if [ ! -f "${ROOT}/.env" ]; then
 # via \${VAR:-default}; this file is the single override point).
 
 # ---- aibox overrides ----
-# Host web port (dify upstream defaults to 80; this module defaults to 8088 to avoid
+# Host web port (dify upstream defaults to 80; this module uses the aibox band 31101 to avoid
 # colliding with the windmill module). nginx listens internally on NGINX_PORT.
 # NOTE the naming trap: upstream's DIFY_PORT is the API gunicorn listen port
 # (5001), NOT the web port — the aibox knob is DIFY_WEB_PORT (measured live:
@@ -265,7 +265,7 @@ PLUGIN_DAEMON_KEY=${PLUGIN_DAEMON_KEY:-lYkiYYT6owG+71oLerGzA7GXCgOT++6ovaezWAjpC
 PLUGIN_DIFY_INNER_API_KEY=${PLUGIN_DIFY_INNER_API_KEY:-QaHbTe77CtuXmsfyhR7+vRjI/+XbV1AaFy691iy+kGDv2Jvy0/eAh8Y1}
 PLUGIN_DEBUGGING_HOST=0.0.0.0
 PLUGIN_DEBUGGING_PORT=5003
-EXPOSE_PLUGIN_DEBUGGING_PORT=5003
+EXPOSE_PLUGIN_DEBUGGING_PORT=31503
 
 # ---- weaviate (default vector store; from envs/vectorstores/weaviate.env.example) ----
 VECTOR_STORE=weaviate

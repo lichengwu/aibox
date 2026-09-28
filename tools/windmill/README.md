@@ -121,8 +121,9 @@ state, declared ports; see below).
 | `PROXY_URL` | `(unset)` | proxy for pulling source (store: /etc/windmill/windmill.conf) |
 | `WM_GHCR_MIRROR` | `(unset)` | ghcr.io mirror for image pulls |
 | `WM_HUB_MIRROR` | `(unset)` | docker.io mirror for image pulls |
-| `HTTP_PORT` | `8080` | the stack's HTTP port |
-| `BASE_URL` | `(unset)` | external URL, scheme+host only (no port, no path). https + a domain = automatic HTTPS and publishes 443; https + a bare IP = self-signed; empty = http on the detected IP + HTTP_PORT |
+| `HTTP_PORT` | `31100` | the stack's HTTP port (aibox band) |
+| `HTTPS_PORT` | `31443` | host port for the automatic HTTPS publish (container stays 443) |
+| `BASE_URL` | `(unset)` | external URL, scheme+host only (no port, no path). https + a domain = automatic HTTPS and publishes HTTPS_PORT (default 31443); https + a bare IP = self-signed; empty = http on the detected IP + HTTP_PORT |
 | `WM_WORKER_REPLICAS` | `3` | default-group worker replicas |
 | `WM_WORKER_MEMORY` | `1536M` | default-group worker memory cap |
 | `WM_NATIVE_REPLICAS` | `1` | native worker replicas |

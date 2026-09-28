@@ -1,5 +1,5 @@
 name: xiaozhi
-version: 1.4.5
+version: 1.5.0
 module_iface: 1
 description: "Xiaozhi ESP32 server (docker compose): backend for xiaozhi-esp32 AI voice devices (manager console + websocket relay + bundled MySQL)"
 platform: ""
@@ -11,13 +11,15 @@ deps:
   - docker
   - docker-compose
 
-# Upstream's own defaults (8000 ws / 8002 console / 8003 vision+OTA http); all
+# Host ports are in the aibox reserved band (spec §Port allocation): 31130 ws /
+# 31131 console / 31132 vision+OTA http — upstream's 8000/8002/8003 are common
 # three are free in this repo's port registry (overridable via XIAOZHI_*_PORT
-# in the deploy .env). Container-internal ports stay 8000/8002/8003.
+# defaults and collide with other services. All are overridable in the deploy .env;
+# container-internal ports stay 8000/8002/8003.
 ports:
-  - 8000/tcp:ws
-  - 8002/tcp:http
-  - 8003/tcp:http
+  - 31130/tcp:ws
+  - 31131/tcp:http
+  - 31132/tcp:http
 
 # The curated 3-service compose (server + web + bundled MySQL). Redis comes
 # from the shared aibox base via the external aiboxbasenet network + base.env.
@@ -61,9 +63,9 @@ actions:
   - config
 
 env:
-  XIAOZHI_WS_PORT: "8000 — websocket server port"
-  XIAOZHI_CONSOLE_PORT: "8002 — manager console port"
-  XIAOZHI_HTTP_PORT: "8003 — http API port"
+  XIAOZHI_WS_PORT: "31130 — host websocket port (container 8000)"
+  XIAOZHI_CONSOLE_PORT: "31131 — host console port (container 8002)"
+  XIAOZHI_HTTP_PORT: "31132 — host http API port (container 8003)"
   XIAOZHI_SERVER_IMAGE: "ghcr …:server_0.9.6 — server image (aibox upgrade floats it)"
   XIAOZHI_WEB_IMAGE: "ghcr …:web_0.9.6 — console image"
   XIAOZHI_MYSQL_IMAGE: "mysql:8.0 — bundled MySQL image"
@@ -91,8 +93,8 @@ upstream:
   docs: https://github.com/xinnan-tech/xiaozhi-esp32-server/tree/main/docs
 
 dashboard:
-  endpoints: http://127.0.0.1:8002
-  hint: "Console: first registered user becomes the super admin; devices connect ws://<host>:8000/xiaozhi/v1/ (see: aibox xiaozhi status)"
+  endpoints: http://127.0.0.1:31131
+  hint: "Console: first registered user becomes the super admin; devices connect ws://<host>:31130/xiaozhi/v1/ (see: aibox xiaozhi status)"
 
 # Pinned floor = the latest release (v0.9.6). The two ghcr images and mysql
 # are pulled by the docker DAEMON (egress differs from the host's); no static

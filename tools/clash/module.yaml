@@ -1,13 +1,13 @@
 name: clash
-version: 1.6.0
+version: 1.7.0
 module_iface: 1
 description: "Clash subscription proxy pool — mihomo kernel orchestration (auto speed-test/switch/failover)"
 platform: ""
 dir: tools/clash
 
 ports:
-  - 7890/tcp:mixed
-  - 9090/tcp:api
+  - 31790/tcp:mixed
+  - 31791/tcp:api
 
 # Preflight (enforced by aibox install/update; see docs/module-spec.md).
 # NOTE: no `domains:` gate — the install hook itself races the download source
@@ -71,5 +71,5 @@ upstream:
 
 dashboard:
   endpoints:
-    - "mixed: socks5://127.0.0.1:7890  api: http://127.0.0.1:9090"
-  hint: "Egress socks5://127.0.0.1:7890; API 127.0.0.1:9090 (state CLASH_SECRET)"
+    - "mixed: socks5://127.0.0.1:31790  api: http://127.0.0.1:31791"
+  hint: "Egress socks5://127.0.0.1:31790; API 127.0.0.1:31791 (state CLASH_SECRET; 7890/9090 stay free for your own client)"

@@ -16,8 +16,8 @@ CLASH_BIN_DIR="${CLASH_BIN_DIR:-${AIBOX_BIN_DIR:-${HOME}/.local/bin}}"
 KERNEL_DEST="${CLASH_BIN_DIR}/${KERNEL_NAME}"
 
 # Default ports (overridable via state)
-CLASH_PORT="${CLASH_PORT:-7890}"
-CLASH_API_PORT="${CLASH_API_PORT:-9090}"
+CLASH_PORT="${CLASH_PORT:-31790}"
+CLASH_API_PORT="${CLASH_API_PORT:-31791}"
 # Shared library (output helpers + docker.io pool): repo tools/_shared/common.sh,
 # shipped per-module as _common.sh (module.yaml includes: [common]).
 LIB_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -226,8 +226,8 @@ state_write() {
 SUB_URL="$1"
 CLASH_SECRET="$2"
 CLASH_ENABLED="$3"
-CLASH_PORT="${4:-7890}"
-CLASH_API_PORT="${5:-9090}"
+CLASH_PORT="${4:-31790}"
+CLASH_API_PORT="${5:-31791}"
 LAST_REFRESH="${6:-0}"
 KERNEL_TAG="${7:-}"
 CLASH_MODE="${8:-internal}"
@@ -441,7 +441,7 @@ _nodes_lines() { # → "delay|alive|name" lines, sorted by delay (dead last)
 # Render the module dashboard (invoked by `aibox clash dashboard`).
 render_dashboard() {
   state_load
-  local mode="${CLASH_MODE:-internal}" egress_port="${CLASH_PORT:-7890}" aver state
+  local mode="${CLASH_MODE:-internal}" egress_port="${CLASH_PORT:-31790}" aver state
   [ "${mode}" = "external" ] && egress_port="${CLASH_EXT_PORT:-${CLASH_PORT}}"
   if [ "${mode}" = "internal" ]; then
     aver="mihomo v${KERNEL_TAG:-unknown}"

@@ -114,9 +114,9 @@ exit `0` healthy · `3` a dependency is missing · `30` the service is not ready
 <!-- BEGIN GENERATED: config (scripts/gen-docs.sh) -->
 | key | default | notes |
 | --- | --- | --- |
-| `XIAOZHI_WS_PORT` | `8000` | websocket server port |
-| `XIAOZHI_CONSOLE_PORT` | `8002` | manager console port |
-| `XIAOZHI_HTTP_PORT` | `8003` | http API port |
+| `XIAOZHI_WS_PORT` | `31130` | host websocket port (container 8000) |
+| `XIAOZHI_CONSOLE_PORT` | `31131` | host console port (container 8002) |
+| `XIAOZHI_HTTP_PORT` | `31132` | host http API port (container 8003) |
 | `XIAOZHI_SERVER_IMAGE` | `ghcr …:server_0.9.6` | server image (aibox upgrade floats it) |
 | `XIAOZHI_WEB_IMAGE` | `ghcr …:web_0.9.6` | console image |
 | `XIAOZHI_MYSQL_IMAGE` | `mysql:8.0` | bundled MySQL image |

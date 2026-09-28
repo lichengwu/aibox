@@ -101,7 +101,11 @@ deps:
 # Declared ports (NNN/proto:usage). CI + validate-module.sh detect cross-module
 # conflicts. TODO: replace with the real ports.
 ports:
-  - 8080/tcp:http
+  # Host ports MUST live in the aibox reserved band (spec §Port allocation):
+  # 30000-30999 existing services · 31000-31999 services · 32000-32999 infra.
+  # Never 80/443, the common 3000/5000/8080/… conventions, or Linux's ephemeral
+  # range 32768-60999 (the kernel hands those to outbound connections first).
+  - 31100/tcp:http
 
 # Extra files (beyond the standard 5) that aibox must download alongside hooks.
 files:
@@ -521,7 +525,7 @@ services:
     container_name: aibox-__NAME__
     restart: unless-stopped
     ports:
-      - "${APP_PORT:-8080}:8080"
+      - "${APP_PORT:-31100}:8080"
     volumes:
       - app_data:/data
 

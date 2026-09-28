@@ -1,5 +1,5 @@
 name: gitlab
-version: 1.7.5
+version: 1.8.0
 module_iface: 1
 description: "GitLab CE self-hosted (omnibus docker): web UI + git over SSH, embedded PG/Redis"
 platform: ""
@@ -9,11 +9,12 @@ deps:
   - docker
   - docker-compose
 
-# HTTP 8929 (not 80: avoids windmill's default entry port on shared hosts);
-# git-over-SSH 8922 (host) → 22 (container). Both overridable via the deploy .env.
+# HTTP 31110 and git-over-SSH 31222: both in the aibox reserved band (spec §Port
+# allocation) — 80/22 are privileged and 8929/8922 sit in Linux's ephemeral range.
+# Both overridable via the deploy .env.
 ports:
-  - 8929/tcp:http
-  - 8922/tcp:git-ssh
+  - 31110/tcp:http
+  - 31222/tcp:git-ssh
 
 files:
   - docker-compose.yml
@@ -43,9 +44,9 @@ actions:
   - config
 
 env:
-  GITLAB_EXTERNAL_URL: "http://localhost:8929 — external URL GitLab renders in links"
-  GITLAB_HTTP_PORT: "8929 — host HTTP port (upstream default 80 collides)"
-  GITLAB_SSH_PORT: "8922 — host SSH clone port"
+  GITLAB_EXTERNAL_URL: "http://localhost:31110 — external URL GitLab renders in links"
+  GITLAB_HTTP_PORT: "31110 — host HTTP port (upstream default 80 is privileged; the aibox band avoids collisions)"
+  GITLAB_SSH_PORT: "31222 — host SSH clone port"
   GITLAB_ROOT_PASSWORD: "random — root password seeded at install; applies at first boot with fresh volumes (verify: aibox gitlab credentials) [secret]"
   GITLAB_PUMA_WORKERS: "2 — rails workers"
   GITLAB_SIDEKIQ_CONCURRENCY: "10 — background job workers"
@@ -72,7 +73,7 @@ upstream:
   docs: https://docs.gitlab.com/omnibus/docker/
 
 dashboard:
-  endpoints: http://127.0.0.1:8929
+  endpoints: http://127.0.0.1:31110
   hint: "Login root; password: aibox gitlab credentials (seeded + verified live)"
 
 # Component upgrades WITHOUT an aibox release (docs/module-spec.md §Component upgrades):

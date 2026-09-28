@@ -7,6 +7,62 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.22.0] — 2026-09-28
+
+### Changed
+
+- **Default host ports moved into the aibox reserved band.** Auditing every component
+  showed the fleet parked on ports that other software also claims: windmill 8080 (+ an
+  HTTPS publish on 443), dify 8088 **and 443** and 5003, openmaic 3000, xiaozhi
+  8000/8002/8003, clash 7890/9090 (7890 is every Clash client's default), gitlab
+  8929/8922 — and base's defaults plus ALL profile-derived ports sat inside Linux's
+  **ephemeral range (32768–60999)**, where the kernel can hand the port to an outbound
+  connection first. New defaults:
+
+  | module | was | now |
+  | --- | --- | --- |
+  | windmill HTTP / HTTPS | 8080 / 443 | **31100** / **31443** (new `HTTPS_PORT` knob; set 443 only with a public domain) |
+  | dify entry / HTTPS / plugin debug | 8088 / 443 / 5003 | **31101** / **31443** / **31503** |
+  | gitlab HTTP / git-SSH | 8929 / 8922 | **31110** / **31222** |
+  | openmaic | 3000 | **31140** |
+  | xiaozhi ws / console / http | 8000 / 8002 / 8003 | **31130 / 31131 / 31132** |
+  | clash mixed / API | 7890 / 9090 | **31790 / 31791** (your own client keeps 7890) |
+  | base PG / Redis | 35432 / 36379 | **32432 / 32379** |
+  | profile bands (PG/Redis/pi-web) | 35100+/36100+/37100+ | **32100+/32600+/31150+** |
+
+  Only **fresh installs** are affected: a deployed instance pins its ports in `.env`
+  (or its own conf) and keeps them. Migrating an existing instance:
+  `aibox <module> config set <PORT_KEY> <new>` then restart — windmill:
+  `aibox windmill config set HTTP_PORT 31100 && aibox windmill deploy --recreate`.
+  Container-internal ports (80/443/5432/6379/3000/8002 …) are unchanged.
+
+### Added
+
+- **Spec §Port allocation** — the normative rule, with the three refused zones
+  (privileged <1024, the common-service conventions, Linux's ephemeral 32768–60999),
+  the `:public` escape hatch for a genuine public port, and the profile allocator as
+  the only source of derived ports. AGENTS iron rule 14 points contributors at it.
+- **validator S13j**: a host port outside `30000–32999` is an ERROR (`:public` opts out);
+  the scaffolder now emits an in-band placeholder (31100), so a new module is compliant
+  from its first second.
+- **`port_policy_hint`** (shared library): `doctor` and the install-time port check now
+  explain *why* an out-of-band port is risky, so existing hosts see it too.
+- windmill `HTTPS_PORT` (default 31443) as a conf knob, and `module.yaml` for windmill
+  finally declares its entry port (it had none).
+
+### Fixed
+
+- `tools/windmill/module.yaml` had no `ports:` at all — the dashboard/preflight never
+  knew windmill's entry port.
+- tests that encoded the old defaults (including the profile derivation values) were
+  updated; a new `port-policy.bats` cross-checks every module's code default against its
+  `module.yaml` declaration so the two cannot drift again.
+
+### Module versions
+
+base 1.8.0 · clash 1.7.0 · dify 1.22.0 · gitlab 1.8.0 · new-api 1.4.6 · openmaic 1.5.0 ·
+pi-web 1.7.0 · windmill 1.7.0 · xiaozhi 1.5.0
+
 ## [0.21.2] — 2026-09-27
 
 ### Fixed
@@ -1471,6 +1527,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.22.0]: https://github.com/lichengwu/aibox/compare/v0.21.2...v0.22.0
 [0.21.2]: https://github.com/lichengwu/aibox/compare/v0.21.1...v0.21.2
 [0.21.1]: https://github.com/lichengwu/aibox/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/lichengwu/aibox/compare/v0.20.4...v0.21.0

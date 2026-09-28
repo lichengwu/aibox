@@ -7,7 +7,7 @@ load test_helper
 
 @test "profile_hash/profile_port: stable, documented values" {
   run bash -c "source '$AIBOX_BIN'; printf '%s|%s|%s|%s' \"\$(profile_hash prod)\" \"\$(profile_port pg \"\$(profile_hash prod)\")\" \"\$(profile_port redis \"\$(profile_hash prod)\")\" \"\$(profile_port web \"\$(profile_hash prod)\")\""
-  [ "$output" = "1073|35177|36336|37173" ] || { echo "got: $output"; false; }
+  [ "$output" = "1073|32177|32836|31223" ] || { echo "got: $output"; false; }
 }
 
 @test "profile_register: idempotent, sorted, one line per profile" {
@@ -20,14 +20,14 @@ load test_helper
   # BSD wc pads the count with spaces; compare normalised
   [ "${output// /}" = "2
 1" ] || { echo "got: $output"; false; }
-  grep -q '^stage pg=35327 redis=36260 web=37155$' "$AIBOX_HOME/ports.conf" || { cat "$AIBOX_HOME/ports.conf"; false; }
+  grep -q '^stage pg=32327 redis=32760 web=31205$' "$AIBOX_HOME/ports.conf" || { cat "$AIBOX_HOME/ports.conf"; false; }
 }
 
 @test "profile_owner: maps a registered port back to its profile" {
   run bash -c "
     source '$AIBOX_BIN'
     profile_register stage
-    printf '%s|%s' \"\$(profile_owner 35327)\" \"\$(profile_owner 36000)\"
+    printf '%s|%s' \"\$(profile_owner 32327)\" \"\$(profile_owner 36000)\"
   "
   [ "$output" = "stage|" ] || { echo "got: $output"; false; }
 }
@@ -36,15 +36,15 @@ load test_helper
   # 1. another profile registered MY slot and it is LIVE → conflict, owner named
   run bash -c "
     source '$AIBOX_BIN'
-    printf 'other pg=35177 redis=36336 web=37173\n' >'$AIBOX_HOME/ports.conf'
-    port_listening() { [ \"\$1\" = 35177 ]; }
+    printf 'other pg=32177 redis=32836 web=31223\n' >'$AIBOX_HOME/ports.conf'
+    port_listening() { [ \"\$1\" = 32177 ]; }
     profile_conflicts prod
   "
-  [ "$output" = "other 35177" ] || { echo "got: $output"; false; }
+  [ "$output" = "other 32177" ] || { echo "got: $output"; false; }
   # 2. the same registration but the port is NOT live → no conflict
   run bash -c "
     source '$AIBOX_BIN'
-    printf 'other pg=35177 redis=36336 web=37173\n' >'$AIBOX_HOME/ports.conf'
+    printf 'other pg=32177 redis=32836 web=31223\n' >'$AIBOX_HOME/ports.conf'
     port_listening() { return 1; }
     profile_conflicts prod
   "
@@ -63,10 +63,10 @@ load test_helper
   run bash -c "
     source '$AIBOX_BIN'
     rm -f '$AIBOX_HOME/ports.conf'
-    port_listening() { [ \"\$1\" = 35177 ]; }
+    port_listening() { [ \"\$1\" = 32177 ]; }
     profile_conflicts prod
   "
-  [ "$output" = "unknown 35177" ] || { echo "got: $output"; false; }
+  [ "$output" = "unknown 32177" ] || { echo "got: $output"; false; }
 }
 
 @test "profile_conflicts: only aibox knowledge is used (no docker query)" {
@@ -74,11 +74,11 @@ load test_helper
   run bash -c "
     source '$AIBOX_BIN'
     docker() { printf 'aibox-base-prod-postgres\n'; }
-    printf 'other pg=35177 redis=36336 web=37173\n' >'$AIBOX_HOME/ports.conf'
-    port_listening() { [ \"\$1\" = 35177 ]; }
+    printf 'other pg=32177 redis=32836 web=31223\n' >'$AIBOX_HOME/ports.conf'
+    port_listening() { [ \"\$1\" = 32177 ]; }
     profile_conflicts prod
   "
-  [ "$output" = "other 35177" ] || { echo "got: $output"; false; }
+  [ "$output" = "other 32177" ] || { echo "got: $output"; false; }
   ! grep -q '_port_owner_container' "$AIBOX_BIN" || { echo "the docker-query helper is back"; false; }
 }
 
@@ -101,7 +101,7 @@ load test_helper
   run bash -c "
     source '$AIBOX_BIN'
     rm -f '$AIBOX_HOME/ports.conf'
-    port_listening() { [ \"\$1\" = 35177 ]; }
+    port_listening() { [ \"\$1\" = 32177 ]; }
     profile_ensure prod '$AIBOX_HOME/profiles/prod.conf'
   "
   [ "$status" -eq 4 ] || { echo "expected exit 4, got $status: $output"; false; }
@@ -112,8 +112,8 @@ load test_helper
 @test "profile_ensure: a LIVE port owned by ANOTHER profile dies with exit 4" {
   run bash -c "
     source '$AIBOX_BIN'
-    printf 'other pg=35177 redis=36336 web=37173\n' >'$AIBOX_HOME/ports.conf'
-    port_listening() { [ \"\$1\" = 35177 ]; }
+    printf 'other pg=32177 redis=32836 web=31223\n' >'$AIBOX_HOME/ports.conf'
+    port_listening() { [ \"\$1\" = 32177 ]; }
     profile_ensure prod '$AIBOX_HOME/profiles/prod.conf'
   "
   [ "$status" -eq 4 ] || { echo "expected exit 4, got $status: $output"; false; }

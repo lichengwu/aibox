@@ -17,6 +17,8 @@ check_ports() {
       pid="$(ss -Htlnp "sport = :$port" 2>/dev/null | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)"
     fi
     warn "Port ${port} already in use${pid:+ (PID ${pid})}; overridable via env var"
+    _phint="$(port_policy_hint "${port}")"
+    [ -n "${_phint}" ] && warn "  and it is ${_phint} (prefer the aibox band: 31000-31999 services / 32000-32999 infra — spec §Port allocation)"
   done
 }
 

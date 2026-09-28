@@ -483,6 +483,21 @@ validate_module() {
     warn "install.sh touches .env but module.yaml declares no state_files: — declare what the user owns (never overwritten)"
   fi
 
+  # --- S13j: host ports live in the aibox reserved band (spec §Port allocation) ---
+  # 30000-30999 existing service ports, 31000-31999 services, 32000-32999 infra. Refused: privileged (<1024),
+  # Linux's ephemeral range (32768-60999) and the common-service conventions
+  # (3000/5000/8080/8443/8888/9000/9090/7890 …). A `:public` suffix on a port entry
+  # is the explicit escape hatch for a genuine public port (80/443 with a domain).
+  local _bp _bpnum _bad=""
+  for _bp in $(awk '/^ports:/{f=1;next} /^[a-z_]+:/{f=0} f&&/^  - /{sub(/^  - /,""); print}' "$f" 2>/dev/null); do
+    case "${_bp}" in *:public*) continue ;; esac
+    _bpnum="${_bp%%/*}"
+    case "${_bpnum}" in *[!0-9]* | "") continue ;; esac
+    if [ "${_bpnum}" -ge 30000 ] && [ "${_bpnum}" -le 32999 ]; then continue; fi
+    _bad="${_bad} ${_bp}"
+  done
+  [ -z "${_bad}" ] || err "host port(s) outside the aibox reserved band (30000-32999; services 31000+/infra 32000+; add ':public' only for a real public port):${_bad} — spec §Port allocation"
+
   # --- S13i: dispatch CLIs must alias start/stop/restart (spec §CLI surface) ---
   # A module that passes actions to its own CLI (svc.sh execs $CLI / a dispatch
   # binary) has to translate the standard lifecycle verbs onto that CLI's spelling,

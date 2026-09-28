@@ -3,8 +3,8 @@
 
 MODULE_NAME="gitlab"
 CONTAINER_NAME="aibox-gitlab"
-DEFAULT_HTTP_PORT="8929"
-DEFAULT_SSH_PORT="8922"
+DEFAULT_HTTP_PORT="31110"
+DEFAULT_SSH_PORT="31222"
 DEFAULT_IMAGE="gitlab/gitlab-ce:19.2.6-ce.0"
 # Shared library (output helpers + docker.io pool): repo tools/_shared/common.sh,
 # shipped per-module as _common.sh (module.yaml includes: [common]).
@@ -205,7 +205,7 @@ render_dashboard() {
     2?? | 3?? | 401) dash_row "web" "http://127.0.0.1:${port} ${C_DIM:-}·${C_RST:-} ${C_GRN:-}✓ HTTP ${code}${C_RST:-}" ;;
     *) dash_row "web" "http://127.0.0.1:${port} ${C_DIM:-}·${C_RST:-} ${C_YEL:-}HTTP ${code}${C_RST:-}" ;;
     esac
-    dash_row "ssh" ":${GITLAB_SSH_PORT:-8922} (git over SSH)"
+    dash_row "ssh" ":${GITLAB_SSH_PORT:-31222} (git over SSH)"
   else
     dash_row "container" "${C_YEL:-}not running (aibox gitlab start)${C_RST:-}"
   fi

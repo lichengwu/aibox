@@ -206,14 +206,14 @@ exit `0` healthy · `3` a dependency is missing · `30` the service is not ready
 <!-- BEGIN GENERATED: config (scripts/gen-docs.sh) -->
 | key | default | notes |
 | --- | --- | --- |
-| `AIBOX_BASE_POSTGRES_PORT` | `35432` | host PostgreSQL port |
+| `AIBOX_BASE_POSTGRES_PORT` | `32432` | host PostgreSQL port (infra band; profiles derive 32100+h%332) |
 | `AIBOX_BASE_POSTGRES_USER` | `aibox` | PG superuser (consuming modules get it via base.env) |
 | `AIBOX_BASE_POSTGRES_PASSWORD` | `aibox` | PG password (override via this key; consumers read base.env) (secret) |
 | `AIBOX_BASE_PG_IMAGE` | `postgres:18` | postgres image pin (floated by `aibox base upgrade --pg`; written to the deploy-root .env) |
 | `AIBOX_BASE_REDIS_IMAGE` | `redis:7` | redis image pin (floated by `aibox base upgrade --redis`) |
 | `AIBOX_BASE_REDIS_PASSWORD` | `(generated)` | Redis auth password (published in base.env as AIBOX_REDIS_PASSWORD) |
 | `AIBOX_BASE_BIND` | `127.0.0.1` | host interface the ports bind to (use 0.0.0.0 only when a remote host must reach them) |
-| `AIBOX_BASE_REDIS_PORT` | `36379` | host Redis port |
+| `AIBOX_BASE_REDIS_PORT` | `32379` | host Redis port (infra band; profiles derive 32600+h%279) |
 | `AIBOX_DOCKER_POOL` | `shipped pool` | docker.io mirror list override (direct = off) (knob) |
 | `AIBOX_DOCKER_MIRROR` | `(unset)` | user mirror, tried first (knob) |
 | `AIBOX_DOCKER_FORCE_POOL` | `0` | 1 = skip the direct probe, always engage the pool (knob) |

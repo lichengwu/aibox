@@ -51,8 +51,8 @@ teardown() {
   run env AIBOX_MODULE=base bash "$SVC" profile
   [ "$status" -eq 0 ]
   [[ "$output" == *"base"* ]]
-  [[ "$output" == *"35432"* ]]
-  [[ "$output" == *"36379"* ]]
+  [[ "$output" == *"32432"* ]]
+  [[ "$output" == *"32379"* ]]
 }
 
 @test "profile: named profile appears with derived ports after first use" {
@@ -63,8 +63,8 @@ teardown() {
   run env AIBOX_MODULE=base bash "$SVC" profile
   [ "$status" -eq 0 ]
   [[ "$output" == *"prod"* ]]
-  [[ "$output" == *"35177"* ]]
-  [[ "$output" == *"36336"* ]]
+  [[ "$output" == *"32177"* ]]
+  [[ "$output" == *"32836"* ]]
 }
 
 @test "unknown action: unified fallback points to --help (drift-free)" {

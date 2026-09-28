@@ -6,7 +6,7 @@
 #   - conf whitelist accepts the new keys (aibox windmill config set)
 #   - rendered compose interpolates the worker/indexer/log knobs
 #   - BASE_URL drives the Caddyfile site + the 443 publish (https) + harden
-#   - the default entry port is 8080 everywhere (was 80 in code, 8080 in docs)
+#   - the default entry port is 31100 everywhere (was 80 in code, 31100 in docs)
 #   - backup retention reaches the systemd unit (Environment=KEEP)
 # Pure render tests: the CLI is sourced with the source guard, no docker.
 
@@ -38,23 +38,23 @@ _conf() { # $1=KEY $2=value
   printf '%s=%s\n' "$1" "$2" >>"$WM_CONF_FILE"
 }
 
-# ---------- default entry port: 8080 everywhere ------------------------------
+# ---------- default entry port: 31100 everywhere ------------------------------
 
-@test "default: entry port is 8080 (code default, no conf, no .env)" {
+@test "default: entry port is 31100 (code default, no conf, no .env)" {
   _wm 'printf "%s" "$HTTP_PORT"'
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [ "$output" = "8080" ] || { echo "got: $output"; false; }
+  [ "$output" = "31100" ] || { echo "got: $output"; false; }
 }
 
-@test "default: the rendered caddy publish uses the 8080 default" {
+@test "default: the rendered caddy publish uses the 31100 default" {
   _wm 'wm_paths; render_compose'
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  grep -q '"\${HTTP_PORT:-8080}:80"' "$WM_DIR/docker-compose.yml" || { false; }
+  grep -q '"\${HTTP_PORT:-31100}:80"' "$WM_DIR/docker-compose.yml" || { false; }
 }
 
-@test "module.yaml: the declared port matches the 8080 default" {
-  grep -q '8080/tcp:http' "$REPO_ROOT/tools/windmill/module.yaml" || false
-  grep -q 'HTTP_PORT: "8080' "$REPO_ROOT/tools/windmill/module.yaml" || false
+@test "module.yaml: the declared port matches the 31100 default" {
+  grep -q '31100/tcp:http' "$REPO_ROOT/tools/windmill/module.yaml" || false
+  grep -q 'HTTP_PORT: "31100' "$REPO_ROOT/tools/windmill/module.yaml" || false
 }
 
 @test "conf: HTTP_PORT still overrides the default" {
@@ -96,7 +96,7 @@ _conf() { # $1=KEY $2=value
   run bash -c "CFG_YAML='$REPO_ROOT/tools/windmill/module.yaml' CFG_STORE='$WM_CONF_FILE' bash -c 'source $REPO_ROOT/tools/_shared/common.sh; cfg_action list'"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"BASE_URL"* ]] || false
-  [[ "$output" == *"(default: 8080)"* ]] || false
+  [[ "$output" == *"(default: 31100)"* ]] || false
   [[ "$output" == *"WM_WORKER_REPLICAS"* ]] || false
 }
 
@@ -117,14 +117,14 @@ _conf() { # $1=KEY $2=value
 
 @test "compose: no 443 publish for a plain HTTP deployment" {
   _wm 'wm_paths; render_compose'
-  ! grep -q '443:443' "$WM_DIR/docker-compose.yml" || { false; }
+  ! grep -q '31443:443' "$WM_DIR/docker-compose.yml" || { false; }
 }
 
 @test "compose: https BASE_URL publishes 443 and points caddy at the URL" {
   _conf BASE_URL "https://wm.example.com"
   _wm 'wm_paths; render_compose'
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  grep -q -- '- "443:443"' "$WM_DIR/docker-compose.yml" || { false; }
+  grep -q -- '- "31443:443"' "$WM_DIR/docker-compose.yml" || { false; }
   grep -q 'BASE_URL="\${BASE_URL:-:80}"' "$WM_DIR/docker-compose.yml" || { grep -n BASE_URL "$WM_DIR/docker-compose.yml"; false; }
 }
 
@@ -156,11 +156,11 @@ _conf() { # $1=KEY $2=value
   _conf LOG_MAX_SIZE "50m"
   _conf WM_WORKER_REPLICAS "6"
   _conf BASE_URL "https://wm.example.com"
-  _wm 'wm_paths; render_env 1.811.1 secret 8080'
+  _wm 'wm_paths; render_env 1.811.1 secret 31100'
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   local e="$WM_DIR/.env"
   grep -q '^BASE_URL=https://wm.example.com$' "$e" || { false; }
-  grep -q '^HTTP_PORT=8080$' "$e" || false
+  grep -q '^HTTP_PORT=31100$' "$e" || false
   grep -q '^LOG_MAX_SIZE=50m$' "$e" || false
   grep -q '^LOG_MAX_FILE=10$' "$e" || false
   grep -q '^WM_WORKER_REPLICAS=6$' "$e" || false
@@ -173,7 +173,7 @@ _conf() { # $1=KEY $2=value
 }
 
 @test "env: sync_env_knobs applies a conf change without touching credentials" {
-  _wm 'wm_paths; render_env 1.811.1 secret 8080'
+  _wm 'wm_paths; render_env 1.811.1 secret 31100'
   local before; before="$(grep '^POSTGRES_PASSWORD=' "$WM_DIR/.env")"
   _conf WM_WORKER_REPLICAS "8"
   _conf BASE_URL "https://wm.example.com"
@@ -185,14 +185,14 @@ _conf() { # $1=KEY $2=value
 }
 
 @test "env: sync_env_knobs warns when the TLS publish needs a re-render" {
-  _wm 'wm_paths; render_env 1.811.1 secret 8080'
+  _wm 'wm_paths; render_env 1.811.1 secret 31100'
   _conf BASE_URL "https://wm.example.com"
   _wm 'wm_paths; sync_env_knobs'
   [[ "$output" == *"deploy --recreate"* ]] || { echo "$output"; false; }
 }
 
 @test "env: a hand-set knob in .env survives when the conf has no explicit value" {
-  _wm 'wm_paths; render_env 1.811.1 secret 8080'
+  _wm 'wm_paths; render_env 1.811.1 secret 31100'
   # a deploy host editing its own instance copy (the documented precedence)
   _wm 'wm_paths; set_env WM_WORKER_REPLICAS 9'
   _wm 'wm_paths; sync_env_knobs'
@@ -205,14 +205,14 @@ _conf() { # $1=KEY $2=value
 }
 
 @test "env: BASE_URL living only in .env still drives TLS" {
-  _wm 'wm_paths; render_env 1.811.1 secret 8080'
+  _wm 'wm_paths; render_env 1.811.1 secret 31100'
   _wm 'wm_paths; set_env BASE_URL https://wm.example.com'
   _wm 'wm_paths; sync_env_knobs >/dev/null; base_url_tls && echo TLS-ON'
   [[ "$output" == *"TLS-ON"* ]] || { echo "$output"; false; }
 }
 
 @test "env: comments render literally (no command substitution in the unquoted heredoc)" {
-  _wm 'wm_paths; render_env 1.811.1 secret 8080'
+  _wm 'wm_paths; render_env 1.811.1 secret 31100'
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   # backticks inside an UNQUOTED heredoc would EXECUTE (this once ran `tls internal`
   # and `windmill systemd install` while rendering the .env comments)
@@ -227,7 +227,7 @@ _conf() { # $1=KEY $2=value
   [ "$output" = "true|true|true" ] || { echo "got: $output"; false; }
   _wm 'wm_paths; render_compose'
   grep -q 'ENABLE_MULTIPLAYER=\${ENABLE_MULTIPLAYER:-false}' "$WM_DIR/docker-compose.yml" || { grep -n ENABLE_ "$WM_DIR/docker-compose.yml"; false; }
-  _wm 'wm_paths; render_env 1.811.1 secret 8080'
+  _wm 'wm_paths; render_env 1.811.1 secret 31100'
   grep -q '^ENABLE_MULTIPLAYER=true$' "$WM_DIR/.env" || false
 }
 
@@ -253,7 +253,7 @@ _conf() { # $1=KEY $2=value
 
 @test "instance_url: without BASE_URL the IP + port form is kept" {
   _wm 'wm_paths; printf "%s" "$(instance_url)"'
-  [[ "$output" == http://*:8080 ]] || { echo "got: $output"; false; }
+  [[ "$output" == http://*:31100 ]] || { echo "got: $output"; false; }
 }
 
 @test "base_url validation: a port in BASE_URL is rejected with guidance" {

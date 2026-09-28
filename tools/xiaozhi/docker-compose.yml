@@ -26,9 +26,9 @@ services:
       - TZ=${TZ:-Asia/Shanghai}
     ports:
       # device websocket (ws://<host>:8000/xiaozhi/v1/)
-      - "${XIAOZHI_WS_PORT:-8000}:8000"
+      - "${XIAOZHI_WS_PORT:-31130}:8000"
       # http service: vision-analysis + single-server OTA
-      - "${XIAOZHI_HTTP_PORT:-8003}:8003"
+      - "${XIAOZHI_HTTP_PORT:-31132}:8003"
     volumes:
       # config (.config.yaml) + runtime files — upstream mounts ./data; the
       # install hook renders .config.yaml here BEFORE first start.
@@ -61,7 +61,7 @@ services:
       - SPRING_DATA_REDIS_PORT=${AIBOX_REDIS_PORT}
     ports:
       # 智控台 console (nginx → Java :8003 internal)
-      - "${XIAOZHI_CONSOLE_PORT:-8002}:8002"
+      - "${XIAOZHI_CONSOLE_PORT:-31131}:8002"
     volumes:
       - xiaozhi_uploadfile:/uploadfile
     networks:

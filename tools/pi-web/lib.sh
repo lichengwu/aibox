@@ -47,7 +47,7 @@ MODULE_VERSION="${AIBOX_MODULE_VERSION:-$(meta_version "${LIB_SELF}/module.yaml"
 # ---------- profile ----------
 # AIBOX_PROFILE defaults to "base" (exported by aibox's --profile flag).
 # profile="base" → no override (PORT=30141, LABEL=pi-web, current behavior).
-# profile=<name>  → hash-derived PORT (37100 range) + LABEL suffixed with profile name.
+# profile=<name>  → hash-derived PORT (31150 range) + LABEL suffixed with profile name.
 # Same profile name → same PORT/LABEL on every machine (deterministic).
 # Shares the profile config ($AIBOX_HOME/profiles/<name>.conf) with base — each module
 # derives its own vars from PROFILE_HASH + PROFILE_NAME in the config.
@@ -66,7 +66,7 @@ _profile_load() {
     return 1
   fi
   local _h="${PROFILE_HASH:-0}" _n="${PROFILE_NAME:-$AIBOX_PROFILE}"
-  PORT=$((37100 + _h % 100))
+  PORT=$((31150 + _h % 100))
   LABEL="pi-web-${_n}"
   if [ "$OS_KIND" = "Darwin" ]; then
     PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"

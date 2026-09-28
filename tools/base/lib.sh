@@ -25,7 +25,7 @@ MODULE_VERSION="${AIBOX_MODULE_VERSION:-$(meta_version "${LIB_SELF}/module.yaml"
 
 # ---------- profile ----------
 # AIBOX_PROFILE defaults to "base" (exported by aibox's --profile flag, or set in env).
-# profile="base" → no override; compose ${VAR:-default} → repo defaults (35432/36379, etc.).
+# profile="base" → no override; compose ${VAR:-default} → repo defaults (32432/32379, etc.).
 # profile=<name>  → hash-derived ports/containers/volumes/network, auto-generated config.
 # Same profile name → same hash → same values on every machine (deterministic, no coordination).
 
@@ -56,8 +56,8 @@ _profile_load() {
   # names come from the SHARED helpers (tools/_shared/common.sh) — consumers
   # resolve the same paths there, so base and its consumers can never disagree
   # (a hardcoded `base.env` in a consumer was the P0 of the 2026-09 review).
-  PG_PORT=$((35100 + _h % 332))
-  REDIS_PORT=$((36100 + _h % 279))
+  PG_PORT=$((32100 + _h % 332))
+  REDIS_PORT=$((32600 + _h % 279))
   POSTGRES_CONTAINER="$(base_pg_container)"
   REDIS_CONTAINER="$(base_redis_container)"
   ENV_FILE="$(base_env_file)"
@@ -84,7 +84,7 @@ _profile_load() {
 _profile_list() {
   local pf_dir="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/profiles"
   echo "Profiles:"
-  echo "  base       PG=35432  Redis=36379  (default, from project)"
+  echo "  base       PG=32432  Redis=32379  (default, from project)"
   if [ -d "$pf_dir" ]; then
     for f in "$pf_dir"/*.conf; do
       [ -f "$f" ] || continue
@@ -92,7 +92,7 @@ _profile_list() {
       cfg_kv_load "$f" PROFILE_
       [ -n "$PROFILE_NAME" ] || continue
       printf '  %-10s PG=%-6d Redis=%-6d\n' "$PROFILE_NAME" \
-        $((35100 + PROFILE_HASH % 332)) $((36100 + PROFILE_HASH % 279))
+        $((32100 + PROFILE_HASH % 332)) $((32600 + PROFILE_HASH % 279))
     done
   fi
 }
@@ -120,11 +120,11 @@ base_deploy_root() {
 
 # Defaults (profile="base" or unset). _profile_load overrides these for named profiles.
 PG_HOST="127.0.0.1"
-PG_PORT="${AIBOX_BASE_POSTGRES_PORT:-35432}"
+PG_PORT="${AIBOX_BASE_POSTGRES_PORT:-32432}"
 PG_USER="${AIBOX_BASE_POSTGRES_USER:-aibox}"
 PG_PASSWORD="${AIBOX_BASE_POSTGRES_PASSWORD:-aibox}"
 REDIS_HOST="127.0.0.1"
-REDIS_PORT="${AIBOX_BASE_REDIS_PORT:-36379}"
+REDIS_PORT="${AIBOX_BASE_REDIS_PORT:-32379}"
 POSTGRES_CONTAINER="${AIBOX_BASE_PG_CONTAINER:-aibox-base-postgres}"
 REDIS_CONTAINER="${AIBOX_BASE_REDIS_CONTAINER:-aibox-base-redis}"
 ENV_FILE="${AIBOX_HOME:-${HOME:+$HOME/.aibox}}/base.env"

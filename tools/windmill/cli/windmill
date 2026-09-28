@@ -92,10 +92,14 @@ wm_conf_load() {
 wm_conf_load
 
 # --- Defaults ----------------------------------------------------------------
-# Entry port. 8080 is the documented value everywhere now — 80 is privileged and
+# Entry port. 31100 is the aibox reserved band (see docs/module-spec.md §Port
+# allocation) — 80 is privileged and 8080 is the universal default every other tool uses,
 # collides with any web server already on the host. Existing deploys keep their
 # pinned HTTP_PORT (.env/conf always carry one): only fresh installs see 8080.
-HTTP_PORT="${HTTP_PORT:-8080}"
+HTTP_PORT="${HTTP_PORT:-31100}"
+# Host port for the automatic HTTPS publish. 443 is the right default only when a
+# public domain can own it; the aibox band keeps it collision-free by default.
+HTTPS_PORT="${HTTPS_PORT:-31443}"
 MIN_FREE_GB="${MIN_FREE_GB:-12}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-180}"
 
@@ -1102,7 +1106,7 @@ base_url_check() {
     */*) die "BASE_URL must not contain a path (got: ${BASE_URL}) — serve the instance at the host root, or strip the sub-path in your own reverse proxy" ;;
   esac
   case "$hostport" in
-    *:*) die "BASE_URL must not contain a port (got: ${BASE_URL}) — the entry port is HTTP_PORT (${HTTP_PORT}); https publishes 443" ;;
+    *:*) die "BASE_URL must not contain a port (got: ${BASE_URL}) — the entry port is HTTP_PORT (${HTTP_PORT}); https publishes HTTPS_PORT (default 31443)" ;;
   esac
   return 0
 }
@@ -1133,7 +1137,7 @@ instance_url() {
   host=$(primary_ip)
   [ -n "$host" ] || host="127.0.0.1"
   port=$(get_env HTTP_PORT)
-  if [ -z "$port" ]; then port="${HTTP_PORT:-8080}"; fi
+  if [ -z "$port" ]; then port="${HTTP_PORT:-31100}"; fi
   if [ "$port" = "80" ]; then printf 'http://%s' "$host"
   else printf 'http://%s:%s' "$host" "$port"; fi
 }
@@ -1249,6 +1253,7 @@ sync_env_knobs() {
   # BASE_URL may also live only in .env (the deploy instance copy) — pick it up
   # before deciding TLS, or a re-render would drop the 443 publish.
   [ -n "${BASE_URL:-}" ] || BASE_URL=$(get_env BASE_URL)
+  [ -n "${HTTPS_PORT:-}" ] || HTTPS_PORT=$(get_env HTTPS_PORT)
   base_url_check
   base_url_tls && tls=1
   # A TLS flip changes the PUBLISHED ports, which live in the rendered compose
@@ -1257,6 +1262,7 @@ sync_env_knobs() {
   if [ -n "$old" ] && [ "$old" != "$tls" ]; then warn_tls=1; fi
   set_env WM_TLS "$tls"
   set_env_knob BASE_URL "${BASE_URL:-}" ""
+  set_env_knob HTTPS_PORT "${HTTPS_PORT:-31443}" "31443"
   set_env_knob WM_WORKER_REPLICAS "$WM_WORKER_REPLICAS" "3"
   set_env_knob WM_WORKER_MEMORY "$WM_WORKER_MEMORY" "1536M"
   set_env_knob WM_NATIVE_REPLICAS "$WM_NATIVE_REPLICAS" "1"
@@ -1403,8 +1409,8 @@ render_compose() {
 ##     (WM_WORKER_REPLICAS / WM_WORKER_MEMORY / WM_NATIVE_REPLICAS /
 ##      WM_NATIVE_MEMORY / WM_INDEXER_REPLICAS) so sizing no longer needs a
 ##      hand-edit of this generated file (which the next render would overwrite).
-## 10. caddy's entry port default is 8080 (80 is privileged + collides with any
-##     web server), and BASE_URL drives the site address: https publishes 443
+## 10. caddy's entry port default is 31100 (80 is privileged, 8080 is the universal default), and
+##     web server), and BASE_URL drives the site address: https publishes HTTPS_PORT
 ##     and gets automatic HTTPS (or `tls internal` for a bare IP).
 ## 11. the caddy container reads BASE_URL from .env (empty = plain :80 behind
 ##     your own reverse proxy).
@@ -1607,8 +1613,8 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
     ports:
-      # Port controlled by .env's HTTP_PORT (default 8080)
-      - "${HTTP_PORT:-8080}:80"
+      # Port controlled by .env's HTTP_PORT (default 31100)
+      - "${HTTP_PORT:-31100}:80"
       # `- 25:25` removed: the host's exim4 occupies 127.0.0.1:25, which would make caddy fail to bind.
       # If you need the email trigger later, change this to `- 2525:25` and restore the layer4 :25 block in Caddyfile.
       ##__TLS_PORTS__
@@ -1637,7 +1643,7 @@ WMEOF
   # The 443 publish is decided at RENDER time (compose cannot conditionally
   # publish a port): https -> replace the marker with the line, else drop it.
   if base_url_tls; then
-    awk '{ if ($0 ~ /^ *##__TLS_PORTS__$/) print "      - \"443:443\""; else print }' "$COMPOSE_FILE" > "${COMPOSE_FILE}.tmp.$$" \
+    awk -v hp="${HTTPS_PORT:-31443}" '{ if ($0 ~ /^ *##__TLS_PORTS__$/) print "      - \"" hp ":443\""; else print }' "$COMPOSE_FILE" > "${COMPOSE_FILE}.tmp.$$" \
       && cat "${COMPOSE_FILE}.tmp.$$" > "$COMPOSE_FILE" && rm -f "${COMPOSE_FILE}.tmp.$$"
   else
     awk '!/^ *##__TLS_PORTS__$/' "$COMPOSE_FILE" > "${COMPOSE_FILE}.tmp.$$" \
@@ -1728,13 +1734,14 @@ WM_IMAGE=${WM_REPO}:${ver}
 WM_EXTRA_IMAGE=${WM_EXTRA_REPO}:${ver}
 
 # --- Entry port --------------------------------------------------------------
-# 8080 by default (was 80). Host-wide override: aibox windmill config set HTTP_PORT <n>
+# 31100 by default (was 80). Host-wide override: aibox windmill config set HTTP_PORT <n>
 HTTP_PORT=${port}
 
 # --- External address (BASE_URL) --------------------------------------------
 # Empty = advertise http://<detected-ip>:<HTTP_PORT> (the pre-0.16 behaviour).
 # Set to a real URL — http[s]://host, NO port and NO path:
-#   https://wm.example.com  automatic HTTPS (Caddy/ACME; needs 80/443 reachable)
+#   https://wm.example.com  automatic HTTPS (Caddy/ACME; needs the ACME challenge on 80
+#   and HTTPS_PORT (default 31443; set 443 only when a public domain can own it))
 #   https://10.0.0.5        self-signed via "tls internal" (ACME cannot certify an IP)
 #   http://wm.example.com   plain HTTP on HTTP_PORT
 # Host-wide: aibox windmill config set BASE_URL https://wm.example.com
@@ -3711,8 +3718,8 @@ ${C_BOLD}Usage${C_RESET}
 
 ${C_BOLD}Options${C_RESET}
   --version X.Y.Z   Target version (default: query the upstream latest release)
-  --port N          External HTTP port (default 8080; an https BASE_URL also
-                    publishes 443)
+  --port N          External HTTP port (default 31100; an https BASE_URL also
+                    publishes HTTPS_PORT, default 31443)
   --base-url URL    External URL the instance advertises: http[s]://host, NO port
                     and NO path. https + a domain = automatic HTTPS (Caddy/ACME,
                     needs 80/443 reachable); https + a bare IP = a self-signed

@@ -68,8 +68,8 @@ teardown() {
   # the scaffolder's own end-validation would (correctly) refuse the second one.
   bash "$REPO_ROOT/scripts/new-module.sh" p1 --no-compose --out "$OUT" >/dev/null 2>&1
   bash "$REPO_ROOT/scripts/new-module.sh" p2 --no-compose --out "$OUT" >/dev/null 2>&1
-  printf 'ports:\n  - 8080/tcp:http\n' >> "$OUT/p1/module.yaml"
-  printf 'ports:\n  - 8080/tcp:http\n' >> "$OUT/p2/module.yaml"
+  printf 'ports:\n  - 31100/tcp:http\n' >> "$OUT/p1/module.yaml"
+  printf 'ports:\n  - 31100/tcp:http\n' >> "$OUT/p2/module.yaml"
   run env VALIDATE_TOOLS_DIR="$OUT" bash "$REPO_ROOT/scripts/validate-module.sh" --all
   [ "$status" -eq 1 ]
   [[ "$output" == *"conflicts with module"* ]]

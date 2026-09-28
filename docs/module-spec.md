@@ -45,6 +45,42 @@ module_iface: 1     # module.yaml
   supports, pointing at `aibox update self`; the validator WARNs when a module
   omits the field and ERRORs when it is not an integer.
 
+### Port allocation (the aibox reserved band)
+
+Host ports are a shared resource: pick them from a band that collides with nothing.
+
+| band | use |
+| --- | --- |
+| **30000–30999** | existing service ports (new-api 30300, pi-web 30141) |
+| **31000–31999** | services (UIs, APIs, proxies) — the default for new modules |
+| **32000–32999** | infrastructure (PostgreSQL, Redis, …) |
+
+Three zones are refused, each for a concrete reason:
+
+1. **< 1024 (privileged)** — needs `CAP_NET_BIND`, and 80/443 belong to whatever real
+   web server the host runs. A public port is allowed only when explicitly declared
+   with a `:public` suffix on the `ports:` entry (e.g. `- 443/tcp:https:public`);
+2. **common-service conventions** — 3000, 5000, 8080/8081, 8443, 8888, 8929, 9000,
+   9090, 7890, 8000/8002/8003: every other tool on the box defaults to these, so a
+   collision is a matter of time (and the failure looks like "some other service");
+3. **Linux's ephemeral range (32768–60999)** — the kernel hands these to *outbound*
+   connections first: a container binding one can fail at random, hours later. (The
+   old defaults and the first profile bands sat inside it — that is why they moved.)
+
+Rules:
+
+- Every host-published port a module ships MUST be declared in `module.yaml` `ports:`
+  (the declaration feeds `aibox dashboard`, the port-conflict check and the validator).
+  Container-internal ports (80/443/5432/6379/3000 …) are unaffected by this policy.
+- Profile-derived ports are allocated from the infrastructure band by
+  `tools/_shared/lib/60-profile.sh` (`profile_port`), never hand-picked.
+- Changing a default only affects **fresh installs**: deployed instances pin their
+  ports (`.env`, host conf) and keep them. Migrating an existing instance:
+  `aibox <module> config set <PORT_KEY> <new>` then restart the stack.
+- `port_policy_hint` (shared library) is the runtime side of the rule: `doctor` and
+  the install-time port check explain *why* an out-of-band port is risky. The
+  validator makes it a build error for new modules (`S13j`).
+
 ### Profiles and port allocation
 
 A profile is a second instance of a module family (`aibox --profile <name> …`).

@@ -164,10 +164,10 @@ dashboard_info() {
   local v
   v="$(installed_version 2>/dev/null || true)"
   [ -n "${v}" ] && echo "version=${v}"
-  echo "endpoint=http://127.0.0.1:3000"
+  echo "endpoint=http://127.0.0.1:31140"
   echo "credential=.env.local (API Key, access password)"
   # na: CLI-type module — its "state" is a remote deploy's state, not a local
   # service's; `aibox openmaic status` (dispatched to the CLI) is the real view.
   echo "state=na"
-  echo "health=curl -s http://127.0.0.1:3000/api/health"
+  echo "health=curl -s http://127.0.0.1:31140/api/health"
 }

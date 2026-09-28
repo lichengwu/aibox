@@ -118,9 +118,10 @@ seed_conf() {
 # Edit here, or use:  aibox windmill config set <KEY> <value>
 # Precedence: CLI flag > environment variable > deploy .env > this file > built-in default
 #
-# HTTP_PORT=8080                    # entry HTTP port (https also publishes 443)
+# HTTP_PORT=31100                   # entry HTTP port (aibox band)
+# HTTPS_PORT=31443                  # host port for the automatic HTTPS publish (443 only with a public domain)
 # BASE_URL=https://wm.example.com   # external URL, scheme+host only (no port, no path):
-#                                   #   https + domain  -> automatic HTTPS (needs 80/443)
+#                                   #   https + domain  -> automatic HTTPS (needs the ACME challenge on 80 + HTTPS_PORT)
 #                                   #   https + bare IP -> self-signed (`tls internal`)
 #                                   #   empty           -> plain HTTP behind your own proxy
 # WM_WORKER_REPLICAS=3              # default-group worker replicas
@@ -163,7 +164,7 @@ dashboard_info() {
   # app version: the installed ops CLI's version (the dispatched CLI is this
   # module's deployable; the REMOTE deploy's own version is the CLI status's
   # business, not locally knowable)
-  local v port="8080" envf p
+  local v port="31100" envf p
   v="$(installed_version 2>/dev/null || true)"
   [ -n "${v}" ] && echo "version=${v}"
   envf="$(wm_deploy_root)/.env"

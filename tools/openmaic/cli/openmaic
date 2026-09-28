@@ -79,7 +79,7 @@ LOG_DIR="${OPENMAIC_LOG_DIR:-$BASE_DIR/logs}"
 STATE_DIR="${OPENMAIC_STATE_DIR:-$BASE_DIR/state}"
 RUN_DIR="${OPENMAIC_RUN_DIR:-$BASE_DIR/run}"
 
-HEALTH_URL="${OPENMAIC_HEALTH_URL:-http://127.0.0.1:3000/api/health}"
+HEALTH_URL="${OPENMAIC_HEALTH_URL:-http://127.0.0.1:31140/api/health}"
 HEALTH_TIMEOUT="${OPENMAIC_HEALTH_TIMEOUT:-300}"
 BACKUP_KEEP="${OPENMAIC_BACKUP_KEEP:-14}"
 BUILD_TIMEOUT_MAIN="${OPENMAIC_BUILD_TIMEOUT_MAIN:-3600}"
@@ -838,7 +838,7 @@ cmd_status() {
 
   info "OpenMAIC status"
   printf '  version %s  (%s)\n' "$tag" "$commit"
-  printf '  url     http://%s:3000\n' "$(hostname -I 2>/dev/null | awk '{print $1}')"
+  printf '  url     http://%s:%s\n' "$(hostname -I 2>/dev/null | awk '{print $1}')" "${OPENMAIC_PORT:-31140}"
   printf '  health  '
   if health_ok; then printf '%sok%s      %s\n' "$C_GRN" "$C_RST" "$body"; else printf '%sfailing%s\n' "$C_RED" "$C_RST"; fi
   printf '  render  '
@@ -1648,7 +1648,7 @@ cmd_install() {
   step "6/6 Health check"
   if wait_health; then
     sync_config_to_persist
-    ok "deploy complete → http://$(hostname -I | awk '{print $1}'):3000"
+    ok "deploy complete → http://$(hostname -I | awk '{print $1}'):31140"
     return 0
   fi
   err "deploy complete but the health check did not pass; see openmaic logs"
@@ -1681,12 +1681,12 @@ cmd_shell() { compose exec "$SERVICE_APP" sh; }
 cmd_url() {
   local ip; ip=$(hostname -I 2>/dev/null | awk '{print $1}')
   if [ -z "$ip" ]; then
-    # hostname -I is Linux-specific; if it returns nothing, fall back to the host part of the health URL to avoid printing http://:3000
+    # hostname -I is Linux-specific; if it returns nothing, fall back to the host part of the health URL to avoid printing http://:31140
     ip=$(printf '%s' "$HEALTH_URL" | sed -E 's#^https?://([^/:]+).*#\1#')
     [ -n "$ip" ] || ip="127.0.0.1"
     hint "could not detect this host's external IP (hostname -I unavailable); using ${ip} below"
   fi
-  say "http://${ip}:3000"
+  say "http://${ip}:31140"
   hint "access password: openmaic config get ACCESS_CODE"
   return 0
 }
