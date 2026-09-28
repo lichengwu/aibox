@@ -7,6 +7,19 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.27.1] — 2026-09-28
+
+### Fixed
+
+- **Dependency install on a host whose apt index was cleaned.** Reclaiming disk by
+  removing `/var/lib/apt/lists` is a normal operation (aibox autoclean itself
+  advises space reclaiming), after which EVERY `apt-get install` fails with
+  "Unable to locate package" — and the deps step just reported "package install
+  failed", leaving the operator to decode a package-manager error. The docker
+  install path now refreshes the index when it is empty (and once more on failure,
+  the retry path), bounded at 300s. Live-caught while installing aibox on a deploy
+  host whose lists had just been cleaned.
+
 ## [0.27.0] — 2026-09-28
 
 ### Added
@@ -1798,6 +1811,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.27.1]: https://github.com/lichengwu/aibox/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/lichengwu/aibox/compare/v0.26.1...v0.27.0
 [0.26.1]: https://github.com/lichengwu/aibox/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/lichengwu/aibox/compare/v0.25.1...v0.26.0

@@ -326,3 +326,33 @@ EOF
   [[ "$output" != *"START-CALLED"* ]] || { echo "$output"; false; }
   [[ "$output" == *"Database appdb ready"* ]] || false
 }
+
+@test "pm index refresh: empty index → apt-get update; present index → no-op; force → always" {
+  shim="$BATS_TMPDIR/shim-index"; rm -rf "$shim"; mkdir -p "$shim"
+  logf="$BATS_TMPDIR/apt-log"; : >"$logf"
+  cat >"$shim/apt-get" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >>"$logf"; exit 0
+SH
+  chmod +x "$shim/apt-get"
+  frag="$BATS_TMPDIR/refresh-frag.sh"
+  sed -n '/^_pm_index_refresh() {/,/^}/p' "$REPO_ROOT/src/aibox/40-preflight.sh" >"$frag"
+  [ -s "$frag" ] || false
+  present="$BATS_TMPDIR/apt-lists-present"; mkdir -p "$present"; : >"$present/pkg"
+  empty="$BATS_TMPDIR/apt-lists-empty"; mkdir -p "$empty"
+
+  # (a) index present → no refresh (cheap no-op on every normal host)
+  run env PATH="$shim:/usr/bin:/bin" AIBOX_APT_LISTS_DIR="$present" bash -c "info() { :; }; . '$frag'; _pm_index_refresh apt-get"
+  [ "$status" -eq 0 ] || false
+  [ ! -s "$logf" ] || false
+  # (b) EMPTY index (the post-cleanup state) → refresh happens by itself
+  run env PATH="$shim:/usr/bin:/bin" AIBOX_APT_LISTS_DIR="$empty" bash -c "info() { :; }; . '$frag'; _pm_index_refresh apt-get"
+  grep -q '^update' "$logf" || false
+  # (c) force → refreshes even with an index present (the retry path)
+  : >"$logf"
+  run env PATH="$shim:/usr/bin:/bin" AIBOX_APT_LISTS_DIR="$present" bash -c "info() { :; }; . '$frag'; _pm_index_refresh apt-get force"
+  grep -q '^update' "$logf" || false
+  # (d) wiring: the docker install path calls it before the attempt and on failure
+  grep -q '_pm_index_refresh "\$pm"' "$REPO_ROOT/src/aibox/40-preflight.sh" || false
+  grep -q '_pm_index_refresh "\$pm" force' "$REPO_ROOT/src/aibox/40-preflight.sh" || false
+}

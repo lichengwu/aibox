@@ -57,7 +57,7 @@ if [ -z "${AIBOX_BIN_DIR:-}" ]; then
     ;;
   esac
 fi
-AIBOX_VERSION="0.27.0"
+AIBOX_VERSION="0.27.1"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 
@@ -3963,6 +3963,25 @@ cmd_self_check() {
 # a node auto-install with no progress line). Output goes to a log — replayed as
 # a tail on failure — and a heartbeat every 30s shows it's still alive.
 # AIBOX_PM_TIMEOUT=0 disables the bound.
+_pm_index_refresh() { # $1 = pm, $2 = "force" to refresh even when the index exists
+  # A cleanup that removed /var/lib/apt/lists (disk reclaiming is a normal
+  # operation — aibox autoclean advises it) makes EVERY apt install fail with
+  # "Unable to locate package". Cheap to detect, so detect it instead of failing
+  # with a package-manager error the operator has to decode.
+  local lists
+  lists="${AIBOX_APT_LISTS_DIR:-/var/lib/apt/lists}"
+  case "${1:-}" in
+  apt-get)
+    if [ "${2:-}" != "force" ] && [ -n "$(find "${lists}" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+      return 0
+    fi
+    info "  apt package index is empty/stale — running: apt-get update (bounded 300s)"
+    timeout 300 apt-get update >/dev/null 2>&1 || true
+    ;;
+  esac
+  return 0
+}
+
 _pm_install() {
   local pm="$1" n=0 wait_s timeout_s waited timed_out pid rc logf
   shift
@@ -4109,7 +4128,9 @@ install_dep() {
           *)       eng="docker-ce"; comp="docker-compose-plugin" ;;
         esac
         info "${pm} install -y ${eng} ${comp} (running as root)"
+        _pm_index_refresh "$pm"
         _pm_install "$pm" "$eng" "$comp" 2>/dev/null \
+          || { _pm_index_refresh "$pm" force; _pm_install "$pm" "$eng" "$comp" 2>/dev/null; } \
           || ${pm} install -y moby-engine docker-compose-plugin 2>/dev/null \
           || ${pm} install -y docker.io docker-compose-v2 2>/dev/null \
           || { warn "  package install failed (tried ${eng}+${comp}, moby-engine, docker.io variants)"; return 1; }
