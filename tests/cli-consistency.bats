@@ -254,11 +254,11 @@ YAML
     grep -qE 'exec "\$\{?CLI\}?"' "${svc}" || continue
     for v in start stop restart; do
       found=0
-      grep -qE "^[[:space:]]*${v}\)" "${svc}" && found=1
+      grep -qE "^[[:space:]]*[a-z_|[:space:]]*${v}[a-z_|[:space:]]*\)" "${svc}" && found=1
       if [ "${found}" = "0" ]; then
         for cf in "${d%/}"/cli/*; do
           [ -f "${cf}" ] || continue
-          grep -qE "^[[:space:]]*${v}\)" "${cf}" && found=1
+          grep -qE "^[[:space:]]*[a-z_|[:space:]]*${v}[a-z_|[:space:]]*\)" "${cf}" && found=1
         done
       fi
       [ "${found}" = "1" ] || { echo "${m}: '${v}' would reach the CLI as an unknown command"; false; }

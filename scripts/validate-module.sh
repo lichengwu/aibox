@@ -517,7 +517,7 @@ validate_module() {
     fi
     for _v in start stop restart; do
       # shellcheck disable=SC2086
-      grep -qE "^[[:space:]]*${_v}\)" ${_cli_files} 2>/dev/null || _missing="${_missing} ${_v}"
+      grep -qE "^[[:space:]]*[a-z_|[:space:]]*${_v}[a-z_|[:space:]]*\)" ${_cli_files} 2>/dev/null || _missing="${_missing} ${_v}"
     done
     if [ -n "${_missing}" ]; then
       err "dispatch CLI without lifecycle aliases:${_missing} — map them onto the CLI's own verbs (e.g. start) action=\"up\" ;;"
