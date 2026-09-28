@@ -190,7 +190,7 @@ _wait_http() { # $1 = port
   out="$(status_info)"
   printf '%s\n' "$out" | grep -q '^version=0\.13\.2$'   # app_version strips the cosmetic v
   printf '%s\n' "$out" | grep -q '^endpoint=http://127\.0\.0\.1:30300$'
-  printf '%s\n' "$out" | grep -q '^credential=first login: root / 123456'
+  printf '%s\n' "$out" | grep -q '^credential=upstream default for a virgin DB: root / 123456'
   printf '%s\n' "$out" | grep -q '^db=shared base'
   printf '%s\n' "$out" | grep -q '^health=stopped'   # fake docker ps: empty
 }

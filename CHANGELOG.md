@@ -7,6 +7,15 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.26.1] — 2026-09-28
+
+### Fixed
+
+- `tests/new-api.bats` still asserted the pre-0.26.0 credential wording (`first login:
+  root / 123456`), so the fast suite failed on the relabelled text. The suite is the gate,
+  so the assertion moved with the copy — caught by the full harness (root + non-root), not
+  by the subset runs.
+
 ## [0.26.0] — 2026-09-28
 
 ### Changed
@@ -1755,6 +1764,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.26.1]: https://github.com/lichengwu/aibox/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/lichengwu/aibox/compare/v0.25.1...v0.26.0
 [0.25.1]: https://github.com/lichengwu/aibox/compare/v0.25.0...v0.25.1
 [0.25.0]: https://github.com/lichengwu/aibox/compare/v0.24.1...v0.25.0
