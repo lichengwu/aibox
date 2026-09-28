@@ -140,6 +140,10 @@ FILES
 }
 
 @test "workflows: duplicate YAML keys are rejected (GitHub 422 on dispatch)" {
+  # the strict loader is the PyYAML path; without PyYAML the gate can only run the
+  # heuristic (macOS CI runners have no PyYAML) — skip rather than mis-assert
+  command -v python3 >/dev/null 2>&1 || skip "no python3"
+  python3 -c 'import yaml' >/dev/null 2>&1 || skip "pyyaml unavailable"
   # live-caught: a second `run:` in the same step parsed fine locally (PyYAML keeps
   # the last one) but GitHub refused the whole workflow file
   local fx
