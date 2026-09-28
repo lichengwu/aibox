@@ -96,3 +96,19 @@ PostgreSQL major upgrade can refuse to boot with the newer data files — real b
 
 Conditional stops (16.0/16.1/16.2/17.1 — required only for specific data shapes) are
 INCLUDED by default: minutes of extra hops vs. the risk of a broken migration.
+
+## Backup / restore quirks (measured 2026-09, 18.9.1)
+
+- `gitlab-backup restore` wants `BACKUP=<ts>_<date>_<version>` — the tar's name
+  WITHOUT the `_gitlab_backup.tar` suffix. The module strips it; doing it by hand
+  with the full filename silently restores nothing.
+- Restore needs puma + sidekiq stopped first (official procedure) — the module does
+  it, then `gitlab-ctl restart`. The first rails boot after a restore is slow;
+  `GITLAB_RESTORE_WAIT` (default 900s) bounds the web-endpoint wait.
+- Cross-version restores are refused by GitLab: pin GITLAB_IMAGE to the source
+  version, restore, then `aibox upgrade gitlab` one major at a time.
+- An empty/missing `GITLAB_ROOT_PASSWORD` seeds a BLANK root password (ENV is
+  truthy in `initial_root_password = ENV[...] || random`); the module blocks that
+  case. On a restored DB the root password is whatever the SOURCE had.
+- `die "msg" 30` is not the exit-code idiom — it prints "30" inside the message and
+  exits 1. Use `die_code 30 "msg"` (fixed repo-wide 2026-09).

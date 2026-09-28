@@ -15,14 +15,22 @@ services:
     restart: unless-stopped
     shm_size: 256m
     ports:
-      # host port == container port (external_url must match what nginx listens on)
+      # host port == container port (external_url must match nginx's listener)
       - "${GITLAB_HTTP_PORT:-31110}:${GITLAB_HTTP_PORT:-31110}"
-      # git-over-SSH: host 8922 → container 22 (gitlab-shell keeps listening on 22)
+      # git-over-SSH: host port -> container 22 (gitlab-shell listens on 22)
       - "${GITLAB_SSH_PORT:-31222}:22"
+      # HTTPS: bound only when GITLAB_HTTPS_ENABLE=true. The port must equal
+      # the one in external_url (omnibus derives nginx's TLS listener there),
+      # so 443 + https://host is the normal setup.
+      - "${GITLAB_HTTPS_PORT:-31143}:${GITLAB_HTTPS_PORT:-31143}"
     volumes:
       - gitlab_config:/etc/gitlab
       - gitlab_logs:/var/log/gitlab
       - gitlab_data:/var/opt/gitlab
+      # Operator-owned certs (never overwritten by hooks: state_files: ssl/).
+      # Real certs drop in as gitlab.crt (+chain) / gitlab.key; when HTTPS is
+      # on and the dir is empty, `aibox gitlab start` self-signs a pair.
+      - ./ssl:/etc/gitlab/ssl:ro
     environment:
       # Seeded root password (lib.sh ensure_root_password guarantees the .env
       # carries it before any aibox-driven up; ENV wins over omnibus random
@@ -34,7 +42,10 @@ services:
       GITLAB_OMNIBUS_CONFIG: |
         external_url '${GITLAB_EXTERNAL_URL:-http://localhost:31110}'
         nginx['listen_port'] = ${GITLAB_HTTP_PORT:-31110}
-        nginx['listen_https'] = false
+        nginx['listen_https'] = ${GITLAB_HTTPS_ENABLE:-false}
+        nginx['ssl_certificate'] = '/etc/gitlab/ssl/gitlab.crt'
+        nginx['ssl_certificate_key'] = '/etc/gitlab/ssl/gitlab.key'
+        nginx['redirect_http_to_https'] = ${GITLAB_HTTPS_REDIRECT:-false}
         prometheus_monitoring['enable'] = false
         gitlab_rails['gitlab_shell_ssh_port'] = ${GITLAB_SSH_PORT:-31222}
         puma['worker_processes'] = ${GITLAB_PUMA_WORKERS:-2}
@@ -42,15 +53,20 @@ services:
         postgresql['shared_buffers'] = '256MB'
         # Local-only readiness endpoint (for aibox upgrade's per-hop gate: the
         # /-/readiness probe includes the db-migrations checks; without this
-        # whitelist omnibus rejects the probe with 401). 127.0.0.1 only — never
-        # exposed externally (the ports mapping is host-scoped anyway).
+        # whitelist omnibus rejects the probe with 401). 127.0.0.1 only --
+        # never exposed externally (the port mapping is host-scoped anyway).
         gitlab_rails['monitoring_whitelist'] = ['127.0.0.1']
       # NOTE: no grafana['enable']/alertmanager['enable'] here — GitLab 19.x
       # REMOVED those omnibus options; setting them makes reconfigure FATAL
       # ("Reading unsupported config value grafana", measured live on 19.2.6).
       # prometheus_monitoring['enable']=false is the supported master switch.
     healthcheck:
-      test: ["CMD", "/opt/gitlab/bin/gitlab-healthcheck", "--fail", "--max-time", "10"]
+      test:
+        - CMD
+        - /opt/gitlab/bin/gitlab-healthcheck
+        - --fail
+        - --max-time
+        - "10"
       interval: 60s
       timeout: 30s
       retries: 5

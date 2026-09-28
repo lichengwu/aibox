@@ -7,6 +7,40 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.27.0] — 2026-09-28
+
+### Added
+
+- **gitlab: HTTPS/TLS support (opt-in).** The module could only speak plain HTTP,
+  which blocked the real job of taking over an existing deployment that terminates
+  TLS itself: `GITLAB_HTTPS_ENABLE`, `GITLAB_HTTPS_PORT`, `GITLAB_TLS_DIR`,
+  `GITLAB_HTTPS_REDIRECT` + a read-only cert mount. Certs are operator state
+  (`state_files: ssl/` — never overwritten); when HTTPS is on and no cert exists,
+  `start` generates a self-signed pair and says so. The TLS port must equal the one
+  in `GITLAB_EXTERNAL_URL` (omnibus derives nginx's TLS listener from it).
+- **gitlab: `backup` / `restore` / `import-secrets`** — the migration path itself.
+  `backup` creates a tar inside the container and prints the `docker cp` line;
+  `restore <tar|latest> --yes` stops puma+sidekiq, restores by `BACKUP=<id>`,
+  restarts and waits for the web endpoint; `import-secrets` brings in a source
+  instance's `gitlab-secrets.json` — without it a restored DB keeps its CI
+  variables/tokens unreadable, silently (restore warns when it is missing). Both
+  destructive verbs are two-gated. README documents the measured native-omnibus →
+  aibox recipe; DEVELOPMENT records the quirks (same-version restore, the tar-name
+  suffix, the first-boot wait).
+
+### Fixed
+
+- **Exit-code contract:** `die "msg" 30` never set 30 — the number was printed as
+  part of the message and the process exited 1, so automation could not tell
+  "not ready" (30) from a runtime failure (1). Repo-wide sweep to `die_code 30`
+  (gitlab ×3, windmill CLI ×4), with a test pinning `container down → 30`.
+- gitlab: a comment mangled by the dashboard→status rename ("status is an alias of
+  status") and the duplicated `backup)` case arm the arm relocation produced.
+
+### Module versions
+
+gitlab 1.11.0 · windmill 1.9.1
+
 ## [0.26.1] — 2026-09-28
 
 ### Fixed
@@ -1764,6 +1798,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.27.0]: https://github.com/lichengwu/aibox/compare/v0.26.1...v0.27.0
 [0.26.1]: https://github.com/lichengwu/aibox/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/lichengwu/aibox/compare/v0.25.1...v0.26.0
 [0.25.1]: https://github.com/lichengwu/aibox/compare/v0.25.0...v0.25.1

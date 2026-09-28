@@ -57,7 +57,7 @@ if [ -z "${AIBOX_BIN_DIR:-}" ]; then
     ;;
   esac
 fi
-AIBOX_VERSION="0.26.1"
+AIBOX_VERSION="0.27.0"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 

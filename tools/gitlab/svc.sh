@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # gitlab module — service ops hook: aibox gitlab <action> [args]
-# Actions: start | stop | restart | status | logs | credentials
+# Actions: start | stop | restart | status | logs | credentials | config
+#          | backup | restore | import-secrets   (migration)
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
@@ -18,6 +19,8 @@ start)
   docker_pool_prepull $(compose_images) || true
   # self-heal: legacy .envs (pre-1.5.0) get the root-password seed before up
   ensure_root_password
+  # HTTPS is opt-in; a missing cert pair is generated (never overwritten)
+  ensure_tls_material
   compose up -d "$@"
   port="${GITLAB_HTTP_PORT:-$DEFAULT_HTTP_PORT}"
   timeout_s="${GITLAB_START_TIMEOUT:-600}"
@@ -103,7 +106,7 @@ credentials)
       warn "password INVALID on this instance — volumes were seeded before this password existed (or root was reset)"
       log "reset it: docker exec -it ${CONTAINER_NAME} gitlab-rake \"gitlab:password:reset[root]\""
       ;;
-    *)
+*)
       warn "could not verify (container down or rails still busy) — retry when up"
       ;;
     esac
@@ -113,6 +116,125 @@ credentials)
   ;;
 doctor)
   module_doctor "gitlab"
+  ;;
+    backup)
+  # Non-destructive: a GitLab backup inside the running container. It lands in
+  # the gitlab_data volume (never in the repo/deploy root) — copy it out with
+  # the printed docker cp command.
+  container_running || die_code 30 "container is not running (aibox gitlab start)"
+  log "creating a GitLab backup inside the container (minutes for a few GB)…"
+  printf '%s\n' "yes" | docker exec -i "$CONTAINER_NAME" gitlab-backup create CRON=1 >/dev/null 2>&1 || \
+    die "gitlab-backup create failed — run it by hand to see why: docker exec -it $CONTAINER_NAME gitlab-backup create"
+  tar_path="$(backup_tars | head -1)"
+  [ -n "$tar_path" ] || die "backup finished but no tar found in /var/opt/gitlab/backups"
+  ok "backup created: $(basename "$tar_path")"
+  log "copy it out:  docker cp ${CONTAINER_NAME}:${tar_path} ."
+  ;;
+restore)
+  # DESTRUCTIVE two-gate: overwrites the database + all repositories.
+  src="${1:-}"
+  [ $# -gt 0 ] && shift
+  [ -n "$src" ] || usage_die "usage: aibox gitlab restore <backup.tar|latest> --yes"
+  yes=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --yes) yes=1 ;;
+    *) usage_die "unknown option: $1" ;;
+    esac
+    shift
+  done
+  if [ "$yes" != 1 ]; then
+    if [ -t 0 ] && [ -t 1 ]; then
+      printf 'Overwrite the database and ALL repositories with %s? This cannot be undone. [y/N] ' "$src"
+      read -r ans
+      case "${ans:-}" in [yY]*) ;; *) usage_die "declined" ;; esac
+    else
+      usage_die "refusing without --yes (non-interactive): aibox gitlab restore $src --yes"
+    fi
+  fi
+  # Argument validation BEFORE touching the deployment: a wrong path/name is a
+  # usage error (2), not a runtime one, and must not depend on docker state.
+  case "$src" in
+  latest) ;;
+  *)
+    [ -f "$src" ] || usage_die "not found: $src"
+    case "$(basename "$src")" in
+    *_gitlab_backup.tar) ;;
+    *) usage_die "not a GitLab backup tar (expected *_gitlab_backup.tar): $(basename "$src")" ;;
+    esac
+    ;;
+  esac
+  container_running || die_code 30 "container is not running (aibox gitlab start)"
+  # secrets gate: a restore without the SOURCE secrets leaves encrypted
+  # columns (CI variables, tokens, 2FA) unreadable, silently.
+  if ! docker exec "$CONTAINER_NAME" test -s /etc/gitlab/gitlab-secrets.json 2>/dev/null; then
+    warn "no /etc/gitlab/gitlab-secrets.json inside the container —"
+    warn "restoring another instance's DB without its secrets breaks CI variables/tokens."
+    warn "import them first: aibox gitlab import-secrets <source>/gitlab-secrets.json --yes"
+  fi
+  case "$src" in
+  latest)
+    tar_path="$(backup_tars | head -1)"
+    [ -n "$tar_path" ] || die "no backup tar inside the container — pass a file path instead"
+    bname="$(basename "$tar_path")"
+    ;;
+  *)
+    bname="$(basename "$src")"
+    log "copying ${bname} into the container…"
+    docker cp "$src" "${CONTAINER_NAME}:/var/opt/gitlab/backups/${bname}"
+    ;;
+  esac
+  backup_id="${bname%_gitlab_backup.tar}"
+  before="$(db_count projects)"
+  # Official restore procedure: stop puma + sidekiq first, restore, then bring
+  # everything back up (same-version restore only — GitLab rejects a mismatch).
+  log "restoring ${backup_id} (puma + sidekiq stopped first)…"
+  docker exec "$CONTAINER_NAME" gitlab-ctl stop puma >/dev/null 2>&1 || true
+  docker exec "$CONTAINER_NAME" gitlab-ctl stop sidekiq >/dev/null 2>&1 || true
+  printf '%s\n' "yes" | docker exec -i -e BACKUP="$backup_id" "$CONTAINER_NAME" \
+    gitlab-backup restore >/dev/null 2>&1 || \
+    die "restore failed — run it by hand for details: docker exec -it $CONTAINER_NAME gitlab-backup restore BACKUP=$backup_id"
+  log "restarting services and waiting for the web endpoint…"
+  docker exec "$CONTAINER_NAME" gitlab-ctl restart >/dev/null 2>&1 || true
+  waited=0
+  until http_up || [ "$waited" -ge "${GITLAB_RESTORE_WAIT:-900}" ]; do sleep 10; waited=$((waited + 10)); done
+  after="$(db_count projects)"
+  if http_up; then
+    ok "restore finished: projects ${before:-?} → ${after:-?}; web endpoint answering"
+  else
+    warn "restore finished: projects ${before:-?} → ${after:-?}; web endpoint not answering yet (first rails boot after a restore is slow — check: aibox gitlab logs)"
+  fi
+  log "repositories are in /var/opt/gitlab/git-data (gitlab_data volume); the volume must not be shared with another instance's data"
+  ;;
+import-secrets)
+  # Two-gate: replaces the instance's secrets file (irreversible for encrypted data).
+  sec="${1:-}"
+  [ $# -gt 0 ] && shift
+  [ -n "$sec" ] || usage_die "usage: aibox gitlab import-secrets <gitlab-secrets.json> --yes"
+  [ -f "$sec" ] || usage_die "not found: $sec"
+  yes=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --yes) yes=1 ;;
+    *) usage_die "unknown option: $1" ;;
+    esac
+    shift
+  done
+  if [ "$yes" != 1 ]; then
+    if [ -t 0 ] && [ -t 1 ]; then
+      printf 'Replace the container secrets with %s? [y/N] ' "$sec"
+      read -r ans
+      case "${ans:-}" in [yY]*) ;; *) usage_die "declined" ;; esac
+    else
+      usage_die "refusing without --yes (non-interactive): aibox gitlab import-secrets $sec --yes"
+    fi
+  fi
+  container_running || die_code 30 "container is not running (aibox gitlab start)"
+  docker cp "$sec" "${CONTAINER_NAME}:/etc/gitlab/gitlab-secrets.json"
+  docker exec -u root "$CONTAINER_NAME" chown root:root /etc/gitlab/gitlab-secrets.json >/dev/null 2>&1 || true
+  docker exec -u root "$CONTAINER_NAME" chmod 600 /etc/gitlab/gitlab-secrets.json >/dev/null 2>&1 || true
+  ok "secrets imported from ${sec}"
+  log "apply: aibox gitlab restart   (or: docker exec $CONTAINER_NAME gitlab-ctl reconfigure)"
   ;;
 *)
   usage_die "unknown action: ${action:-} — run: aibox gitlab --help"

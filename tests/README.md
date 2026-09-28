@@ -129,6 +129,7 @@ Fast suite (`bats tests/*.bats`, no docker/network, ~seconds) — **38 files**:
 - `docs-integrity.bats`
 - `gh-pool.bats`
 - `gitlab-credentials.bats`
+- `gitlab-migrate.bats`
 - `gitlab-upgrade-path.bats`
 - `history-cases.bats`
 - `install-sh.bats`

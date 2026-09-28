@@ -137,6 +137,9 @@ exit `0` healthy · `3` a dependency is missing · `30` the service is not ready
 | `logs` | Container logs |
 | `credentials` | Show the seeded root password + verify it against the live account |
 | `config` | Show/set config keys (store: apps/gitlab/.env) |
+| `backup` | Create a GitLab backup inside the container (docker cp to fetch) |
+| `restore` | DESTRUCTIVE: restore a backup tar (same version). Two-gate: --yes |
+| `import-secrets` | Import another instance's gitlab-secrets.json (needed before its restore) |
 <!-- END GENERATED: actions -->
 <!-- BEGIN GENERATED: config (scripts/gen-docs.sh) -->
 | key | default | notes |
@@ -145,9 +148,78 @@ exit `0` healthy · `3` a dependency is missing · `30` the service is not ready
 | `GITLAB_HTTP_PORT` | `31110` | host HTTP port (upstream default 80 is privileged; the aibox band avoids collisions) |
 | `GITLAB_SSH_PORT` | `31222` | host SSH clone port |
 | `GITLAB_ROOT_PASSWORD` | `random` | root password seeded at install; applies at first boot with fresh volumes (verify: aibox gitlab credentials) (secret) |
+| `GITLAB_HTTPS_ENABLE` | `false` | true = nginx serves TLS (self-signed if no cert) |
+| `GITLAB_HTTPS_PORT` | `31143` | must equal the port in GITLAB_EXTERNAL_URL |
+| `GITLAB_TLS_DIR` | `<deploy root>/ssl` | gitlab.crt (incl. chain) + gitlab.key |
+| `GITLAB_HTTPS_REDIRECT` | `false` | true = redirect plain HTTP to HTTPS |
 | `GITLAB_PUMA_WORKERS` | `2` | rails workers |
 | `GITLAB_SIDEKIQ_CONCURRENCY` | `10` | background job workers |
 | `AIBOX_DOCKER_POOL` | `shipped pool` | docker.io mirror list override (knob) |
 | `AIBOX_DOCKER_MIRROR` | `(unset)` | user mirror, tried first (knob) |
 | `AIBOX_DOCKER_FORCE_POOL` | `0` | 1 = skip the direct probe, always engage the pool (knob) |
 <!-- END GENERATED: config -->
+
+## HTTPS / TLS (opt-in)
+
+The module ships HTTP-only by default (it is happy behind a reverse proxy). For a
+deployment that terminated TLS itself — the usual case when migrating a native
+omnibus install — turn it on:
+
+```bash
+aibox gitlab config set GITLAB_HTTPS_ENABLE true
+aibox gitlab config set GITLAB_HTTPS_PORT 443            # must equal the port in the URL below
+aibox gitlab config set GITLAB_EXTERNAL_URL https://gitlab.example.com
+aibox gitlab config set GITLAB_HTTPS_REDIRECT true       # plain HTTP redirects to HTTPS
+# drop your certs in: <deploy root>/ssl/gitlab.crt (with chain) + gitlab.key
+aibox gitlab restart
+```
+
+- The cert pair is **operator state** (`state_files: ssl/`): hooks never overwrite
+  it. When HTTPS is on and the pair is missing, `start` generates a self-signed one
+  and says so — replace it with your real cert and restart.
+- The TLS port and the port inside `GITLAB_EXTERNAL_URL` must match: omnibus
+  derives nginx's TLS listener from `external_url`, not from a separate knob.
+- certs are read-only inside the container (`./ssl:/etc/gitlab/ssl:ro`).
+
+## Backup, restore, and migrating a native install
+
+```bash
+aibox gitlab backup                       # tar inside the container's data volume
+docker cp aibox-gitlab:/var/opt/gitlab/backups/<tar> .    # fetch it (printed by backup)
+aibox gitlab import-secrets <gitlab-secrets.json> --yes   # secrets of the SOURCE instance
+aibox gitlab restore <tar|latest> --yes   # DESTRUCTIVE: overwrites DB + repositories
+```
+
+- **Same version only.** GitLab refuses (and should refuse) a restore whose backup
+  version differs from the running instance — pin `GITLAB_IMAGE` to the source
+  version first (`aibox gitlab config set GITLAB_IMAGE gitlab/gitlab-ce:<ver>-ce.0`).
+- **Secrets before restore.** Import the source's `gitlab-secrets.json` first:
+  without it every encrypted column (CI variables, runner tokens, 2FA) stays
+  unreadable and the failure is silent. `restore` warns when the file is missing.
+- Both `restore` and `import-secrets` are two-gated: `--yes` (or an interactive
+  confirm). `restore` stops puma+sidekiq, restores, restarts, then waits for the
+  web endpoint (`GITLAB_RESTORE_WAIT` seconds, default 900).
+
+### Recipe: native omnibus package → aibox-managed (measured, 18.9.1)
+
+```bash
+# 1. on the SOURCE: backup + the two files that carry identity
+sudo gitlab-backup create CRON=1
+sudo install -d /root/gitlab-migration && sudo cp -a /etc/gitlab/gitlab.rb \
+     /etc/gitlab/gitlab-secrets.json /etc/gitlab/ssl /root/gitlab-migration/
+# 2. on the TARGET (same machine or a new one): aibox + docker, then the module,
+#    pinned to the source version and the SAME ports/URL
+aibox install gitlab
+aibox gitlab config set GITLAB_IMAGE gitlab/gitlab-ce:18.9.1-ce.0
+aibox gitlab config set GITLAB_HTTP_PORT 80          # keep the old public ports
+aibox gitlab config set GITLAB_HTTPS_PORT 443
+aibox gitlab config set GITLAB_HTTPS_ENABLE true
+aibox gitlab config set GITLAB_EXTERNAL_URL https://gitlab.example.com
+cp /root/gitlab-migration/ssl/gitlab.lichengwu.cn_public.crt <deploy>/ssl/gitlab.crt
+cp /root/gitlab-migration/ssl/gitlab.lichengwu.cn.key        <deploy>/ssl/gitlab.key
+aibox gitlab start                                   # first boot takes minutes
+aibox gitlab import-secrets /root/gitlab-migration/gitlab-secrets.json --yes
+aibox gitlab restore /root/gitlab-migration/<ts>_<date>_<ver>_gitlab_backup.tar --yes
+# 3. verify (counts must match the source), then retire the source:
+#    gitlab-ctl stop && systemctl disable gitlab-runsvdir
+```

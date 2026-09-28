@@ -74,6 +74,49 @@ ensure_root_password() { # seeds GITLAB_ROOT_PASSWORD into the .env when missing
   printf '\n# seeded by aibox gitlab — applies at first boot with fresh volumes\nGITLAB_ROOT_PASSWORD=%s\n' "${pw}" >>"${envf}"
 }
 
+# ---------- TLS (opt-in: GITLAB_HTTPS_ENABLE=true) ----------
+# The certs are OPERATOR state (state_files: ssl/ in module.yaml): hooks only
+# ever CREATE a missing pair, never overwrite a real one. Omnibus wants a cert
+# that already includes the chain, so a single gitlab.crt + gitlab.key pair is
+# what the compose points nginx at.
+tls_dir() {
+  printf '%s' "${GITLAB_TLS_DIR:-$(deploy_root)/ssl}"
+}
+
+ensure_tls_material() {
+  case "${GITLAB_HTTPS_ENABLE:-false}" in true|1|yes) ;; *) return 0 ;; esac
+  local dir crt key host
+  dir="$(tls_dir)"; crt="${dir}/gitlab.crt"; key="${dir}/gitlab.key"
+  [ -s "${crt}" ] && [ -s "${key}" ] && return 0
+  mkdir -p "${dir}" 2>/dev/null || true
+  host="$(printf '%s' "${GITLAB_EXTERNAL_URL:-}" | sed -E 's#^[a-z]+://##; s#[:/].*$##')"
+  [ -n "${host}" ] || host="$(detect_external_host)"
+  if command -v openssl >/dev/null 2>&1; then
+    log "no certificate in ${dir} — generating a self-signed pair for ${host} (drop your real cert in as gitlab.crt/gitlab.key and restart)"
+    openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+      -keyout "${key}" -out "${crt}" -subj "/CN=${host}" \
+      -addext "subjectAltName=DNS:${host}" >/dev/null 2>&1 || {
+      warn "self-signed generation failed; provide ${crt} + ${key} yourself"
+      return 0
+    }
+    chmod 600 "${key}" 2>/dev/null || true
+    ok "self-signed certificate written to ${dir}"
+  else
+    warn "HTTPS is enabled but ${crt}/${key} are missing and openssl is unavailable"
+  fi
+  return 0
+}
+
+# ---------- backup / restore (migration) ----------
+db_count() { # $1 = table (users|projects) — prints the count, "" when unavailable
+  case "${1:-}" in ''|*[!a-z_]*) return 0 ;; esac
+  docker exec "$CONTAINER_NAME" gitlab-psql -tAc "select count(*) from ${1}" 2>/dev/null | tr -d '[:space:]'
+}
+
+backup_tars() { # newest-first list of in-container backup tars
+  docker exec "$CONTAINER_NAME" sh -c 'ls -t /var/opt/gitlab/backups/*_gitlab_backup.tar 2>/dev/null' 2>/dev/null || true
+}
+
 # Verify a password against the LIVE root account (the truth — never trust
 # a file). Prints "true" / "false" / "" (probe failed: container down or
 # rails busy — NOT a verdict). Passwords with single quotes would break the

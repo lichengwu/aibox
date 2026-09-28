@@ -1,5 +1,5 @@
 name: gitlab
-version: 1.10.0
+version: 1.11.0
 module_iface: 1
 description: "GitLab CE self-hosted (omnibus docker): web UI + git over SSH, embedded PG/Redis"
 platform: ""
@@ -15,11 +15,14 @@ deps:
 ports:
   - 31110/tcp:http
   - 31222/tcp:git-ssh
+  # 31143 is bound only when GITLAB_HTTPS_ENABLE=true
+  - 31143/tcp:https
 
 files:
   - docker-compose.yml
 state_files:
   - .env
+  - ssl/            # operator certs (gitlab.crt/gitlab.key) — never overwritten
 
 # Shared library include (repo tools/_shared/<name>.sh → cached as
 # _<name>.sh; lib.sh sources it). common = output helpers + docker.io pool.
@@ -41,12 +44,19 @@ actions:
   - logs
   - credentials
   - config
+  - backup
+  - restore
+  - import-secrets
 
 env:
   GITLAB_EXTERNAL_URL: "http://localhost:31110 — external URL GitLab renders in links"
   GITLAB_HTTP_PORT: "31110 — host HTTP port (upstream default 80 is privileged; the aibox band avoids collisions)"
   GITLAB_SSH_PORT: "31222 — host SSH clone port"
   GITLAB_ROOT_PASSWORD: "random — root password seeded at install; applies at first boot with fresh volumes (verify: aibox gitlab credentials) [secret]"
+  GITLAB_HTTPS_ENABLE: "false — true = nginx serves TLS (self-signed if no cert)"
+  GITLAB_HTTPS_PORT: "31143 — must equal the port in GITLAB_EXTERNAL_URL"
+  GITLAB_TLS_DIR: "<deploy root>/ssl — gitlab.crt (incl. chain) + gitlab.key"
+  GITLAB_HTTPS_REDIRECT: "false — true = redirect plain HTTP to HTTPS"
   GITLAB_PUMA_WORKERS: "2 — rails workers"
   GITLAB_SIDEKIQ_CONCURRENCY: "10 — background job workers"
   AIBOX_DOCKER_POOL: "shipped pool — docker.io mirror list override [knob]"
@@ -65,6 +75,9 @@ usage:
   logs: "Container logs"
   credentials: "Show the seeded root password + verify it against the live account"
   config: "Show/set config keys (store: apps/gitlab/.env)"
+  backup: "Create a GitLab backup inside the container (docker cp to fetch)"
+  restore: "DESTRUCTIVE: restore a backup tar (same version). Two-gate: --yes"
+  import-secrets: "Import another instance's gitlab-secrets.json (needed before its restore)"
 
 upstream:
   homepage: https://about.gitlab.com/

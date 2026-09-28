@@ -311,12 +311,12 @@ append_log() {
 # Prerequisites
 # =============================================================================
 require_root() {
-  [ "$(id -u)" = "0" ] || die "root privileges required (read/write $WM_DIR and Docker). Run with sudo." 3
+  [ "$(id -u)" = "0" ] || die_code 3 "root privileges required (read/write $WM_DIR and Docker). Run with sudo."
 }
 require_docker() {
-  command -v docker >/dev/null 2>&1 || die "docker command not found." 3
-  docker info >/dev/null 2>&1 || die "docker daemon is not running or not accessible." 3
-  docker compose version >/dev/null 2>&1 || die "docker compose plugin (v2) is missing." 3
+  command -v docker >/dev/null 2>&1 || die_code 3 "docker command not found."
+  docker info >/dev/null 2>&1 || die_code 3 "docker daemon is not running or not accessible."
+  docker compose version >/dev/null 2>&1 || die_code 3 "docker compose plugin (v2) is missing."
 }
 # Unified entry-point check for anything other than read-only commands
 require_ready() { require_root; require_docker; }
