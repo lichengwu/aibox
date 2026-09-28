@@ -138,3 +138,19 @@ FILES
   [[ "$output" == *"unquoted"* ]] || { echo "$output"; false; }
   rm -rf "$fx"
 }
+
+@test "workflows: duplicate YAML keys are rejected (GitHub 422 on dispatch)" {
+  # live-caught: a second `run:` in the same step parsed fine locally (PyYAML keeps
+  # the last one) but GitHub refused the whole workflow file
+  local fx
+  fx="$(mktemp -d)"
+  mkdir -p "$fx/scripts" "$fx/src/aibox" "$fx/tools/_shared/lib" "$fx/.github/workflows"
+  cp "$REPO_ROOT/scripts/check-sources.sh" "$fx/scripts/"
+  printf 'ok() { :; }\n' >"$fx/tools/_shared/lib/00-out.sh"
+  printf '#!/usr/bin/env bash\n' >"$fx/src/aibox/00-head.sh"
+  printf 'jobs:\n  a:\n    steps:\n      - name: x\n        run: echo one\n        run: echo two\n' >"$fx/.github/workflows/dup.yml"
+  run bash "$fx/scripts/check-sources.sh"
+  [ "$status" -eq 1 ] || { echo "duplicate key not caught: $output"; false; }
+  [[ "$output" == *"duplicate key"* ]] || { echo "$output"; false; }
+  rm -rf "$fx"
+}

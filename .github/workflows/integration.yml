@@ -40,4 +40,5 @@ jobs:
         run: npm install -g bats
       - name: run preflight-check integration
         run: bats tests/integration/preflight-check.bats
+      - name: run autoclean integration — real daemon, orphan reclaimed and ours/foreign kept
         run: bats tests/integration/autoclean.bats

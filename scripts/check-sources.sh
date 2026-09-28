@@ -72,10 +72,20 @@ if [ -n "${wf_hits}" ]; then
 elif command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1; then
   if ! python3 -c "
 import glob, sys, yaml
+class Strict(yaml.SafeLoader):
+    pass
+def no_dup(loader, node, deep=False):
+    keys = set()
+    for k, _ in node.value:
+        if k.value in keys:
+            raise yaml.YAMLError('duplicate key %r (GitHub rejects this: run/uses/name collisions)' % k.value)
+        keys.add(k.value)
+    return yaml.SafeLoader.construct_mapping(loader, node, deep)
+Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, no_dup)
 bad = []
 for f in sorted(glob.glob('${_root}/.github/workflows/*.yml')):
     try:
-        yaml.safe_load(open(f))
+        yaml.load(open(f), Loader=Strict)
     except Exception as e:
         bad.append('%s: %s' % (f, e))
 if bad:
