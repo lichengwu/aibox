@@ -420,7 +420,10 @@ cmd_status_detail() {
     local verdict=""
     case "$endpoint" in
     http://*|https://*)
-      code=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "$endpoint" 2>/dev/null) || code="000"
+      # 8s, not 3: a TLS endpoint costs a handshake plus (here) a rails request, and
+      # a 3s budget reported a perfectly healthy https service as "unreachable"
+      # (live-caught on a migrated GitLab).
+      code=$(curl -s --max-time 8 -o /dev/null -w '%{http_code}' "$endpoint" 2>/dev/null) || code="000"
       [ -n "$code" ] || code="000"
       case "$code" in
       200|204|301|302|307|308|401) verdict=" ${C_DIM}·${C_RST} ${C_GRN}✓${C_RST} HTTP $code" ;;

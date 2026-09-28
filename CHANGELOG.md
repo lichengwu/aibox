@@ -7,6 +7,16 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.28.1] — 2026-09-29
+
+### Fixed
+
+- `aibox status <module>`'s endpoint verdict gave the live probe 3 seconds; a TLS
+  endpoint costs a handshake plus an application request, so a healthy https service
+  could be reported "(unreachable)". 8 seconds now — and the verdict was checked
+  against an expired operator certificate, where "(unreachable)" is the honest
+  answer (curl will not verify it).
+
 ## [0.28.0] — 2026-09-29
 
 ### Fixed
@@ -1849,6 +1859,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.28.1]: https://github.com/lichengwu/aibox/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/lichengwu/aibox/compare/v0.27.1...v0.28.0
 [0.27.1]: https://github.com/lichengwu/aibox/compare/v0.27.0...v0.27.1
 [0.27.0]: https://github.com/lichengwu/aibox/compare/v0.26.1...v0.27.0
