@@ -45,6 +45,29 @@ module_iface: 1     # module.yaml
   supports, pointing at `aibox update self`; the validator WARNs when a module
   omits the field and ERRORs when it is not an integer.
 
+### One config, read at runtime (credentials)
+
+The provider's contract (`$AIBOX_HOME/base[-<profile>].env`) is the **only** place
+credentials and endpoints live. Consumers read it — nothing keeps a second copy:
+
+| mechanism | where | notes |
+| --- | --- | --- |
+| **contract export** | `base_contract_export` (shared) — the manager calls it before dispatch, so every hook/CLI/compose inherits it | shell env wins over `--env-file`, so a rotated provider secret takes effect on the next run |
+| **env-file injection** | consumers pass `--env-file <profile contract>` to their compose calls | profile-aware; compose interpolates `${AIBOX_POSTGRES_*}`/`${AIBOX_REDIS_*}` with the CURRENT values |
+| **service `env_file:`** | optional, for apps that read env themselves | **does not** feed `${…}` interpolation — never use it to build a URL |
+
+Rules (validator-enforced, `S13k`):
+
+1. a module artifact (compose/lib/install/update) must not contain a literal
+   credential (`PASSWORD=<literal>` → ERROR);
+2. it must not silently default one (`${AIBOX_POSTGRES_PASSWORD:-aibox}` → ERROR): a
+   wrong fallback gets baked into `.env` and survives every recreate — that is exactly
+   how a 5-char legacy default crash-looped an app after base rotated its secret;
+3. derived strings (`base_pg_url <db>` / `base_redis_url <index>`, shared) are
+   evaluated at call time, never written into a module's files;
+4. `doctor` runs `contract_drift_report` over the module's own deploy `.env` and warns
+   when it holds a stale copy (restarting the module picks up the contract).
+
 ### Port allocation (the aibox reserved band)
 
 Host ports are a shared resource: pick them from a band that collides with nothing.

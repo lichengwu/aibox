@@ -7,6 +7,41 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.25.0] — 2026-09-28
+
+### Changed
+
+- **One config, read at runtime — credentials stop being copied.** The provider's
+  contract (`$AIBOX_HOME/base[-<profile>].env`) is now the single source of connection
+  facts, and every consumer *reads* it instead of keeping a snapshot:
+
+  | mechanism | what it does |
+  | --- | --- |
+  | `base_contract_export` (shared) | the manager **exports the contract before dispatch**, so every hook, dispatched CLI and `docker compose` interpolation inherits the CURRENT values (shell env beats `--env-file`) |
+  | `--env-file <profile contract>` | what the compose-based consumers already did; profile-aware, resolved at every `up` |
+  | `base_pg_url` / `base_redis_url` (shared) | derived strings get ONE implementation, evaluated at call time — never written into a module's files |
+  | `contract_drift_report` (shared) | `doctor` scans the module's own deploy `.env` and warns when it still holds a stale copy (with the one-line fix) |
+
+  A rendered copy goes stale the moment base rotates its secret — live-caught as a
+  crash-loop (`password authentication failed`), with the app pinned to a 5-char legacy
+  default while the contract said 32 chars, surviving every recreate.
+
+- Compose-based consumers (new-api, xiaozhi, dify, openmaic) were already
+  contract-referenced via `--env-file` + `${AIBOX_POSTGRES_*}` interpolation — audited
+  and documented rather than changed. windmill was the only module that baked the value.
+
+### Added
+
+- validator **S13k**: a literal credential in a compose file, or a silent credential
+  default (`${AIBOX_POSTGRES_PASSWORD:-aibox}` — the exact shape that caused the
+  crash-loop), is an ERROR; `:-}` / `:-${…}` templates are fine.
+- spec §One config, read at runtime + AGENTS iron rule 15.
+
+### Module versions
+
+base 1.9.0 · clash 1.8.0 · dify 1.23.0 · gitlab 1.9.0 · new-api 1.5.0 · openmaic 1.6.0 ·
+pi-web 1.8.0 · windmill 1.8.0 · xiaozhi 1.6.0
+
 ## [0.24.1] — 2026-09-28
 
 ### Fixed
@@ -1661,6 +1696,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.25.0]: https://github.com/lichengwu/aibox/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/lichengwu/aibox/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/lichengwu/aibox/compare/v0.23.2...v0.24.0
 [0.23.2]: https://github.com/lichengwu/aibox/compare/v0.23.1...v0.23.2

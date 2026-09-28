@@ -104,6 +104,14 @@ module_doctor() { # $1=module name (defaults to $AIBOX_MODULE)
   if [ "${notready}" = "1" ]; then printf '%s⚠  not ready: the service is not running (aibox %s start)%s\n' "${C_YEL:-}" "${m}" "${C_RST:-}"; return 30; fi
   ok "all checks passed"
   return 0
+
+  # ONE config: does this module's own state keep a stale copy of a connection fact?
+  local _drift "" _deproot=""
+  if type -t deploy_root >/dev/null 2>&1; then _deproot="$(deploy_root 2>/dev/null || true)"; fi
+  if [ -n "${_deproot}" ] && [ -f "${_deproot}/.env" ]; then
+    _drift="$(contract_drift_report "${_deproot}/.env")"
+    [ -n "${_drift}" ] && printf '%s\n' "${_drift}" | while IFS= read -r l; do warn "  ${l}"; done
+  fi
 }
 
 # Usage errors in module hooks are exit 2 (same convention as the manager).

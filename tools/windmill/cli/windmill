@@ -1477,7 +1477,7 @@ render_compose() {
 ##     db becomes `deploy.replicas: 0`; windmill_server/worker/worker_native/indexer
 ##     drop depends_on and join the external network `aibox-base`.
 ##     Precondition: aibox base start + aibox base createdb windmill,
-##     .env DATABASE_URL=postgres://aibox:aibox@aibox-base-postgres:5432/windmill.
+##     .env DATABASE_URL=postgres://<user>:<contract password>@aibox-base-postgres:5432/windmill
 ##  9. worker/native/indexer replicas + memory limits are .env-interpolated
 ##     (WM_WORKER_REPLICAS / WM_WORKER_MEMORY / WM_NATIVE_REPLICAS /
 ##      WM_NATIVE_MEMORY / WM_INDEXER_REPLICAS) so sizing no longer needs a
@@ -1512,7 +1512,7 @@ services:
     deploy:
       # Connect to the shared aibox base PG (no local standalone db):
       #   aibox base start + aibox base createdb windmill
-      #   .env DATABASE_URL=postgres://aibox:aibox@aibox-base-postgres:5432/windmill
+      #   .env DATABASE_URL=postgres://<user>:<contract password>@aibox-base-postgres:5432/windmill
       replicas: 0
     image: postgres:18
     shm_size: 1g

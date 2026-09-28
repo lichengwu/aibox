@@ -18,6 +18,11 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   done
   export AIBOX_PROFILE
 
+  # ONE config: load the provider contract into this process and export it, so every
+  # module hook / dispatched CLI / compose call inherits the SAME connection facts
+  # (spec §Dependency contract). Silent when there is no contract (standalone).
+  base_contract_export 2>/dev/null || true
+
   # Load config and apply the proxy (covers layer 1: this process; layer 2: spawned module hooks)
   load_config
   if [ "$BYPASS_PROXY" = "1" ]; then

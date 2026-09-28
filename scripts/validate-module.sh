@@ -483,6 +483,23 @@ validate_module() {
     warn "install.sh touches .env but module.yaml declares no state_files: — declare what the user owns (never overwritten)"
   fi
 
+  # --- S13k: one config, read at runtime (spec §Dependency contract) ---
+  # Credentials live in the provider's contract and are read at runtime. Two shapes
+  # are refused: a literal secret in a compose file, and a SILENT default on a shared
+  # credential (the live-caught crash-loop: `${AIBOX_POSTGRES_PASSWORD:-aibox}` baked
+  # the legacy default into .env, which no recreate ever fixed). Mentions inside
+  # comments, grep/sed patterns and printf templates are fine.
+  local _lit _sd
+  if [ -f "$d/docker-compose.yml" ] || ls "$d"/docker-compose*.yml >/dev/null 2>&1; then
+    _lit="$(grep -rnE '^[[:space:]]*-?[[:space:]]*(AIBOX_)?[A-Z_]*(PASSWORD|PASSWD|SECRET|TOKEN)=' "$d"/docker-compose*.yml 2>/dev/null |
+      grep -vE '=\$\{|=\$[A-Za-z_]|=[[:space:]]*$|=[[:space:]]*$' | head -1 || true)"
+    [ -z "${_lit}" ] || err "literal credential in a compose file (${_lit%%:*}) — interpolate it from the provider contract (\${AIBOX_POSTGRES_PASSWORD} etc.)"
+  fi
+  # only a NON-EMPTY literal default is a bug (`:-}` and `:-${...}` are fine)
+  _sd="$(grep -rnE 'AIBOX_(POSTGRES|REDIS)_PASSWORD:-[^}$"'"'"' ]' "$d/lib.sh" "$d/install.sh" "$d/update.sh" "$d"/cli/* "$d"/docker-compose*.yml 2>/dev/null |
+    grep -vE ':[0-9]+:[[:space:]]*#' | grep -vE 'grep |sed -n|awk ' | head -1 || true)"
+  [ -z "${_sd}" ] || err "silent credential default (${_sd%%:*}) — a wrong fallback gets baked into .env and survives every recreate; require the contract value instead"
+
   # --- S13j: host ports live in the aibox reserved band (spec §Port allocation) ---
   # 30000-30999 existing service ports, 31000-31999 services, 32000-32999 infra. Refused: privileged (<1024),
   # Linux's ephemeral range (32768-60999) and the common-service conventions

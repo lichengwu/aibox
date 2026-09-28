@@ -189,6 +189,92 @@ shared_base_up() {
   net="$(base_network_name)"
   docker network inspect "${net}" >/dev/null 2>&1
 }
+
+# ---------- one config, read at runtime (spec §Dependency contract) ----------
+# Credentials and endpoints live in the PROVIDER's contract (base[-<profile>].env)
+# and nowhere else. Consumers read it at runtime; nobody keeps a second copy — a
+# rendered copy goes stale the moment base rotates its secret (live-caught: a 5-char
+# legacy default baked into .env vs the 32-char contract password, the app dying in
+# a crash-loop on "password authentication failed").
+
+# Load the contract into THIS process and export it, so every child — a sibling hook,
+# a dispatched CLI, `docker compose`'s interpolation environment — reads the same
+# values. Silent no-op when the contract is absent (standalone deployments).
+base_contract_export() {
+  local f
+  f="$(base_env_file)"
+  [ -n "${f}" ] && [ -f "${f}" ] || return 0
+  cfg_kv_load_export "${f}" AIBOX_
+  AIBOX_POSTGRES_USER="${AIBOX_POSTGRES_USER:-aibox}"
+  AIBOX_POSTGRES_HOST="${AIBOX_POSTGRES_HOST:-aibox-base-postgres}"
+  AIBOX_POSTGRES_PORT="${AIBOX_POSTGRES_PORT:-5432}"
+  AIBOX_REDIS_HOST="${AIBOX_REDIS_HOST:-aibox-base-redis}"
+  AIBOX_REDIS_PORT="${AIBOX_REDIS_PORT:-6379}"
+  export AIBOX_POSTGRES_USER AIBOX_POSTGRES_HOST AIBOX_POSTGRES_PORT
+  export AIBOX_REDIS_HOST AIBOX_REDIS_PORT
+  return 0
+}
+
+# Derived connection strings — ONE implementation, evaluated at CALL time, never
+# written into a module's files (writing them is how the stale copy happened).
+base_pg_url() { # $1 = database name
+  local db="${1:-}"
+  [ -n "${db}" ] || return 0
+  printf 'postgres://%s:%s@%s:%s/%s' "${AIBOX_POSTGRES_USER:-aibox}" "${AIBOX_POSTGRES_PASSWORD:-}" \
+    "${AIBOX_POSTGRES_HOST:-aibox-base-postgres}" "${AIBOX_POSTGRES_PORT:-5432}" "${db}"
+}
+
+base_redis_url() { # $1 = logical database index
+  printf 'redis://:%s@%s:%s/%s' "${AIBOX_REDIS_PASSWORD:-}" \
+    "${AIBOX_REDIS_HOST:-aibox-base-redis}" "${AIBOX_REDIS_PORT:-6379}" "${1:-0}"
+}
+
+# Generic drift scan for any KEY=VALUE state a module keeps (its deploy .env, a host
+# conf): does it hold a COPY of a connection fact that no longer matches the contract?
+# Prints one line per drifted key ("" = consistent, no contract, or nothing to check).
+contract_drift_report() { # $1 = module state file
+  local f="${1:-}" cf line key val want wu wh got gu gp rest gh
+  cf="$(base_env_file)"
+  if [ -z "${f}" ] || [ ! -f "${f}" ] || [ -z "${cf}" ] || [ ! -f "${cf}" ]; then return 0; fi
+  while IFS= read -r line; do
+    case "${line}" in '' | '#'*) continue ;; esac
+    case "${line}" in *=*) ;; *) continue ;; esac
+    key="${line%%=*}"
+    val="${line#*=}"
+    case "${key}" in
+    AIBOX_POSTGRES_PASSWORD | AIBOX_REDIS_PASSWORD)
+      want="$(cfg_kv_get "${cf}" "${key}")"
+      if [ -n "${want}" ] && [ "${val}" != "${want}" ]; then
+        printf '%s: stale copy in %s — restart the module to pick up %s\n' "${key}" "$(basename "${f}")" "${cf}"
+      fi
+      ;;
+    *URL* | *DSN* | *CONN_STRING*)
+      case "${val}" in *'://'*'@'*) ;; *) continue ;; esac
+      got="${val#*://}"
+      gu="${got%%:*}"
+      gp="${got#*:}"; gp="${gp%%@*}"
+      rest="${val#*@}"; gh="${rest%%[:/]*}"
+      case "${key}" in
+      *REDIS*)
+        want="$(cfg_kv_get "${cf}" AIBOX_REDIS_PASSWORD)"
+        wu="$(cfg_kv_get "${cf}" AIBOX_REDIS_USER)"
+        wh="$(cfg_kv_get "${cf}" AIBOX_REDIS_HOST)"
+        ;;
+      *)
+        want="$(cfg_kv_get "${cf}" AIBOX_POSTGRES_PASSWORD)"
+        wu="$(cfg_kv_get "${cf}" AIBOX_POSTGRES_USER)"
+        wh="$(cfg_kv_get "${cf}" AIBOX_POSTGRES_HOST)"
+        ;;
+      esac
+      if [ -n "${want}" ] && { [ "${gp}" != "${want}" ] || { [ -n "${wh}" ] && [ "${gh}" != "${wh}" ]; }; }; then
+        printf '%s: embeds a stale connection fact in %s (contract says %s@%s) — restart the module, or: aibox <module> deploy --recreate\n' \
+          "${key}" "$(basename "${f}")" "${wu:-<user>}" "${wh}"
+      fi
+      ;;
+    esac
+  done <"${f}"
+  return 0
+}
 # Host ports must live in the aibox RESERVED BAND (spec §Port allocation):
 # 31000-31999 services, 32000-32999 infrastructure. Three zones are refused:
 # privileged (<1024), Linux's ephemeral range (32768-60999 — the kernel hands
@@ -295,6 +381,14 @@ module_doctor() { # $1=module name (defaults to $AIBOX_MODULE)
   if [ "${notready}" = "1" ]; then printf '%s⚠  not ready: the service is not running (aibox %s start)%s\n' "${C_YEL:-}" "${m}" "${C_RST:-}"; return 30; fi
   ok "all checks passed"
   return 0
+
+  # ONE config: does this module's own state keep a stale copy of a connection fact?
+  local _drift "" _deproot=""
+  if type -t deploy_root >/dev/null 2>&1; then _deproot="$(deploy_root 2>/dev/null || true)"; fi
+  if [ -n "${_deproot}" ] && [ -f "${_deproot}/.env" ]; then
+    _drift="$(contract_drift_report "${_deproot}/.env")"
+    [ -n "${_drift}" ] && printf '%s\n' "${_drift}" | while IFS= read -r l; do warn "  ${l}"; done
+  fi
 }
 
 # Usage errors in module hooks are exit 2 (same convention as the manager).

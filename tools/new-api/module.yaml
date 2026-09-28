@@ -1,5 +1,5 @@
 name: new-api
-version: 1.4.7
+version: 1.5.0
 module_iface: 1
 description: "New API self-hosted (docker compose): LLM API gateway (OpenAI-compatible relay, key/quota management, usage analytics)"
 platform: ""

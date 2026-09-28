@@ -294,6 +294,13 @@ scripts/validate-module.sh <name> | --all                                  # con
     files). The manager carries NO per-module residue map — validator WARNs when a module
     declares neither; spec: `docs/module-spec.md` §Residue cleanup.
 
+15. **One config, read at runtime**: credentials/endpoints live in the provider contract
+    (`$AIBOX_HOME/base[-<profile>].env`) only. Never bake a literal secret, never default
+    one silently (`${AIBOX_POSTGRES_PASSWORD:-aibox}` = ERROR), and derive URLs with
+    `base_pg_url`/`base_redis_url` at call time. The manager exports the contract before
+    dispatching every hook/CLI, so children inherit the CURRENT values. Spec §One config,
+    read at runtime; validator S13k.
+
 14. **Host ports MUST live in the aibox reserved band** (spec §Port allocation):
     **30000–32999** — existing services **30000–30999**, new services **31000–31999**,
     infrastructure **32000–32999**. Never ship a default on a

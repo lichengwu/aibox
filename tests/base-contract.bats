@@ -591,3 +591,56 @@ _dep_fixture() { # base installed + a consumer that declares base:postgres#app
   [ "$status" -eq 1 ] || { echo "$output"; false; }
   [[ "$output" == *"module_iface must be an integer"* ]] || { echo "$output"; false; }
 }
+
+# ---------- one config, read at runtime (S13k + drift) -------------------------
+
+@test "contract: base_contract_export exports the facts; derived URLs are built at CALL time" {
+  mkdir -p "$AIBOX_HOME"
+  printf 'AIBOX_POSTGRES_USER=aibox\nAIBOX_POSTGRES_PASSWORD=contract-secret\nAIBOX_POSTGRES_HOST=aibox-base-postgres\nAIBOX_POSTGRES_PORT=5432\nAIBOX_REDIS_PASSWORD=rsecret\nAIBOX_REDIS_HOST=aibox-base-redis\nAIBOX_REDIS_PORT=6379\n' >"$AIBOX_HOME/base.env"
+  run bash -c "
+    export AIBOX_HOME='$AIBOX_HOME'
+    source '$AIBOX_BIN'
+    base_contract_export
+    printf '%s|%s|%s' \"\$AIBOX_POSTGRES_PASSWORD\" \"\$(base_pg_url new_api)\" \"\$(base_redis_url 7)\"
+  "
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "contract-secret|postgres://aibox:contract-secret@aibox-base-postgres:5432/new_api|redis://:rsecret@aibox-base-redis:6379/7" ] || { echo "got: $output"; false; }
+}
+
+@test "contract: the manager exports it before dispatch (children inherit the CURRENT facts)" {
+  mkdir -p "$AIBOX_HOME"
+  printf 'AIBOX_POSTGRES_PASSWORD=child-secret\n' >"$AIBOX_HOME/base.env"
+  run bash -c "AIBOX_HOME='$AIBOX_HOME' bash '$AIBOX_BIN' __env-probe 2>/dev/null || true; AIBOX_HOME='$AIBOX_HOME' bash -c 'source $AIBOX_BIN; base_contract_export; bash -c \"printf %s \\\"\\\$AIBOX_POSTGRES_PASSWORD\\\"\"'"
+  [[ "$output" == *"child-secret"* ]] || { echo "$output"; false; }
+}
+
+@test "drift: a stale copy of a connection fact is reported, an aligned one is silent" {
+  mkdir -p "$AIBOX_HOME"
+  printf 'AIBOX_POSTGRES_PASSWORD=fresh-secret\nAIBOX_POSTGRES_HOST=aibox-base-postgres\n' >"$AIBOX_HOME/base.env"
+  printf 'WEB_PORT=31100\nDATABASE_URL=postgres://aibox:stale-secret@aibox-base-postgres:5432/app\n' >"$AIBOX_HOME/deploy.env"
+  run bash -c "export AIBOX_HOME='$AIBOX_HOME'; source '$AIBOX_BIN'; contract_drift_report '$AIBOX_HOME/deploy.env'"
+  [[ "$output" == *"stale connection fact"* ]] || { echo "not reported: $output"; false; }
+  printf 'DATABASE_URL=postgres://aibox:fresh-secret@aibox-base-postgres:5432/app\n' >"$AIBOX_HOME/deploy.env"
+  run bash -c "export AIBOX_HOME='$AIBOX_HOME'; source '$AIBOX_BIN'; contract_drift_report '$AIBOX_HOME/deploy.env'"
+  [ -z "$output" ] || { echo "aligned copy reported: $output"; false; }
+}
+
+@test "validator S13k: compose literal + silent legacy default are ERRORs; templates pass" {
+  local out="$SANDBOX/s13k"
+  mkdir -p "$out"
+  bash "$REPO_ROOT/scripts/new-module.sh" credmod --out "$out" >/dev/null 2>&1
+  local dir="$out/credmod"
+  # a silent legacy default is the live-caught crash-loop shape
+  printf '\nPASS_TEST="${AIBOX_POSTGRES_PASSWORD:-aibox}"\n' >>"$dir/lib.sh"
+  run env VALIDATE_TOOLS_DIR="$out" bash "$REPO_ROOT/scripts/validate-module.sh" credmod
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+  [[ "$output" == *"silent credential default"* ]] || { echo "$output"; false; }
+  # a template (no literal, no default) is accepted
+  sed -i.bak 's/:-aibox}/:-}/' "$dir/lib.sh" 2>/dev/null || true
+  run env VALIDATE_TOOLS_DIR="$out" bash "$REPO_ROOT/scripts/validate-module.sh" credmod
+  [[ "$output" != *"silent credential default"* ]] || { echo "$output"; false; }
+  # a literal password inside a compose file is refused
+  printf 'services:\n  x:\n    environment:\n      - POSTGRES_PASSWORD=hunter2\n' >"$dir/docker-compose.yml"
+  run env VALIDATE_TOOLS_DIR="$out" bash "$REPO_ROOT/scripts/validate-module.sh" credmod
+  [[ "$output" == *"literal credential in a compose file"* ]] || { echo "$output"; false; }
+}
