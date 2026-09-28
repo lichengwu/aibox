@@ -7,6 +7,26 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.23.2] — 2026-09-28
+
+### Fixed
+
+- **`aibox windmill start` failed on a freshly installed module** with the CLI's raw
+  `docker-compose.yml not found. Run windmill init or windmill deploy first.` — windmill
+  separates MODULE install (aibox fetches hooks + CLI) from DEPLOYMENT (`init` renders
+  secrets/.env/compose/Caddyfile and starts the stack), but every other module is
+  install-and-start, so the natural first command had no artifacts to start. `start`
+  (and `restart`) now self-heal the deploy root, in the spirit of "aibox <module> start
+  works everywhere":
+  - never deployed (no `.env`) → the CLI's `init` (secrets + config + render + stack),
+  - rendered before but the artifacts are gone → `deploy --recreate` (keeps `.env`/secrets),
+  - healthy → `up`, exactly as before.
+  Live-reported: `aibox install windmill` → `aibox windmill start` → the raw CLI error.
+
+### Module versions
+
+windmill 1.7.2
+
 ## [0.23.1] — 2026-09-28
 
 ### Fixed
@@ -1591,6 +1611,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.23.2]: https://github.com/lichengwu/aibox/compare/v0.23.1...v0.23.2
 [0.23.1]: https://github.com/lichengwu/aibox/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/lichengwu/aibox/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/lichengwu/aibox/compare/v0.21.2...v0.22.0

@@ -52,9 +52,25 @@ case "${action}" in
 # up/down, but `aibox <module> start|stop|restart` must work everywhere
 # (spec §CLI surface). `restart` maps to `up`, which reconciles and recreates
 # whatever drifted — the closest thing the CLI has to a restart.
-start)   action="up" ;;
+# `start` must work on a fresh install: windmill separates MODULE install (this
+# aibox module) from DEPLOYMENT (render + secrets + stack), so a first `start`
+# has no docker-compose.yml yet. Self-heal instead of surfacing the CLI's raw
+# "run init or deploy first": never deployed → init; rendered once but the
+# artifacts are gone → deploy --recreate (keeps .env/secrets); healthy → up.
+start | restart)
+  action="up"
+  if [ ! -f "${WM_DIR:-$HOME/.aibox/apps/windmill}/docker-compose.yml" ]; then
+    if [ -f "${WM_DIR:-$HOME/.aibox/apps/windmill}/.env" ]; then
+      warn "windmill: no docker-compose.yml in the deploy root — re-rendering it first (aibox windmill deploy --recreate)"
+      action="deploy"
+      set -- --recreate "$@"
+    else
+      warn "windmill: not deployed yet — initializing (secrets + config + stack)"
+      action="init"
+    fi
+  fi
+  ;;
 stop)    action="down" ;;
-restart) action="up" ;;
 dashboard) action="status" ;;
 # Standard diagnostic verb: the CLI calls it `check`.
 doctor) module_doctor windmill ;;

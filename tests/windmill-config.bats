@@ -311,3 +311,36 @@ _conf() { # $1=KEY $2=value
   [ -f "$WM_DIR/docker-compose.yml" ] || { echo "the compose was NOT re-rendered: $output"; false; }
   grep -q 'services' "$WM_DIR/docker-compose.yml" || false
 }
+
+@test "svc.sh start self-heals: init when never deployed, deploy --recreate when only artifacts are gone" {
+  # svc.sh resolves the CLI from its install destination (AIBOX_BIN_DIR/windmill)
+  # first, else PATH — put the recording stub there so the routed verb is observable
+  export WM_VERB_LOG="$SANDBOX/verbs"
+  mkdir -p "$AIBOX_HOME/bin"
+  cat >"$AIBOX_HOME/bin/windmill" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$WM_VERB_LOG"
+STUB
+  chmod +x "$AIBOX_HOME/bin/windmill"
+  mkdir -p "$WM_DIR"
+  _run_start() {
+    : >"$WM_VERB_LOG"
+    run env HOME="$WM_TEST_HOME" AIBOX_HOME="$AIBOX_HOME" AIBOX_BIN_DIR="$AIBOX_HOME/bin" \
+      WM_DIR="$WM_DIR" WM_CONF_FILE="$WM_CONF_FILE" WM_VERB_LOG="$WM_VERB_LOG" \
+      bash "$REPO_ROOT/tools/windmill/svc.sh" start
+  }
+  # never deployed (no compose, no .env) → the CLI's init
+  rm -f "$WM_DIR/docker-compose.yml" "$WM_DIR/.env"
+  _run_start
+  [ "$(cat "$WM_VERB_LOG")" = "init" ] || { echo "verbs: $(cat "$WM_VERB_LOG")"; false; }
+  [[ "$output" == *"not deployed yet"* ]] || { echo "$output"; false; }
+  # deployed (has .env) but the render artifacts are gone → deploy --recreate
+  printf 'HTTP_PORT=31100\n' >"$WM_DIR/.env"
+  _run_start
+  [ "$(cat "$WM_VERB_LOG")" = "deploy --recreate" ] || { echo "verbs: $(cat "$WM_VERB_LOG")"; false; }
+  [[ "$output" == *"re-rendering it first"* ]] || { echo "$output"; false; }
+  # healthy artifacts present → plain up
+  printf 'services: {}\n' >"$WM_DIR/docker-compose.yml"
+  _run_start
+  [ "$(cat "$WM_VERB_LOG")" = "up" ] || { echo "verbs: $(cat "$WM_VERB_LOG")"; false; }
+}
