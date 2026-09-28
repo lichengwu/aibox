@@ -1,4 +1,7 @@
-# ---------- residue purge (workspace-level data cleanup) ----------
+# ---------- autoclean: residue + safe reclamation ----------
+# The internals keep their historical `_purge_*` / PURGE_* names (they are about
+# data purging, which is what the residue half does); the user-facing verb is
+# `autoclean` — the single cleanup verb since 0.23.0.
 # Residue knowledge is DECLARED by the module (module.yaml `residue:` stanza) and
 # derived generically by the manager (deploy root + every profile variant, module
 # cache, /etc/<name>, declared bin). The manager used to carry a per-module `case`
@@ -35,7 +38,7 @@ _purge_docker_up() {
 _purge_dir_size() { du -sh "$1" 2>/dev/null | awk '{print $1}' || printf '?'; }
 _purge_container_state() { docker inspect -f '{{.State.Status}}' "$1" 2>/dev/null || printf 'unknown'; }
 # The residue DECLARATION is captured into $AIBOX_HOME/residue.conf right after a
-# module is downloaded (install/update) — `aibox purge` must clean leftovers even
+# module is downloaded (install/update) — `aibox autoclean` must clean leftovers even
 # when the module cache is gone AND the host is offline, and at that point the
 # only surviving knowledge is this file (the registry cache may be stale too).
 # Plain KEY=VALUE lines, never sourced (data is not code).
@@ -335,15 +338,70 @@ _purge_apply_item() { # $1=kind $2=target $3=stop(0|1)
   return 0
 }
 
-cmd_purge() {
+# ---------- the safe-reclamation half of `autoclean` ----------
+# Ownership + non-reference proofs live in tools/_shared/lib/75-reclaim.sh; this
+# only renders and applies the result. Runs in the NO-ARGS form: naming modules
+# means "these modules' residue", which is the other half of the same verb.
+RECLAIM_IMAGES=""
+RECLAIM_TAGS=""
+RECLAIM_VOLS=""
+RECLAIM_BAKS=""
+RECLAIM_CACHE=""
+
+_autoclean_reclaim_scan() {
+  RECLAIM_IMAGES="$(reclaim_dangling_images)"
+  RECLAIM_TAGS="$(reclaim_stale_tags 2)"
+  RECLAIM_VOLS="$(reclaim_orphan_volumes)"
+  RECLAIM_BAKS="$(reclaim_stale_env_backups 2)"
+  RECLAIM_CACHE="$(reclaim_build_cache)"
+  return 0
+}
+
+# single-line count: `grep -c` prints 0 AND exits 1 on no match — the `|| true`
+# keeps that one line (an extra printf here produced two lines and broke $(( )))
+_reclaim_count() { printf '%s\n' "$1" | grep -c . 2>/dev/null || true; }
+
+_autoclean_reclaim_report() {
+  local n_img n_tag n_vol n_bak
+  n_img="$(_reclaim_count "${RECLAIM_IMAGES}")"
+  n_tag="$(_reclaim_count "${RECLAIM_TAGS}")"
+  n_vol="$(_reclaim_count "${RECLAIM_VOLS}")"
+  n_bak="$(_reclaim_count "${RECLAIM_BAKS}")"
+  [ "${n_img}${n_tag}${n_vol}${n_bak}" = "0000" ] && [ -z "${RECLAIM_CACHE}" ] && return 0
+  printf '\n%s%ssafe reclamation%s (proved: ours + unreferenced)\n' "${C_BOLD}" "${C_CYA}" "${C_RST}"
+  [ "${n_img}" -gt 0 ] && { printf '  dangling images     %s\n' "${n_img}"; printf '%s\n' "${RECLAIM_IMAGES}" | awk '{printf "    %s  %s\n", $2, $1}'; }
+  [ -n "${RECLAIM_CACHE}" ] && printf '  build cache         %s (prunes entries older than 24h)\n' "${RECLAIM_CACHE}"
+  [ "${n_vol}" -gt 0 ] && { printf '  orphan volumes      %s\n' "${n_vol}"; printf '%s\n' "${RECLAIM_VOLS}" | awk '{printf "    %s  %s  (module %s uninstalled, no container)\n", $2, $1, $3}'; }
+  [ "${n_tag}" -gt 0 ] && { printf '  stale image tags    %s (newest 2 per repo kept; pins + rollback points protected)\n' "${n_tag}"; printf '%s\n' "${RECLAIM_TAGS}" | awk '{printf "    %s  %s\n", $2, $1}'; }
+  [ "${n_bak}" -gt 0 ] && { printf '  stale .env backups  %s (newest 2 per module kept)\n' "${n_bak}"; printf '%s\n' "${RECLAIM_BAKS}" | awk '{printf "    %s  %s\n", $2, $1}'; }
+  printf '  %snever touched: volumes any container references · images needed for a rollback · data of an installed module · anything not provably aiboxs%s\n' "${C_DIM}" "${C_RST}"
+  return 0
+}
+
+_autoclean_reclaim_apply() {
+  local ids vols paths
+  ids="$(printf '%s\n' "${RECLAIM_IMAGES}" "${RECLAIM_TAGS}" | awk 'NF{print $1}' | tr '\n' ' ')"
+  vols="$(printf '%s\n' "${RECLAIM_VOLS}" | awk 'NF{print $1}' | tr '\n' ' ')"
+  paths="$(printf '%s\n' "${RECLAIM_BAKS}" | awk 'NF{print $1}' | tr '\n' ' ')"
+  # shellcheck disable=SC2086
+  [ -n "${ids}" ] && { reclaim_apply_images ${ids}; PURGE_DELETED=$((PURGE_DELETED + $(printf '%s\n' ${ids} | grep -c .) )); }
+  # shellcheck disable=SC2086
+  [ -n "${vols}" ] && { reclaim_apply_volumes ${vols}; PURGE_DELETED=$((PURGE_DELETED + $(printf '%s\n' ${vols} | grep -c .) )); }
+  # shellcheck disable=SC2086
+  [ -n "${paths}" ] && { reclaim_apply_paths ${paths}; PURGE_DELETED=$((PURGE_DELETED + $(printf '%s\n' ${paths} | grep -c .) )); }
+  [ -n "${RECLAIM_CACHE}" ] && reclaim_apply_build_cache
+  return 0
+}
+
+cmd_autoclean() {
   local apply=0 stop=0 scope="" a m s k t n scope_seen=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --apply) apply=1 ;;
       --stop)  stop=1 ;;
-      --yes|-y) ASSUME_YES=1 ;;   # the global flag loop stops at 'purge'; accept it here too
-      -h|--help) _verb_help purge; return 0 ;;
-      -*) usage_die "unknown option for purge: $1 (usage: aibox purge [<module>...|self] [--apply] [--stop] [--yes])" ;;
+      --yes|-y) ASSUME_YES=1 ;;   # the global flag loop stops at 'autoclean'; accept it here too
+      -h|--help) _verb_help autoclean; return 0 ;;
+      -*) usage_die "unknown option for autoclean: $1 (usage: aibox autoclean [<module>...|self] [--apply] [--stop] [--yes])" ;;
       *)  scope="${scope} $1" ;;
     esac
     shift
@@ -378,7 +436,7 @@ cmd_purge() {
   fi
   printf '\n  total: %s item(s). ' "$PURGE_COUNT"
   if [ "$apply" != 1 ]; then
-    printf 'Delete them: aibox purge --apply [--stop] [--yes]\n\n'
+    printf 'Delete them: aibox autoclean --apply [--stop] [--yes]\n\n'
     return 0
   fi
   printf 'Applying...\n'
@@ -432,6 +490,13 @@ cmd_purge() {
     fi
   fi
 
+  # ---- safe reclamation (no-args form): report what the proofs allow ----
+  if [ -z "${scope}" ]; then
+    _autoclean_reclaim_scan
+    _autoclean_reclaim_report
+    PURGE_COUNT=$((PURGE_COUNT + $(_reclaim_count "${RECLAIM_IMAGES}") + $(_reclaim_count "${RECLAIM_TAGS}") + $(_reclaim_count "${RECLAIM_VOLS}") + $(_reclaim_count "${RECLAIM_BAKS}")))
+  fi
+
   # ---- apply: containers first (a live container pins its volumes), then the rest ----
   while IFS="$(printf '\t')" read -r s k t n; do
     [ -n "$s" ] || continue
@@ -449,15 +514,20 @@ PF1
   done <<PF2
 $PURGE_FINDINGS
 PF2
+  # ---- apply the safe-reclamation half (only in the no-args form) ----
+  if [ -z "${scope}" ]; then
+    _autoclean_reclaim_apply
+  fi
+
   # tidy finish: drop now-empty shells (best-effort; only succeeds when empty)
   rmdir "$AIBOX_HOME/apps" 2>/dev/null || true
   rmdir "$AIBOX_HOME" 2>/dev/null || true
   printf '\n'
-  ok "purge complete: ${PURGE_DELETED} removed, ${PURGE_SKIPPED} skipped"
+  ok "autoclean complete: ${PURGE_DELETED} removed, ${PURGE_SKIPPED} skipped"
   # when containers were skipped, the busy volumes are the CONSEQUENCE — one
   # actionable closing line instead of the old raw per-volume "busy or gone"s
   if [ "${n_running}" -gt 0 ] && [ "${stop}" != 1 ]; then
-    info "running container(s) + their volumes kept — stop + sweep in one run: aibox purge${scope:+${scope}} --apply --stop"
+    info "running container(s) + their volumes kept — stop + sweep in one run: aibox autoclean${scope:+${scope}} --apply --stop"
   fi
   return 0
 }
@@ -575,7 +645,7 @@ _self_rc_cleanup() {
 #                                 AIBOX_PURGE_DATA=1 (services + data), then the
 #                                 manager + rc block.
 # Confirm gate: TTY asks; non-interactive requires --yes. Selectivity lives in
-# the composed commands (aibox uninstall <m> [--purge] / aibox purge), not in
+# the composed commands (aibox uninstall <m> [--purge] / aibox autoclean), not in
 # flag matrices here.
 cmd_self_uninstall() {
   local purge=0 a entries d ctrs m p
@@ -659,7 +729,7 @@ ENTRIES
   if [ "$purge" != 1 ]; then
     warn "module services and data were KEPT. Teardown paths:"
     warn "  one module : reinstall aibox, then  aibox uninstall <module> --purge"
-    warn "  residue    : curl -fsSL ${AIBOX_RAW}/bin/aibox -o /tmp/aibox && bash /tmp/aibox purge --apply"
+    warn "  residue    : curl -fsSL ${AIBOX_RAW}/bin/aibox -o /tmp/aibox && bash /tmp/aibox autoclean --apply"
   fi
   return 0
 }
@@ -686,7 +756,7 @@ EOF
   check <module>|self        Preflight dry-run (self = environment: egress, docker, node, disk)
   dashboard [--available]    Overview + ports + listeners; --available = registry catalog; --json = machine-readable
   dashboard <module>         Detail + health + config keys + upgrade/rollback state
-  purge [module...|self] [--apply] [--stop] [--yes]
+  autoclean [module...|self] [--apply] [--stop] [--yes]
                              Residue scan/cleanup (dry-run by default)
   version, -v, --version     Manager version
 

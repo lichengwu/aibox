@@ -733,13 +733,13 @@ READM
   fi
 
   # --- S23: residue DECLARED by the module (post-manager cleanup) ---
-  # `aibox purge` must clean a module's leftovers AFTER the module (or aibox
+  # `aibox autoclean` must clean a module's leftovers AFTER the module (or aibox
   # itself) is gone. The knowledge therefore belongs to the MODULE: a `residue:`
   # stanza in module.yaml (paths/containers/volumes/units/bin/npm/process — read
   # offline from the cache or the registry cache) or a residue_paths() override
   # in lib.sh for dynamic cases. The manager used to carry a per-module map.
   if ! grep -qE '^residue:' "$f" && ! grep -qE '^residue_paths\(\)' "$d/lib.sh" 2>/dev/null; then
-    warn "no residue declaration — add a 'residue:' stanza to module.yaml (or a residue_paths() override in lib.sh) so 'aibox purge' can clean this module's leftovers"
+    warn "no residue declaration — add a 'residue:' stanza to module.yaml (or a residue_paths() override in lib.sh) so 'aibox autoclean' can clean this module's leftovers"
   fi
 
 

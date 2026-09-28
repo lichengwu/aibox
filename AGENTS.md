@@ -31,7 +31,7 @@ aibox uninstall <module>|self [--purge] [--yes]   # --purge: also delete data; s
 aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks]   # self = aibox itself; --all = modules + self
 aibox check <module>|self                    # module preflight; self = environment check
 aibox dashboard [--available] [<module>]     # overview (versions+endpoints+credentials+ports) / catalog / detail+health
-aibox purge [<module>...|self] [--apply] [--stop] [--yes]  # residue scan/cleanup (dry-run default)
+aibox autoclean [<module>...|self] [--apply] [--stop] [--yes]  # residue scan/cleanup (dry-run default)
 aibox <module> <action> [args]            # pass-through to module svc.sh
 aibox proxy {show|set <url>|unset|on|off|check [url]|env}   # static proxy config (global; see README "Proxy")
 aibox --no-proxy <command>                                # bypass the proxy once
@@ -287,7 +287,7 @@ scripts/validate-module.sh <name> | --all                                  # con
 12. **No hardcoded credentials** in compose files; shared-PG consumers read `${AIBOX_POSTGRES_*}` from the injected `base.env` (validator scans; base is the only exception by design).
 13. **Residue is DECLARED by the module**: a `residue:` stanza in `module.yaml`
     (`paths`/`containers`/`volumes`/`units`/`bin`/`npm`/`process`) — captured into
-    `$AIBOX_HOME/residue.conf` at install time, so `aibox purge` can clean leftovers even
+    `$AIBOX_HOME/residue.conf` at install time, so `aibox autoclean` can clean leftovers even
     after the module (or aibox itself) is uninstalled and offline (rescue: curl the
     single-file `bin/aibox` to /tmp and run `purge --apply`). A module whose residue is
     dynamic overrides `residue_paths()` in `lib.sh` (base does, for its per-profile env

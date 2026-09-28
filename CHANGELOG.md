@@ -7,6 +7,54 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.23.0] — 2026-09-28
+
+### Changed
+
+- **`purge` and the cleanup surface are ONE verb now: `aibox autoclean`.** The old
+  `aibox purge` is gone (no shim — an unknown verb takes the normal path). The merged
+  verb keeps every purge capability and adds the safe-reclamation half:
+
+  ```bash
+  aibox autoclean                                  # report (default: deletes nothing)
+  aibox autoclean --apply [--stop] [--yes]         # residue of everything it can see
+  aibox autoclean <module>...|self [--apply]       # named residue (containers, volumes,
+                                                   #   deploy dirs, /etc configs, units,
+                                                   #   CLI binaries, npm packages)
+  ```
+
+  The no-argument form additionally reports and reclaims what passes **two proofs —
+  aibox can prove ownership, and nothing references it**:
+
+  | class | rule |
+  | --- | --- |
+  | dangling images | untagged, unreferenced |
+  | build cache | entries older than 24h |
+  | orphan volumes | attributable to a module that is **uninstalled**, with zero container references |
+  | stale image tags | unreferenced by containers/pins/`upgrades/*.state`/`.env.bak.*`, newest 2 per repo kept |
+  | stale `.env.bak.*` | newest 2 per module kept |
+
+  Never touched: volumes any container references (running **or** stopped), images a
+  rollback point needs, **data of an installed module**, and anything not provably
+  aibox's. `aibox dashboard` now shows a `reclaim` line (docker system df).
+
+### Added
+
+- `tools/_shared/lib/75-reclaim.sh` — the reclamation engine (list + apply helpers),
+  shared by the manager and available to module hooks.
+
+### Removed
+
+- **BREAKING: the `purge` verb.** Use `autoclean` (`aibox autoclean --help`). The
+  `uninstall --purge` flag, the `AIBOX_PURGE_DATA` hook contract and the internal
+  `_purge_*` helpers are unchanged — they are about *data purging*, which is what the
+  nominally-named half still does.
+
+### Module versions
+
+base 1.8.1 · clash 1.7.1 · dify 1.22.1 · gitlab 1.8.1 · new-api 1.4.7 · openmaic 1.5.1 ·
+pi-web 1.7.1 · windmill 1.7.1 · xiaozhi 1.5.1
+
 ## [0.22.0] — 2026-09-28
 
 ### Changed
@@ -1527,6 +1575,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.23.0]: https://github.com/lichengwu/aibox/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/lichengwu/aibox/compare/v0.21.2...v0.22.0
 [0.21.2]: https://github.com/lichengwu/aibox/compare/v0.21.1...v0.21.2
 [0.21.1]: https://github.com/lichengwu/aibox/compare/v0.21.0...v0.21.1

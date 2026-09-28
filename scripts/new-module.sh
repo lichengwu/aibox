@@ -146,7 +146,7 @@ env:
 # Per-action help text (one line each) — `aibox __NAME__ --help` renders this
 # table. The validator WARNs when a declared action has no usage entry.
 residue:
-  # aibox purge reads this offline (cache yaml → $AIBOX_HOME/residue.conf →
+  # aibox autoclean reads this offline (cache yaml → $AIBOX_HOME/residue.conf →
   # registry cache): declare what a clean uninstall must remove.
   containers: "^aibox-__NAME__$"
   volumes: "^aibox___NAME___.*$"

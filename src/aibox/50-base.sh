@@ -69,7 +69,7 @@ cmd_uninstall() {
     if [ "$purge" = 1 ]; then cmd_self_uninstall --purge; else cmd_self_uninstall; fi
     return $?
   fi
-  is_installed "$name" || { warn "$name not installed; residue left behind? scan it: aibox purge $name"; return; }
+  is_installed "$name" || { warn "$name not installed; residue left behind? scan it: aibox autoclean $name"; return; }
 
   # Reverse-dependency gate (base is a provider): removing it breaks every
   # consumer — name them before the confirmation so the decision is informed.
@@ -121,7 +121,7 @@ cmd_uninstall() {
   if [ "${purge}" = "1" ]; then
     verdict=" — data deleted (volumes + deploy .env)"
   else
-    verdict=" — data RETAINED (cleanup: aibox purge ${name})"
+    verdict=" — data RETAINED (cleanup: aibox autoclean ${name})"
   fi
   # The script cache is shared across profiles: delete it only when no OTHER profile
   # still has this module installed (else a prod uninstall would break the default install).

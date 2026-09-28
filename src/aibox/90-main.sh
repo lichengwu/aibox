@@ -37,7 +37,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
         _verb_help "${2}" || { usage; exit 2; }
         exit 0
       fi ;;
-    install|uninstall|update|upgrade|check|dashboard|purge|proxy|version)
+    install|uninstall|update|upgrade|check|dashboard|autoclean|proxy|version)
       case "${2:-}" in -h|--help) _verb_help "$1"; exit 0 ;; esac ;;
   esac
 
@@ -47,7 +47,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     update)           shift; cmd_update "$@" ;;
     upgrade)          shift; cmd_upgrade "$@" ;;
     check)            shift; cmd_check "$@" ;;
-    purge)            shift; cmd_purge "$@" ;;
+    autoclean)        shift; cmd_autoclean "$@" ;;
     dashboard)        shift; cmd_dashboard "$@" ;;
     proxy)            shift; cmd_proxy "$@" ;;
     # hidden internal verb: the dashboard's async latest-version probe runs as

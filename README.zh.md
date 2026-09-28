@@ -45,7 +45,7 @@
   `usage:` 映射）；`aibox <module> <action> --help` 渲染单个动作。
 - **默认安全** —— 每个破坏性动词都有交互确认（卸载先确认、再确认是否删数据；
   purge 先确认、再确认是否停容器）；脚本场景无 `--yes` 一律拒绝并 exit 2。
-- **残留清理** —— `aibox purge` 扫描并清除卸载钩子遗留物（卷、`/etc` 目录、
+- **残留清理** —— `aibox autoclean` 扫描并清除卸载钩子遗留物（卷、`/etc` 目录、
   服务单元、二进制），aibox 本身卸载后也能清理。
 
 ## 环境要求
@@ -150,7 +150,7 @@ aibox upgrade <module> [flags]    升级部署的上游版本（dockerhub/github
 aibox check <module>|self         预检演练；self = 环境检查
 aibox dashboard [--available]     总览（已安装模块）/ 目录
 aibox dashboard <module>          单模块详情 + 健康探测（头部显示应用版本）
-aibox purge [<module>...|self]    残留扫描/清理（默认 dry-run；--apply 先确认、
+aibox autoclean [<module>...|self]    残留扫描/清理（默认 dry-run；--apply 先确认、
                                   再问是否停运行中容器）
 aibox proxy {show|set|on|off|…}   静态出口代理配置（全局）
 aibox <verb> --help               该动词的用法与选项 · 等价：aibox help <verb>

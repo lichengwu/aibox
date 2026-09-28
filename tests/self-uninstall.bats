@@ -55,7 +55,7 @@ teardown() {
   grep -q 'alias ll=' "$HOME/.zshrc"                     # other rc lines intact
   [[ "$output" == *"KEPT"* ]]
   [[ "$output" == *"aibox uninstall <module> --purge"* ]]  # teardown-path hints
-  [[ "$output" == *"purge --apply"* ]]
+  [[ "$output" == *"autoclean --apply"* ]]
 }
 
 @test "uninstall self --purge --yes: cascade — hooks per (module,profile) with PURGE=1, apps dropped" {
@@ -132,7 +132,7 @@ EOF
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   # hook ran with PURGE=0 (the safe default without an explicit --purge)
   grep -q '^othermod base 0$' "$MARKER_FILE"
-  [[ "$output" == *"data RETAINED (cleanup: aibox purge othermod)"* ]]
+  [[ "$output" == *"data RETAINED (cleanup: aibox autoclean othermod)"* ]]
 }
 
 @test "uninstall <module> --purge --yes: data contract = 1 + 'data deleted' verdict" {

@@ -22,7 +22,7 @@ dependencies, no package manager, works on the bash 3.2 that ships with macOS.
 ## Features
 
 - **One grammar** — `aibox <verb> <module>` for everything: `install`, `update`,
-  `uninstall`, `check`, `upgrade`, `dashboard`, `purge`. One mental model, no sub-family verbs.
+  `uninstall`, `check`, `upgrade`, `dashboard`, `autoclean`. One mental model, no sub-family verbs.
 - **Preflight-gated installs** — deps, disk, domains, docker daemon reachability and
   shared-service readiness are probed *before* anything is touched; a bad network tries the
   configured alternative routes (direct / clash / mirror) automatically.
@@ -55,7 +55,7 @@ dependencies, no package manager, works on the bash 3.2 that ships with macOS.
 - **Safe by default** — every destructive verb confirms interactively (uninstall asks,
   then asks about data; purge asks, then asks about running containers); scripts decline
   with exit 2 unless `--yes`.
-- **Residue cleanup** — `aibox purge` scans and removes what uninstall hooks leave behind
+- **Residue cleanup** — `aibox autoclean` scans and removes what uninstall hooks leave behind
   (volumes, `/etc` dirs, units, binaries), even after aibox itself is uninstalled.
 
 ## Requirements
@@ -166,7 +166,7 @@ aibox upgrade <module> [flags]    bump the deployed UPSTREAM version (dockerhub 
 aibox check <module>|self         preflight dry-run; self = environment check
 aibox dashboard [--available]     overview (installed modules) / catalog
 aibox dashboard <module>          single-module detail + health probe (app version in the header)
-aibox purge [<module>...|self]    residue scan/cleanup (dry-run by default; --apply
+aibox autoclean [<module>...|self]    residue scan/cleanup (dry-run by default; --apply
                                   confirms, then asks about RUNNING containers)
 aibox proxy {show|set|on|off|…}   static egress proxy config (global)
 aibox <verb> --help               that verb's usage + options · also: aibox help <verb>

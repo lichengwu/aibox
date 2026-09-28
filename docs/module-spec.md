@@ -210,7 +210,7 @@ with exactly this flow.
 8. **Residue declaration**: add a `residue:` stanza to `module.yaml` —
    `paths` (extra locations; `$HOME`/`$AIBOX_HOME`/`$ETC_DIR` are expanded), `containers`,
    `volumes`, `units` (system-level unit file names), `bin` (dispatched binaries),
-   `npm`, `process`. `aibox purge` must clean the module's leftovers AFTER the module (or
+   `npm`, `process`. `aibox autoclean` must clean the module's leftovers AFTER the module (or
    aibox itself) is uninstalled and offline: the stanza is captured into
    `$AIBOX_HOME/residue.conf` at install/update time, and the manager derives the rest
    generically (deploy root + every profile variant, module cache, `/etc/<name>`).
@@ -319,7 +319,7 @@ Data deletion is ONE flag across the CLI: **`--purge`**.
 
 ```text
 aibox uninstall <module> [--purge]     tear down one module; --purge also deletes its DATA
-aibox purge [<module>...|self] [--apply] [--stop] [--yes]
+aibox autoclean [<module>...|self] [--apply] [--stop] [--yes]
                                        after-the-fact residue scan/cleanup (see below)
 aibox uninstall self [--purge] [--yes] remove the manager; --purge = cascade full teardown
 ```
@@ -348,9 +348,9 @@ aibox uninstall self [--purge] [--yes] remove the manager; --purge = cascade ful
 - Missing binaries must not short-circuit the hook (purge/retention of the deploy root
   still runs): no early `exit 0` before the data branch.
 
-### Residue cleanup (`aibox purge`)
+### Residue cleanup (`aibox autoclean`)
 
-`aibox purge` must remove what modules (or aibox itself) left behind **after** they are
+`aibox autoclean` must remove what modules (or aibox itself) left behind **after** they are
 uninstalled and **offline**. The knowledge therefore belongs to the module:
 
 1. `module.yaml` `residue:` stanza (declarative: `paths`/`containers`/`volumes`/`units`/`bin`/`npm`/`process`),
@@ -366,10 +366,10 @@ modules the "scan everything" path visits is DERIVED as well (module cache dirs 
 installed markers + the registry cache + `residue.conf` keys), so a newly added module
 is scanned without touching the manager.
 
-aibox purge                          # dry-run scan: categorized residue report (default)
-aibox purge <module>... --apply      # clean specific modules' residue
-aibox purge self --apply             # the manager's own residue (bin, state, rc block)
-aibox purge --apply [--stop] [--yes] # everything; --stop authorizes stopping RUNNING
+aibox autoclean                          # dry-run scan: categorized residue report (default)
+aibox autoclean <module>... --apply      # clean specific modules' residue
+aibox autoclean self --apply             # the manager's own residue (bin, state, rc block)
+aibox autoclean --apply [--stop] [--yes] # everything; --stop authorizes stopping RUNNING
                                      # containers/processes (refused by default)
 ```
 
@@ -377,7 +377,7 @@ Rescue when aibox itself is already deleted (single file — offline, zero deps)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lichengwu/aibox/main/bin/aibox -o /tmp/aibox
-bash /tmp/aibox purge --apply
+bash /tmp/aibox autoclean --apply
 ```
 
 Safety: deletion targets come only from the embedded map + existence checks; RUNNING
@@ -431,7 +431,7 @@ Before switching roots, verify these three constraints in order (the first two a
 - **`aibox uninstall self` must be fail-safe.** The default removes ONLY the manager (binary +
   state + rc block) and KEEPS module services/data — `apps/` survives so running deployments stay
   manageable, and the summary prints the teardown paths (`aibox uninstall <m> --purge`,
-  `aibox purge --apply`). `--purge` cascades: every installed (module, profile)'s hook with
+  `aibox autoclean --apply`). `--purge` cascades: every installed (module, profile)'s hook with
   `AIBOX_PURGE_DATA=1`, then `apps/`, then the manager. Confirm gate: TTY asks; non-interactive
   without `--yes` exits non-zero and changes nothing ("dangerous ops never run silently").
 - **systemd / launchd units must bake the resolved absolute paths in explicitly**, e.g.
@@ -875,7 +875,7 @@ Every destructive verb follows the same shape; module uninstall is the reference
 1. **Gate 1 — the operation itself**: `ask_confirm "Uninstall <m>? (what it does; what is kept)"` — `[y/N]`, default decline; `--yes` skips; non-interactive without `--yes` → exit `2`, nothing runs.
 2. **Gate 2 — data cleanup, asked INLINE**: `ask_confirm "Also DELETE the data? …"` — the answer feeds `AIBOX_PURGE_DATA` into the SAME hook invocation (one run carries the whole decision). `--purge` = explicit intent (skips the question); non-interactive without `--purge` keeps data (the safe default) and prints the residue hint.
 
-The data question being inline removes the dead round-trip the old flow forced: `aibox uninstall <m>` then `aibox uninstall <m> --purge` — the latter warns "not installed" (the hook contract needs the installed state); the correct post-uninstall cleanup is `aibox purge <m>`. Module hooks print that guidance.
+The data question being inline removes the dead round-trip the old flow forced: `aibox uninstall <m>` then `aibox uninstall <m> --purge` — the latter warns "not installed" (the hook contract needs the installed state); the correct post-uninstall cleanup is `aibox autoclean <m>`. Module hooks print that guidance.
 
 Gate coverage: uninstall (2 gates) · uninstall self (confirm per teardown scope) · purge `--apply` (confirm + dry-run default + an inline "stop RUNNING containers?" question — `--stop` pre-answers yes; non-interactive skips them with a single hint, never a partial-stopping state) · upgrade (confirm) · proxy set (confirm) · dispatched CLIs' `confirm` (windmill destroy etc.).
 

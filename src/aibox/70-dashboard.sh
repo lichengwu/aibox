@@ -312,6 +312,9 @@ DASHBLOCKS
   done
 
   # residue: NOT-installed modules with leftover artifacts (local scan)
+  # reclamation overview: what `aibox autoclean` could free (docker system df)
+  local _df; _df="$(reclaim_df_summary)"
+  [ -n "${_df}" ] && printf '%s  %-10s %s%s\n' "${C_DIM}" "reclaim" "${_df}" "${C_RST}"
   PURGE_FINDINGS=""; PURGE_COUNT=0
   if command -v docker >/dev/null 2>&1; then
     local m2
@@ -322,7 +325,7 @@ DASHBLOCKS
       dash_secheader "residue"
       printf '%s' "${PURGE_FINDINGS}" | awk -F'\t' -v inst=" ${installed_names} " '
         $1 != "" && index(inst, " " $1 " ") == 0 { cnt[$1]++ }
-        END { for (s in cnt) printf "  · %s — %d item(s) · aibox purge %s\n", s, cnt[s], s }
+        END { for (s in cnt) printf "  · %s — %d item(s) · aibox autoclean %s\n", s, cnt[s], s }
       ' | sort
     fi
   fi

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# `aibox purge` — residue scan/cleanup (v2 CLI: embedded in bin/aibox).
+# `aibox autoclean` — residue scan/cleanup (v2 CLI: embedded in bin/aibox).
 # Hermetic sandbox: PURGE_* env overrides redirect etc/systemd roots; HOME /
 # AIBOX_HOME / AIBOX_BIN_DIR are sandboxed; host-touching scanners
 # (docker/processes/npm) are disabled via guards so tests never see — or
@@ -47,8 +47,8 @@ teardown() {
   [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true
 }
 
-@test "purge scan (dry-run): categorizes residue and deletes nothing" {
-  run bash "$AIBOX" purge
+@test "autoclean scan (dry-run): categorizes residue and deletes nothing" {
+  run bash "$AIBOX" autoclean
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"dry-run"* ]]
   [[ "$output" == *"[gitlab]"* ]]
@@ -62,8 +62,8 @@ teardown() {
   [ -f "$PURGE_SYSTEMD_DIR/windmill-backup.timer" ]
 }
 
-@test "purge <module> --apply: scoped removal; other modules and manager untouched" {
-  run bash "$AIBOX" purge windmill --apply --yes
+@test "autoclean <module> --apply: scoped removal; other modules and manager untouched" {
+  run bash "$AIBOX" autoclean windmill --apply --yes
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ ! -d "$AIBOX_HOME/apps/windmill" ]
   [ ! -f "$AIBOX_BIN_DIR/windmill" ]
@@ -76,7 +76,7 @@ teardown() {
 }
 
 @test "purge self --apply: only the manager residue goes" {
-  run bash "$AIBOX" purge self --apply --yes
+  run bash "$AIBOX" autoclean self --apply --yes
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ ! -f "$AIBOX_BIN_DIR/aibox" ]
   ! grep -q '^# aibox$' "$HOME/.zshrc"
@@ -86,8 +86,8 @@ teardown() {
   [ -f "$AIBOX_BIN_DIR/windmill" ]
 }
 
-@test "purge --apply (all): everything gone, rc surgery, rescan clean" {
-  run bash "$AIBOX" purge --apply --yes
+@test "autoclean --apply (all): everything gone, rc surgery, rescan clean" {
+  run bash "$AIBOX" autoclean --apply --yes
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ ! -e "$AIBOX_BIN_DIR/aibox" ]
   [ ! -e "$AIBOX_HOME" ]          # tidy finish removes the empty shell
@@ -95,23 +95,23 @@ teardown() {
   ! grep -q '^# aibox$' "$HOME/.zshrc"
   grep -q 'alias ll=' "$HOME/.zshrc"
   grep -q 'alias gg=' "$HOME/.zshrc"
-  run bash "$AIBOX" purge
+  run bash "$AIBOX" autoclean
   [ "$status" -eq 0 ]
   [[ "$output" == *"no residue found"* ]]
 }
 
-@test "purge --apply without --yes in a non-interactive shell refuses" {
-  run bash "$AIBOX" purge --apply
+@test "autoclean --apply without --yes in a non-interactive shell refuses" {
+  run bash "$AIBOX" autoclean --apply
   [ "$status" -ne 0 ]
   [[ "$output" == *"non-interactive"* ]]
   [ -f "$AIBOX_BIN_DIR/aibox" ]
   [ -d "$AIBOX_HOME/apps/gitlab" ]
 }
 
-@test "purge: unknown flag dies with usage" {
-  run bash "$AIBOX" purge --only=gitlab
+@test "autoclean: unknown flag dies with usage" {
+  run bash "$AIBOX" autoclean --only=gitlab
   [ "$status" -ne 0 ]
-  [[ "$output" == *"unknown option for purge"* ]]
+  [[ "$output" == *"unknown option for autoclean"* ]]
 }
 
 
@@ -150,9 +150,9 @@ SH
   unset PURGE_NO_DOCKER
 }
 
-@test "purge --apply non-interactive (--yes, no --stop): running container skipped + ONE hint, dirs still swept" {
+@test "autoclean --apply non-interactive (--yes, no --stop): running container skipped + ONE hint, dirs still swept" {
   _fake_docker_running
-  run bash "$AIBOX" purge windmill --apply --yes </dev/null
+  run bash "$AIBOX" autoclean windmill --apply --yes </dev/null
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   # the consolidated hint (was: 2 warnings per running container)
   [[ "$output" == *"1 running container(s) will be SKIPPED"* ]]
@@ -161,12 +161,12 @@ SH
   [ ! -d "$AIBOX_HOME/apps/windmill" ]
   ! grep -q "^stop" "$DOCKER_CALLS_LOG"
   # closing actionable line
-  [[ "$output" == *"stop + sweep in one run: aibox purge windmill --apply --stop"* ]]
+  [[ "$output" == *"stop + sweep in one run: aibox autoclean windmill --apply --stop"* ]]
 }
 
-@test "purge --apply --stop: containers stopped BEFORE the volumes (call order)" {
+@test "autoclean --apply --stop: containers stopped BEFORE the volumes (call order)" {
   _fake_docker_running
-  run bash "$AIBOX" purge windmill --apply --stop --yes </dev/null
+  run bash "$AIBOX" autoclean windmill --apply --stop --yes </dev/null
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"stopped+removed container: windmill-windmill_server-1"* ]]
   # stop must precede every volume rm in the call log
@@ -176,12 +176,12 @@ SH
   [ -n "$first_stop" ] && [ -n "$first_vol" ] && [ "$first_stop" -lt "$first_vol" ]
 }
 
-@test "purge --apply: interactive decline on the stop question → containers kept, hint shown" {
+@test "autoclean --apply: interactive decline on the stop question → containers kept, hint shown" {
   command -v expect >/dev/null 2>&1 || skip "expect unavailable (CI ubuntu)"
   _fake_docker_running
   export DOCKER_CALLS_LOG
   expect -c '
-    spawn bash "'"$AIBOX"'" purge windmill --apply
+    spawn bash "'"$AIBOX"'" autoclean windmill --apply
     expect -re {Delete all} { send "y\r" }
     expect -re {container\(s\) are RUNNING} { send "n\r" }
     expect eof
@@ -191,12 +191,12 @@ SH
   [ ! -d "$AIBOX_HOME/apps/windmill" ]
 }
 
-@test "purge --apply: interactive ACCEPT on the stop question → one-run full sweep" {
+@test "autoclean --apply: interactive ACCEPT on the stop question → one-run full sweep" {
   command -v expect >/dev/null 2>&1 || skip "expect unavailable (CI ubuntu)"
   _fake_docker_running
   export DOCKER_CALLS_LOG
   expect -c '
-    spawn bash "'"$AIBOX"'" purge windmill --apply
+    spawn bash "'"$AIBOX"'" autoclean windmill --apply
     expect -re {Delete all} { send "y\r" }
     expect -re {container\(s\) are RUNNING} { send "y\r" }
     expect eof
@@ -268,7 +268,7 @@ SH
 orphanmod_residue_paths=$HOME/orphan-data
 ' >"$AIBOX_HOME/residue.conf"
   mkdir -p "$HOME/orphan-data"
-  run bash "$AIBOX" purge
+  run bash "$AIBOX" autoclean
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"[orphanmod]"* ]] || { echo "$output"; false; }
   [[ "$output" == *"orphan-data"* ]] || { echo "$output"; false; }
@@ -278,7 +278,7 @@ orphanmod_residue_paths=$HOME/orphan-data
   rm -rf "$AIBOX_HOME/modules" "$AIBOX_HOME/installed.sh" "$AIBOX_HOME/residue.conf"
   mkdir -p "$AIBOX_HOME/modules/cachedmod" "$AIBOX_HOME/apps/cachedmod"
   printf 'name: cachedmod\nversion: 1.0.0\n' >"$AIBOX_HOME/modules/cachedmod/module.yaml"
-  run bash "$AIBOX" purge
+  run bash "$AIBOX" autoclean
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"[cachedmod]"* ]] || { echo "$output"; false; }
 }
@@ -287,7 +287,7 @@ orphanmod_residue_paths=$HOME/orphan-data
   rm -rf "$AIBOX_HOME/modules" "$AIBOX_HOME/installed.sh" "$AIBOX_HOME/residue.conf"
   mkdir -p "$AIBOX_HOME/apps/registrymod"
   printf 'AIBOX_MODULES="registrymod"\nAIBOX_MODULE_registrymod_version="1.0.0"\n' >"$AIBOX_HOME/registry.cache"
-  run bash "$AIBOX" purge
+  run bash "$AIBOX" autoclean
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   [[ "$output" == *"[registrymod]"* ]] || { echo "$output"; false; }
 }

@@ -40,3 +40,4 @@ jobs:
         run: npm install -g bats
       - name: run preflight-check integration
         run: bats tests/integration/preflight-check.bats
+        run: bats tests/integration/autoclean.bats

@@ -121,7 +121,7 @@ if [ "$INTEGRATION" = 1 ]; then
   else
     step "integration suite (host daemon via mounted socket)"
     docker run --rm -v "$REPO_ROOT":/repo -w /repo -v /var/run/docker.sock:/var/run/docker.sock \
-      "$IMAGE" bash -c 'bats tests/integration/base-profiles.bats tests/integration/preflight-check.bats' \
+      "$IMAGE" bash -c 'bats tests/integration/base-profiles.bats tests/integration/preflight-check.bats tests/integration/autoclean.bats' \
       || { bad "integration suite"; FAILED="${FAILED} integration"; }
   fi
   step "flag-gated integration suites"

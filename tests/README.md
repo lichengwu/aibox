@@ -45,6 +45,8 @@ Every regression test below was born from a real bug found in review or live tes
 | `base-env.bats` — prod path/host + hash 1073 | profile derivation is a cross-machine contract (same name → same ports everywhere) |
 | `managed-files.bats` — 7 tests: fresh install, untouched refresh, user-edited file kept (+`.new`), accepted-update path, every compose module uses the helper, `state_files:` declarations, validator overlap ERROR | the ownership review: a plain `cp` in install hooks silently replaced a user's edited compose on the next update |
 | `module-lib-split.bats` — 4 tests: split libraries declared in `files:` and sourced by lib.sh, the extra file reaches the CACHE layout, functions exist in both layouts, no duplicated definitions | the maintainability review: three module libraries had grown past 650 lines and everything lived in one file |
+| `integration/autoclean.bats` — 1 test on a real daemon: the orphan volume is reported and deleted, an installed module's volume and a foreign volume are never touched (dry-run first) | the cleanup merge: the proofs must hold against real docker objects, not only stubs |
+| `reclaim.bats` — 6 tests: dangling images reclaimable, stale tags with pins/rollback/containers/buffer protected, orphan volumes (ours + unreferenced + module uninstalled), stale .env backups, `--apply` deletes exactly the reported set, and the retired `purge` verb | the merge review: cleanup is now ONE verb whose default only touches objects passing both proofs |
 | `port-policy.bats` — 6 tests: declared ports in the reserved band, code default ↔ module.yaml declaration cross-check, `port_policy_hint` for each refused zone, validator S13j + the `:public` escape hatch, profile bands, policy documented | the port review: defaults sat on 80/443/8080/8000/7890 and inside Linux's ephemeral range, so they collided with whatever else runs on the host |
 | `service-units.bats` — 5 tests: launchd plist keys/args/env/logging, systemd user unit (default.target), systemd system unit (User=root, multi-user.target, extra sections), pi-web uses the shared renderers, one definition only | the same platform-service knowledge was written twice (pi-web + windmill) |
 | `profile.bats` — pinned ports/labels for "prod" | changing the hash algorithm or ranges silently breaks every deployed profile |
@@ -141,11 +143,12 @@ Fast suite (`bats tests/*.bats`, no docker/network, ~seconds) — **38 files**:
 - `module-lib-split.bats`
 - `service-units.bats`
 - `port-policy.bats`
+- `reclaim.bats`
 - `managed-files.bats`
 - `docs-gen.bats`
 - `proxy-fallback.bats`
 - `proxy.bats`
-- `purge.bats`
+- `autoclean.bats`
 - `registry.bats`
 - `self-uninstall.bats`
 - `upgrade-rollback.bats`

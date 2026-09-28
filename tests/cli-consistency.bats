@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # CLI consistency (0.18.0) — the instruction-system audit turned into guards.
-# Found & fixed: per-verb help existed only for `purge` (install/check/dashboard
+# Found & fixed: per-verb help existed only for one verb (install/check/dashboard
 # treated `--help` as a MODULE name and even hit the registry; the rest reported
 # an unknown option, exit 1), usage() drifted from the real sub-verbs, usage
 # errors exited 1 while the spec documents 2, preflight failures exited 1 while
@@ -28,7 +28,7 @@ teardown() { [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true; }
 
 @test "help: every verb answers --help with its own usage block, exit 0" {
   local v out
-  for v in install uninstall update upgrade check dashboard purge proxy version; do
+  for v in install uninstall update upgrade check dashboard autoclean proxy version; do
     run bash "$AIBOX_BIN" "$v" --help
     [ "$status" -eq 0 ] || { echo "verb=${v} exit=${status}"; echo "$output"; false; }
     out="$(head -1 <<<"$output")"
@@ -45,8 +45,8 @@ teardown() { [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true; }
 
 @test "help: aibox help <verb> renders the same block as <verb> --help" {
   local a b
-  a="$(bash "$AIBOX_BIN" help purge 2>&1)"
-  b="$(bash "$AIBOX_BIN" purge --help 2>&1)"
+  a="$(bash "$AIBOX_BIN" help autoclean 2>&1)"
+  b="$(bash "$AIBOX_BIN" autoclean --help 2>&1)"
   [ "${a}" = "${b}" ] || { echo "help <verb> and <verb> --help differ"; false; }
 }
 
@@ -69,7 +69,7 @@ teardown() { [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true; }
 @test "help drift: every dispatch arm has a _verb_help block and is listed in usage()" {
   local verbs v
   verbs="$(sed -n '/# ---------- dispatch ----------/,/^  case "\${1:-help}" in/p' "$AIBOX_BIN" \
-    | grep -oE '^[[:space:]]+(install\|uninstall\|update\|upgrade\|check\|dashboard\|purge\|proxy\|version)[^)]*\)' \
+    | grep -oE '^[[:space:]]+(install\|uninstall\|update\|upgrade\|check\|dashboard\|autoclean\|proxy\|version)[^)]*\)' \
     | tr -d ' )' | tr '|' '\n' | sort -u)"
   for v in ${verbs}; do
     # a help block exists for it…
@@ -78,7 +78,7 @@ teardown() { [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true; }
   done
   #… and the overview lists each verb
   local overview; overview="$(bash "$AIBOX_BIN" help 2>&1)"
-  for v in install uninstall update upgrade check dashboard purge proxy version; do
+  for v in install uninstall update upgrade check dashboard autoclean proxy version; do
     [[ "$overview" == *"${v}"* ]] || { echo "usage() does not mention ${v}"; false; }
   done
 }
@@ -98,7 +98,7 @@ teardown() { [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true; }
   [ "$status" -eq 2 ] || { echo "unknown module exit=${status}"; false; }
   run bash "$AIBOX_BIN" uninstall --bogus-flag
   [ "$status" -eq 2 ] || { echo "unknown option exit=${status}"; false; }
-  run bash "$AIBOX_BIN" purge --bogus-flag
+  run bash "$AIBOX_BIN" autoclean --bogus-flag
   [ "$status" -eq 2 ] || false
   run bash "$AIBOX_BIN" upgrade
   [ "$status" -eq 2 ] || false

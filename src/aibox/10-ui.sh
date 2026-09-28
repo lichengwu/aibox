@@ -1,6 +1,6 @@
 # ---------- unknown-argument UX (suggestions + one consistent hint) ----------
 # Verbs the dispatcher understands (typo suggestions for the first arg).
-AIBOX_VERBS="install uninstall update upgrade check dashboard purge proxy clash help version"
+AIBOX_VERBS="install uninstall update upgrade check dashboard autoclean proxy clash help version"
 
 # "Close enough to be a typo" for short ASCII words: prefix either way, one
 # substitution, or one transposition. Cheaper than a full Levenshtein and
@@ -117,12 +117,12 @@ usage: aibox uninstall <module>|self [--purge] [--yes]
 
 Run the module's uninstall hook, then remove its marker. Data is KEPT unless
 --purge is given (two gates: confirm, then confirm DATA). Residue afterwards:
-aibox purge <module>.
+aibox autoclean <module>.
 
   --purge      also delete the module's DATA (volumes, deploy root)
   --yes, -y    answer both gates yes (scripts/non-interactive)
 
-related: aibox purge [--apply] · aibox uninstall self [--purge]
+related: aibox autoclean [--apply] · aibox uninstall self [--purge]
 EOF
     ;;
   update)
@@ -194,13 +194,28 @@ The dashboard is the authoritative view for DERIVED values (profile ports,
 container names, env paths) — docs deliberately point here instead of hardcoding.
 EOF
     ;;
-  purge)
+  autoclean)
     cat <<'EOF'
-usage: aibox purge [<module>...|self] [--apply] [--stop] [--yes]
+usage: aibox autoclean [<module>...|self] [--apply] [--stop] [--yes]
 
-Scan for residue (containers, volumes, deploy dirs, /etc configs, units, CLI
-binaries, npm packages) and remove it. Dry-run by DEFAULT: nothing is deleted
-without --apply. Works after the module — or aibox itself — is gone.
+The single cleanup verb. Dry-run by DEFAULT: nothing is deleted without --apply.
+
+No arguments — reclaim what is provably safe, on two proofs (it is OURS and
+nothing REFERENCES it):
+  · dangling images                 (<none>, no container)
+  · build cache                     (entries older than 24h)
+  · orphan volumes                  (a module that is UNINSTALLED, no container;
+                                     its volume name must match a known residue)
+  · stale image tags                (newest 2 per repo kept; every pin, upgrade
+                                     state and .env backup is protected)
+  · stale .env backups              (newest 2 per module kept)
+  plus the residue scan below.
+Never touched: volumes any container references (running OR stopped), images a
+rollback point needs, data of an installed module, anything not provably aibox's.
+
+With arguments — scan/remove the residue of those modules (or `self` for the
+manager): containers, volumes, deploy dirs, /etc configs, systemd units, CLI
+binaries, npm packages. Works after the module — or aibox itself — is gone.
 
   --apply    actually delete (default: report only)
   --stop     stop RUNNING containers among the findings first
