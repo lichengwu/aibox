@@ -134,6 +134,74 @@ _AIBOX_PROF="${AIBOX_PROFILE:-base}"
 _BASE_SUFFIX=""
 [ "$_AIBOX_PROF" != "base" ] && _BASE_SUFFIX="-${_AIBOX_PROF}"
 SHARED_PG_CONTAINER="aibox-base${_BASE_SUFFIX}-postgres"
+# The shared library (cfg_kv_load_export — the ONE safe KEY=VALUE reader). Cache
+# layout: _common.sh sits next to the module dir; repo layout: ../_shared.
+_LIB_COMMON="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../_common.sh"
+[ -f "${_LIB_COMMON}" ] || _LIB_COMMON="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/_shared/common.sh"
+if [ -f "${_LIB_COMMON}" ]; then
+  # shellcheck disable=SC1090
+  . "${_LIB_COMMON}"
+fi
+
+BASE_ENV_FILE="${AIBOX_HOME:-$HOME/.aibox}/base${_BASE_SUFFIX}.env"
+
+# The provider (base) OWNS the connection facts; this CLI must not keep a copy.
+# Load them from the contract on every invocation and EXPORT them: `docker compose`
+# gives the shell environment precedence over --env-file, so the containers always
+# start with the CURRENT values — a rendered copy in .env went stale the moment base
+# rotated its password (live-caught: a legacy 5-char default vs the 32-char contract
+# secret, with the app crash-looping on "password authentication failed").
+load_base_contract() {
+  [ -f "${BASE_ENV_FILE}" ] || return 0          # standalone mode: .env carries its own URL
+  command -v cfg_kv_load_export >/dev/null 2>&1 || return 0
+  cfg_kv_load_export "${BASE_ENV_FILE}" AIBOX_
+  AIBOX_BASE_POSTGRES_USER="${AIBOX_POSTGRES_USER:-aibox}"
+  AIBOX_BASE_POSTGRES_PASSWORD="${AIBOX_POSTGRES_PASSWORD:-}"
+  AIBOX_BASE_POSTGRES_HOST="${AIBOX_POSTGRES_HOST:-aibox-base-postgres}"
+  export AIBOX_BASE_POSTGRES_USER AIBOX_BASE_POSTGRES_PASSWORD AIBOX_BASE_POSTGRES_HOST
+  if [ -n "${AIBOX_BASE_POSTGRES_PASSWORD}" ]; then
+    DATABASE_URL="postgres://${AIBOX_BASE_POSTGRES_USER}:${AIBOX_BASE_POSTGRES_PASSWORD}@${AIBOX_BASE_POSTGRES_HOST}:5432/windmill"
+    export DATABASE_URL
+  fi
+  return 0
+}
+
+# What the contract says the URL should be ("" when there is no contract).
+contract_database_url() {
+  [ -f "${BASE_ENV_FILE}" ] || return 0
+  local u p h
+  u="${AIBOX_BASE_POSTGRES_USER:-${AIBOX_POSTGRES_USER:-}}"
+  p="${AIBOX_BASE_POSTGRES_PASSWORD:-${AIBOX_POSTGRES_PASSWORD:-}}"
+  h="${AIBOX_BASE_POSTGRES_HOST:-${AIBOX_POSTGRES_HOST:-}}"
+  [ -n "${u}" ] && [ -n "${p}" ] && [ -n "${h}" ] || return 0
+  printf 'postgres://%s:%s@%s:5432/windmill' "${u}" "${p}" "${h}"
+}
+
+# Align a stale copy in .env with the contract (connection facts only — pins and
+# every other knob stay untouched). 0 = ok/aligned, prints a notice when it writes.
+sync_connection_facts() {
+  local want have
+  want="$(contract_database_url)"; [ -n "${want}" ] || return 0
+  have="$(get_env DATABASE_URL)"
+  [ -n "${have}" ] || return 0
+  [ "${have}" = "${want}" ] && return 0
+  set_env DATABASE_URL "${want}"
+  info "  DATABASE_URL realigned from ${BASE_ENV_FILE} (connection facts are the provider's; the copy in .env was stale)"
+  return 0
+}
+
+# Non-mutating version for check/doctor: the drift message ("" = consistent).
+connection_facts_drift() {
+  local want have
+  want="$(contract_database_url)"; [ -n "${want}" ] || return 0
+  have="$(get_env DATABASE_URL)"
+  [ -n "${have}" ] || return 0
+  [ "${have}" = "${want}" ] && return 0
+  printf 'DATABASE_URL does not match %s (stale copy — fix: %s deploy --recreate, or %s up after the contract changed)' \
+    "${BASE_ENV_FILE}" "$CLI_NAME" "$CLI_NAME"
+  return 0
+}
+
 # Exported so docker compose interpolates ${AIBOX_BASE_NETWORK} in the generated compose
 # (the quoted heredoc writes it literally; compose resolves it from this process env at up-time).
 export AIBOX_BASE_NETWORK="aibox-base${_BASE_SUFFIX}"
@@ -178,6 +246,7 @@ export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-1}"
 
 # --- Paths ------------------------------------------------------------------
 wm_paths() {
+  load_base_contract
   ENV_FILE="$WM_DIR/.env"
   COMPOSE_FILE="$WM_DIR/docker-compose.yml"
   CADDY_FILE="$WM_DIR/Caddyfile"
@@ -1712,6 +1781,18 @@ render_env() {
   local ver="$1" dbpass="$2" port="$3" tls=0
   base_url_tls && tls=1
   umask 077
+  # The connection facts come from the PROVIDER's contract when there is one — never
+  # invent them: the old template silently fell back to the legacy default "aibox",
+  # which baked a wrong password into .env on every base that had rotated its secret
+  # (live-caught: the app crash-looping on "password authentication failed").
+  local _DB_URL
+  if [ -f "${BASE_ENV_FILE}" ]; then
+    [ -n "${AIBOX_BASE_POSTGRES_PASSWORD:-}" ] || die "${BASE_ENV_FILE} has no AIB0X_POSTGRES_PASSWORD — the shared PG password lives in the provider's contract (fix: aibox base start; older deployments: aibox update base)"
+    _DB_URL="postgres://${AIBOX_BASE_POSTGRES_USER}:${AIBOX_BASE_POSTGRES_PASSWORD}@${AIBOX_BASE_POSTGRES_HOST}:5432/windmill"
+  else
+    # standalone mode: the bundled db service (same URL form the CLI uses elsewhere)
+    _DB_URL="postgres://postgres:${dbpass}@db:5432/windmill?sslmode=disable"
+  fi
   cat > "$ENV_FILE" <<WMEOF
 # ============================================================================
 # Windmill deploy config — generated by \`windmill init\` at $(ts)
@@ -1725,7 +1806,7 @@ render_env() {
 # --- Database (connects to the shared aibox base PG; db replicas:0, no local PG) ---
 # Precondition: aibox base start && aibox base createdb windmill
 # Credentials: AIBOX_BASE_POSTGRES_USER/AIBOX_BASE_POSTGRES_PASSWORD (default aibox/aibox)
-DATABASE_URL=postgres://${AIBOX_BASE_POSTGRES_USER:-aibox}:${AIBOX_BASE_POSTGRES_PASSWORD:-aibox}@${SHARED_PG_CONTAINER}:5432/windmill
+DATABASE_URL=${_DB_URL}
 # POSTGRES_PASSWORD is kept for standalone-mode db volume init (shared mode db replicas:0, no local PG)
 POSTGRES_PASSWORD=${dbpass}
 
@@ -2163,6 +2244,7 @@ cmd_deploy() {
 
   require_ready
   wm_paths
+  sync_connection_facts   # the provider owns the connection facts
   sync_env_knobs    # conf -> .env knobs (sizing / TLS / logs / retention)
 
   local miss; miss=$(config_missing)
@@ -2439,6 +2521,7 @@ cmd_up() {
   done
   require_ready
   wm_paths
+  sync_connection_facts   # the provider owns the connection facts
   [ -f "$COMPOSE_FILE" ] || die "${COMPOSE_FILE} not found. Run $CLI_NAME init or $CLI_NAME deploy first."
 
   acquire_lock
@@ -2564,6 +2647,7 @@ cmd_status() {
 # =============================================================================
 cmd_doctor() {
   wm_paths
+  local _drift; _drift="$(connection_facts_drift)"; [ -n "${_drift}" ] && warn "${_drift}"
   local fail=0
   hr
   log "${C_BOLD}Environment self-check${C_RESET}  $(ts)"
@@ -2694,6 +2778,7 @@ cmd_doctor() {
 # =============================================================================
 cmd_check() {
   wm_paths
+  local _drift; _drift="$(connection_facts_drift)"; [ -n "${_drift}" ] && warn "${_drift}"
   [ -f "$ENV_FILE" ] || { warn "No deploy found"; exit 2; }
   local px; px=$(get_env WM_PROXY); PROXY_URL="${px:-$PROXY_URL}"
 

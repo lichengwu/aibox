@@ -344,3 +344,41 @@ STUB
   _run_start
   [ "$(cat "$WM_VERB_LOG")" = "up" ] || { echo "verbs: $(cat "$WM_VERB_LOG")"; false; }
 }
+
+@test "connection facts: .env carries the RESOLVED contract value, compose interpolates at runtime" {
+  # .env is a snapshot (for the CLI's own psql/backup tooling); the compose line must
+  # stay ${DATABASE_URL} so `docker compose` resolves it from the environment the CLI
+  # exports from base.env — that is what makes a rotated provider password take effect
+  # on the next up instead of crash-looping on a stale copy.
+  grep -q '^DATABASE_URL=\${_DB_URL}$' "$WM_CLI" || { echo ".env line is not the resolved value"; false; }
+  [ "$(grep -c '^      - DATABASE_URL=\${DATABASE_URL}$' "$WM_CLI")" -ge 4 ] || { echo "compose lines lost runtime interpolation"; false; }
+  grep -q 'load_base_contract' "$WM_CLI" || false
+  grep -q 'cfg_kv_load_export' "$WM_CLI" || { echo "the contract reader is not used"; false; }
+  grep -q 'sync_connection_facts' "$WM_CLI" || false
+  # no silent legacy default anywhere in the render path
+  ! grep -q 'AIBOX_BASE_POSTGRES_PASSWORD:-aibox' "$WM_CLI" || { echo "the silent 'aibox' fallback is back"; false; }
+}
+
+@test "connection facts: a stale .env copy is realigned from the contract (only that field)" {
+  # the live failure: base rotated its password, the rendered copy in .env stayed
+  mkdir -p "$AIBOX_HOME"
+  printf 'AIBOX_POSTGRES_USER=aibox\nAIBOX_POSTGRES_PASSWORD=contract-secret-32chars-xx\nAIBOX_POSTGRES_HOST=aibox-base-postgres\n' >"$AIBOX_HOME/base.env"
+  printf 'HTTP_PORT=31100\nDATABASE_URL=postgres://aibox:aibox@aibox-base-postgres:5432/windmill\nWM_TLS=0\n' >"$WM_DIR/.env"
+  run bash -c "export HOME='$WM_TEST_HOME' AIBOX_HOME='$AIBOX_HOME' WM_DIR='$WM_DIR' WM_CONF_FILE='$WM_CONF_FILE'
+    source '$WM_CLI'
+    wm_paths
+    sync_connection_facts
+    grep -E '^DATABASE_URL=' \"\$WM_DIR/.env\"
+    echo \"---\"
+    grep -E '^(HTTP_PORT|WM_TLS)=' \"\$WM_DIR/.env\""
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"contract-secret-32chars-xx"* ]] || { echo "not realigned: $output"; false; }
+  [[ "$output" == *"HTTP_PORT=31100"* ]] || { echo "unrelated keys touched"; false; }
+  [[ "$output" == *"WM_TLS=0"* ]] || { echo "unrelated keys touched"; false; }
+  # and the drift is reported (non-mutating) for the check/doctor path
+  run bash -c "export HOME='$WM_TEST_HOME' AIBOX_HOME='$AIBOX_HOME' WM_DIR='$WM_DIR' WM_CONF_FILE='$WM_CONF_FILE'
+    source '$WM_CLI'; wm_paths
+    printf 'HTTP_PORT=31100\nDATABASE_URL=postgres://aibox:stale@aibox-base-postgres:5432/windmill\n' >\"\$WM_DIR/.env\"
+    connection_facts_drift"
+  [[ "$output" == *"does not match"* ]] || { echo "drift not reported: $output"; false; }
+}

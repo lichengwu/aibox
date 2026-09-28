@@ -7,6 +7,37 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.24.0] — 2026-09-28
+
+### Changed
+
+- **Connection facts are the PROVIDER's, not a copy.** windmill's shared-PG
+  `DATABASE_URL` is now resolved from `base.env` (the contract) on every invocation and
+  exported, so `docker compose` starts the containers with the CURRENT values — the shell
+  environment wins over `--env-file`, so a stale copy in `.env` can no longer pin a dead
+  password. `.env` keeps a resolved snapshot only for the CLI's own tooling
+  (`psql`/`backup`) and is realigned when it drifts; `check`/`doctor` report the drift
+  without writing.
+  This is the live-caught crash-loop: base rotated its secret (the 1.2.0-era default was
+  the 5-char `aibox`, the modern contract value is 32 chars), the render had silently
+  baked the legacy default into `.env`, and every recreate kept it — the app died with
+  `password authentication failed for user "aibox"` in a restart loop.
+- The env render now **dies with an actionable message** when the contract exists but
+  carries no password (fix: `aibox base start`, or `aibox update base` on an older
+  deployment) instead of inventing the legacy default.
+
+### Fixed
+
+- `deps: docker-compose` was probed with `command -v docker-compose`; modern hosts ship
+  the **compose v2 plugin** (`docker compose`) and have no standalone binary, so healthy
+  hosts were told "⚠ missing docker-compose — without it the service will not come up"
+  even though the compose file was present and the plugin worked (live-caught on a host
+  where `aibox base start` said it).
+
+### Module versions
+
+windmill 1.7.3
+
 ## [0.23.2] — 2026-09-28
 
 ### Fixed
@@ -1611,6 +1642,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.24.0]: https://github.com/lichengwu/aibox/compare/v0.23.2...v0.24.0
 [0.23.2]: https://github.com/lichengwu/aibox/compare/v0.23.1...v0.23.2
 [0.23.1]: https://github.com/lichengwu/aibox/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/lichengwu/aibox/compare/v0.22.0...v0.23.0

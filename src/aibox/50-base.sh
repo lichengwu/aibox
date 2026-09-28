@@ -44,6 +44,13 @@ _runtime_dep_guard() { # $1=module
     case "$cmd" in *@*) ptag="${cmd##*@}"; cmd="${cmd%@*}" ;; esac
     if [ -n "$ptag" ] && [ "$ptag" != "$os" ]; then continue; fi
     case "$cmd" in *:*) cmd="${cmd%%:*}" ;; esac
+    if [ "$cmd" = "docker-compose" ]; then
+      # modern hosts ship the compose v2 PLUGIN (`docker compose`), not the legacy
+      # standalone binary — `command -v docker-compose` false-positived on them
+      # (live-caught: "⚠ base: missing docker-compose" on a healthy host whose
+      # compose file was present and whose plugin works)
+      docker compose version >/dev/null 2>&1 && continue
+    fi
     command -v "$cmd" >/dev/null 2>&1 || missing="${missing}${missing:+ }${cmd}"
   done
   [ -n "$missing" ] || return 0
