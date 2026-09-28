@@ -383,7 +383,7 @@ module_doctor() { # $1=module name (defaults to $AIBOX_MODULE)
   return 0
 
   # ONE config: does this module's own state keep a stale copy of a connection fact?
-  local _drift "" _deproot=""
+  local _drift="" _deproot=""
   if type -t deploy_root >/dev/null 2>&1; then _deproot="$(deploy_root 2>/dev/null || true)"; fi
   if [ -n "${_deproot}" ] && [ -f "${_deproot}/.env" ]; then
     _drift="$(contract_drift_report "${_deproot}/.env")"

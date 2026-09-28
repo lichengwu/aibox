@@ -1,5 +1,5 @@
 name: base
-version: 1.9.0
+version: 1.9.1
 module_iface: 1
 description: "Shared base components (PostgreSQL 18 + Redis 7); each module gets its own DB"
 platform: ""

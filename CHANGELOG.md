@@ -7,6 +7,22 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.25.1] — 2026-09-28
+
+### Fixed
+
+- The new drift check inside `doctor` never ran: the inserted line declared
+  `local _drift "" _deproot=""` (an empty word where a variable NAME belongs), so the
+  block mis-parsed and the report stayed silent. Caught by the final live verification
+  (the stale `.env` came back clean); now `doctor` prints e.g.
+  `DATABASE_URL: embeds a stale connection fact in .env (contract says aibox@aibox-base-postgres)
+  — restart the module, or: aibox <module> deploy --recreate`.
+
+### Module versions
+
+base 1.9.1 · clash 1.8.1 · dify 1.23.1 · gitlab 1.9.1 · new-api 1.5.1 · openmaic 1.6.1 ·
+pi-web 1.8.1 · windmill 1.8.1 · xiaozhi 1.6.1
+
 ## [0.25.0] — 2026-09-28
 
 ### Changed
@@ -1696,6 +1712,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.25.1]: https://github.com/lichengwu/aibox/compare/v0.25.0...v0.25.1
 [0.25.0]: https://github.com/lichengwu/aibox/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/lichengwu/aibox/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/lichengwu/aibox/compare/v0.23.2...v0.24.0
