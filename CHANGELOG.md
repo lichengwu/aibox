@@ -7,6 +7,28 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.21.2] — 2026-09-27
+
+### Fixed
+
+- **`aibox windmill start` (and `stop`) reached the CLI as unknown commands.** windmill is a
+  dispatch-CLI module whose own spelling is `up`/`down`, and its `svc.sh` passed the standard
+  lifecycle verbs through untranslated — exactly what the spec forbids for dispatch CLIs
+  (openmaic already translated them). `start`/`stop`/`restart` are now mapped onto the CLI's
+  verbs, so `aibox windmill start` works on every host. Live-caught on a deploy host:
+  `aibox windmill dashboard` showed the stack down and `aibox windmill start` answered
+  `unknown command: start`.
+- **A deploy root whose `docker-compose.yml` was gone could neither start nor redeploy.**
+  The compose is a render artifact (`render_compose`), but `deploy --recreate` validated it
+  *before* the render step, so a missing/broken artifact was unrecoverable from the CLI side.
+  The validation now runs only when the compose exists and the mode is not `--recreate`
+  (which re-renders first). Host recipe for the reported case:
+  `aibox update windmill && aibox windmill deploy --recreate`.
+- validator rule S13i: a dispatch-CLI module must resolve `start`/`stop`/`restart` — either by
+  aliasing them in `svc.sh` or by its CLI implementing that spelling. The rule immediately
+  caught openmaic's `restart` pass-through (its CLI does implement it, so the check accepts it)
+  and would have caught windmill's gap.
+
 ## [0.21.1] — 2026-09-27
 
 ### Fixed
@@ -1449,6 +1471,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.21.2]: https://github.com/lichengwu/aibox/compare/v0.21.1...v0.21.2
 [0.21.1]: https://github.com/lichengwu/aibox/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/lichengwu/aibox/compare/v0.20.4...v0.21.0
 [0.20.4]: https://github.com/lichengwu/aibox/compare/v0.20.3...v0.20.4

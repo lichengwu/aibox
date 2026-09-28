@@ -2212,8 +2212,15 @@ cmd_deploy() {
   if [ -f "$ENV_FILE" ]; then
     local p; p=$(get_env HTTP_PORT); HTTP_PORT="${p:-$HTTP_PORT}"
   fi
-  docker compose --project-directory "$WM_DIR" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" config >/dev/null 2>&1 \
-    || die "compose config parse failed"
+  # Validate the compose BEFORE touching anything — except on --recreate, which
+  # re-renders it first: the compose is a render artifact, and a missing/hand-broken
+  # one must be recoverable with `deploy --recreate` (live-caught: a deploy root
+  # whose docker-compose.yml was gone could no longer start OR redeploy, because
+  # this guard ran before the render step).
+  if [ -f "$COMPOSE_FILE" ] && [ "$mode" != "recreate" ]; then
+    docker compose --project-directory "$WM_DIR" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" config >/dev/null 2>&1 \
+      || die "compose config parse failed"
+  fi
 
   local target; target=$(env_version)
 

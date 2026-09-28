@@ -483,6 +483,32 @@ validate_module() {
     warn "install.sh touches .env but module.yaml declares no state_files: — declare what the user owns (never overwritten)"
   fi
 
+  # --- S13i: dispatch CLIs must alias start/stop/restart (spec §CLI surface) ---
+  # A module that passes actions to its own CLI (svc.sh execs $CLI / a dispatch
+  # binary) has to translate the standard lifecycle verbs onto that CLI's spelling,
+  # otherwise `aibox <module> start` reaches the CLI as "start" and dies with
+  # "unknown command" (live-caught on a deploy host: windmill's CLI spells them
+  # up/down and svc.sh did not translate).
+  if grep -qE 'exec "\$\{?CLI\}?"|exec "\$\{?[A-Z_]*BIN\}?"' "$d/svc.sh" 2>/dev/null; then
+    # a verb is satisfied when svc.sh aliases it OR the dispatched CLI itself
+    # implements that spelling (its own dispatch table has a `<verb>)` arm)
+    local _missing=""
+    local _v _cli_files
+    _cli_files="$d/svc.sh"
+    if [ -d "$d/cli" ]; then
+      for _f in "$d/cli"/*; do
+        [ -f "${_f}" ] && _cli_files="${_cli_files} ${_f}"
+      done
+    fi
+    for _v in start stop restart; do
+      # shellcheck disable=SC2086
+      grep -qE "^[[:space:]]*${_v}\)" ${_cli_files} 2>/dev/null || _missing="${_missing} ${_v}"
+    done
+    if [ -n "${_missing}" ]; then
+      err "dispatch CLI without lifecycle aliases:${_missing} — map them onto the CLI's own verbs (e.g. start) action=\"up\" ;;"
+    fi
+  fi
+
   # --- S13h: contract capability version (spec §Contract capability version) ---
   # module_iface declares which manager↔module contract surface the module targets
   # (dashboard_info keys, residue:/upgrade: stanzas, hook behaviour). RENAME/REMOVAL

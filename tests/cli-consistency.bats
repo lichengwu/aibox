@@ -245,3 +245,39 @@ YAML
   [[ "$output" != *"desc: command not found"* ]] || { echo "$output"; false; }
   [[ "$output" == *"use-external"* ]] || { echo "$output"; false; }
 }
+
+@test "dispatch CLIs: the standard lifecycle verbs resolve (alias or the CLI's own)" {
+  local m d svc cli_f cf found
+  for d in "$REPO_ROOT"/tools/*/; do
+    m="$(basename "${d%/}")"; svc="${d%/}/svc.sh"
+    [ -f "${svc}" ] || continue
+    grep -qE 'exec "\$\{?CLI\}?"' "${svc}" || continue
+    for v in start stop restart; do
+      found=0
+      grep -qE "^[[:space:]]*${v}\)" "${svc}" && found=1
+      if [ "${found}" = "0" ]; then
+        for cf in "${d%/}"/cli/*; do
+          [ -f "${cf}" ] || continue
+          grep -qE "^[[:space:]]*${v}\)" "${cf}" && found=1
+        done
+      fi
+      [ "${found}" = "1" ] || { echo "${m}: '${v}' would reach the CLI as an unknown command"; false; }
+    done
+  done
+}
+
+@test "windmill: aibox windmill start dispatches to the CLI's up verb" {
+  # svc.sh resolves the CLI from the install destination or PATH (it refuses to
+  # guess) — provide the repo CLI on PATH; -h is parsed before docker is needed,
+  # so this stays a pure dispatch check.
+  mkdir -p "$AIBOX_HOME/bin"
+  ln -sf "$REPO_ROOT/tools/windmill/cli/windmill" "$AIBOX_HOME/bin/windmill"
+  local env="PATH='$AIBOX_HOME/bin:$PATH' WM_DIR='$AIBOX_HOME/apps/windmill' WM_CONF_FILE='$AIBOX_HOME/windmill.conf'"
+  run bash -c "cd '$REPO_ROOT' && env $env bash tools/windmill/svc.sh start --help"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"up"* ]] || { echo "start did not reach the CLI's up: $output"; false; }
+  run bash -c "cd '$REPO_ROOT' && env $env bash tools/windmill/svc.sh stop --help"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  run bash -c "cd '$REPO_ROOT' && env $env bash tools/windmill/svc.sh restart --help"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+}

@@ -287,3 +287,27 @@ _conf() { # $1=KEY $2=value
   _wm 'printf "%s|%s|%s" "$PROXY_URL" "$WM_GHCR_MIRROR" "$WM_HUB_MIRROR"'
   [ "$output" = "http://127.0.0.1:7890|https://ghcr.nju.edu.cn|https://docker.1ms.run" ] || { echo "got: $output"; false; }
 }
+
+@test "deploy --recreate recovers a MISSING docker-compose.yml (re-render, then up)" {
+  # live-caught: a deploy root whose compose was gone could neither start nor
+  # redeploy — cmd_up needs the file and cmd_deploy validated it before the
+  # --recreate branch re-renders it. The render artifact must be recoverable.
+  # The CLI's commands exit() by design, so the assertion looks at the stubbed
+  # renderer's side effect from the OUTER shell.
+  rm -f "$WM_DIR/docker-compose.yml"
+  run bash -c "
+    export HOME='$WM_TEST_HOME' AIBOX_HOME='$AIBOX_HOME' WM_DIR='$WM_DIR' WM_CONF_FILE='$WM_CONF_FILE'
+    source '$WM_CLI'
+    require_root() { :; } ; require_docker() { :; } ; acquire_lock() { :; } ; release_lock() { :; }
+    step() { :; } ; info() { :; } ; hr() { :; } ; sync_env_knobs() { :; }
+    crun() { return 0; }
+    config_missing() { :; }        # model 'config intact, compose artifact gone'
+    render_compose() { printf 'services: {}\n' >\"\$COMPOSE_FILE\"; }
+    render_caddy()   { printf '# caddy\n' >\"\$CADDY_FILE\"; }
+    all_running() { return 0; } ; wm_port_listening() { return 0; } ; probe_version() { printf 'test'; }
+    cmd_deploy --recreate --yes
+  "
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -f "$WM_DIR/docker-compose.yml" ] || { echo "the compose was NOT re-rendered: $output"; false; }
+  grep -q 'services' "$WM_DIR/docker-compose.yml" || false
+}
