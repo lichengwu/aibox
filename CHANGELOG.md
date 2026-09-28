@@ -7,6 +7,25 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.24.1] — 2026-09-28
+
+### Fixed
+
+- **The contract was not actually loaded when the CLI ran from its installed location.**
+  0.24.0 resolved the shared library relative to the CLI's own path, but the module
+  installs the CLI into a bin dir (`/usr/local/bin/windmill`), where neither sibling path
+  exists — so `cfg_kv_load_export` was undefined, the loader silently returned, and the
+  stale `.env` copy was used again. The module CACHE
+  (`$AIBOX_HOME/modules/windmill/_common.sh`) is now the first candidate: it is the one
+  location guaranteed to exist, because the hook that dispatches the CLI lives there.
+  Verified live on the deploy host that had crash-looped: with the broken `.env` restored,
+  `windmill up` reported `✓ stack is fully ready version CE v1.818.0`, the server went
+  `running/healthy` and the API answered **200 `CE v1.818.0`**.
+
+### Module versions
+
+windmill 1.7.4
+
 ## [0.24.0] — 2026-09-28
 
 ### Changed
@@ -1642,6 +1661,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.24.1]: https://github.com/lichengwu/aibox/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/lichengwu/aibox/compare/v0.23.2...v0.24.0
 [0.23.2]: https://github.com/lichengwu/aibox/compare/v0.23.1...v0.23.2
 [0.23.1]: https://github.com/lichengwu/aibox/compare/v0.23.0...v0.23.1

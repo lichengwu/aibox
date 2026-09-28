@@ -136,7 +136,11 @@ _BASE_SUFFIX=""
 SHARED_PG_CONTAINER="aibox-base${_BASE_SUFFIX}-postgres"
 # The shared library (cfg_kv_load_export — the ONE safe KEY=VALUE reader). Cache
 # layout: _common.sh sits next to the module dir; repo layout: ../_shared.
-_LIB_COMMON="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../_common.sh"
+# Resolution order matters: the CLI is INSTALLED to a bin dir (e.g. /usr/local/bin),
+# where neither sibling path exists — the module cache is the one location that always
+# has _common.sh (the hook that dispatched us came from there).
+_LIB_COMMON="${AIBOX_HOME:-$HOME/.aibox}/modules/windmill/_common.sh"
+[ -f "${_LIB_COMMON}" ] || _LIB_COMMON="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../_common.sh"
 [ -f "${_LIB_COMMON}" ] || _LIB_COMMON="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/_shared/common.sh"
 if [ -f "${_LIB_COMMON}" ]; then
   # shellcheck disable=SC1090
