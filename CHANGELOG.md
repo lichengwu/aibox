@@ -7,6 +7,22 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.23.1] — 2026-09-28
+
+### Fixed
+
+- **The autoclean integration step broke `integration.yml`** with a duplicate `run:` key
+  (a step can carry only one) — PyYAML keeps the last one, so the local gate stayed quiet
+  while GitHub rejected the whole workflow file and every dispatch answered HTTP 422. The
+  case is now its own step, and `scripts/check-sources.sh` parses workflows with a
+  duplicate-key-rejecting loader so this class fails the gate instead of the API.
+- The new duplicate-key fixture skips when PyYAML is absent (macOS runners), falling back
+  to the heuristic exactly like the gate does.
+
+### Module versions
+
+unchanged — these are CI/test-surface fixes; no module content moved.
+
 ## [0.23.0] — 2026-09-28
 
 ### Changed
@@ -1575,6 +1591,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.23.1]: https://github.com/lichengwu/aibox/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/lichengwu/aibox/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/lichengwu/aibox/compare/v0.21.2...v0.22.0
 [0.21.2]: https://github.com/lichengwu/aibox/compare/v0.21.1...v0.21.2
