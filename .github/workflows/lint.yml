@@ -10,6 +10,9 @@ name: lint
 #   RUNTIME, so actually running the suite is the only real backstop)
 
 on:
+  # Manual runs: when a push-triggered run is cancelled by a newer push (or when a
+  # single job must be re-run on demand), dispatch this workflow by hand.
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
