@@ -7,6 +7,17 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.29.1] — 2026-09-29
+
+### Fixed
+
+- **`aibox dashboard`: Ctrl-C now EXITS the loop, not merely cleans up.** A signal trap
+  that only runs the cleanup RESUMES the loop, so with an unlimited frame budget a pty
+  session never reached `eof` — the exact shape that can stall a CI runner. The trap now
+  exits (130) after the idempotent cleanup, and the key reader additionally treats the raw
+  Ctrl-C byte as quit, so a terminal without ISIG (or the injected key source used by the
+  tests) leaves the loop too. Covered by a keys-suite regression test plus the pty suite.
+
 ## [0.29.0] — 2026-09-29
 
 ### Added
@@ -1978,6 +1989,7 @@ One icon per module on the dashboard header tells the whole story — installed
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
+[0.29.1]: https://github.com/lichengwu/aibox/compare/v0.29.0...v0.29.1
 [0.29.0]: https://github.com/lichengwu/aibox/compare/v0.28.5...v0.29.0
 [0.28.4]: https://github.com/lichengwu/aibox/compare/v0.28.3...v0.28.4
 [0.28.3]: https://github.com/lichengwu/aibox/compare/v0.28.2...v0.28.3
