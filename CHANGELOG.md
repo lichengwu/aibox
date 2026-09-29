@@ -7,6 +7,29 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [Unreleased]
+
+### Fixed
+
+- **`aibox --no-proxy` now really clears the shell's proxy.** `bypass_proxy` unsets
+  the UPPERCASE `ALL_PROXY` as well: curl reads that form (socks setups export
+  exactly it), and it used to survive the bypass — every fetch kept dying inside
+  a dead local proxy while the operator believed they had bypassed it. `apply_proxy`'s
+  env-respect branch now detects the uppercase form too. Live-caught on a deploy
+  host: `ALL_PROXY=socks5h://127.0.0.1:20808` with hysteria listening but its
+  tunnel dead — `aibox --no-proxy <command>` still routed through it.
+- **The download source pool names a dead shell proxy instead of hinting "network?".**
+  curl drags every pool candidate (direct, mirrors, the api.github.com fallback)
+  through a shell-exported `ALL_PROXY`/`all_proxy`/`http_proxy`/`https_proxy`/
+  `HTTPS_PROXY`, so one dead local proxy fails the WHOLE pool with a verdict that
+  sends the operator to fix the wrong thing (the same deploy host: all four routes
+  were 200 without the var, yet `update self` hinted "try clash / pin a mirror").
+  On the no-winner path a control fetch with the proxy env removed now separates
+  "your shell's proxy is dead" from "the network is down", and the failure names
+  the exact variable to unset. `install.sh`'s inlined pool carries the same
+  diagnosis, and `update self` no longer discards the pool's stderr — the
+  diagnosis actually reaches the operator.
+
 ## [0.28.4] — 2026-09-29
 
 ### Fixed
@@ -53,7 +76,6 @@ GitHub release notes are auto-generated from the previous tag; this file is the 
 
   Verified live: on the reporting host `aibox upgrade gitlab --check` now resolves
   the full staged path (39 hops, 18.9.1 → 19.4.1-ce.0).
-
 ## [0.28.1] — 2026-09-29
 
 ### Fixed

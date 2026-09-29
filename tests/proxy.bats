@@ -71,3 +71,28 @@ load test_helper
   fi
   [ "$PROBE_CONFIRMED" = "0" ]
 }
+
+@test "bypass_proxy: clears ALL_PROXY (uppercase) — the deploy-host footgun" {
+  # zsh on the deploy host exported ONLY the uppercase ALL_PROXY (a dead
+  # hysteria socks); curl honors it, and it used to survive --no-proxy.
+  export ALL_PROXY="socks5h://127.0.0.1:20808" all_proxy="socks5://dead:1" \
+    http_proxy="http://dead:1" https_proxy="http://dead:1" HTTPS_PROXY="http://dead:1" \
+    no_proxy="localhost" NO_PROXY="localhost"
+  bypass_proxy
+  [ -z "${ALL_PROXY:-}" ]
+  [ -z "${all_proxy:-}" ]
+  [ -z "${http_proxy:-}" ]
+  [ -z "${https_proxy:-}" ]
+  [ -z "${HTTPS_PROXY:-}" ]
+  [ -z "${no_proxy:-}" ]
+  [ -z "${NO_PROXY:-}" ]
+  [ "${AIBOX_PROXY_SOURCE:-}" = "bypass" ]
+}
+
+@test "apply_proxy: env-respect sees an ALL_PROXY-only (uppercase) environment" {
+  unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY || true
+  export ALL_PROXY="socks5h://127.0.0.1:20808"
+  apply_proxy
+  [ "${AIBOX_PROXY_SOURCE:-}" = "env" ]
+  [ "${AIBOX_PROXY_URL:-}" = "socks5h://127.0.0.1:20808" ]
+}

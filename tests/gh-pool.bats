@@ -20,7 +20,9 @@ setup() {
     FAKE_GHPROXY_NET_MODE FAKE_GHPROXY_NET_TIME FAKE_GHPROXY_NET_BODY \
     FAKE_DIRECT_MODE FAKE_DIRECT_TIME FAKE_DIRECT_BODY \
     FAKE_API_MODE FAKE_API_TIME FAKE_API_BODY \
-    FAKE_DOCKERHUB_MODE FAKE_DOCKERHUB_BODY FAKE_UMIRROR_BODY || true
+    FAKE_DOCKERHUB_MODE FAKE_DOCKERHUB_BODY FAKE_UMIRROR_BODY \
+    FAKE_PROXY_POISON \
+    all_proxy ALL_PROXY http_proxy https_proxy HTTPS_PROXY no_proxy NO_PROXY || true
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 
   FAKEBIN="$SANDBOX/bin"
@@ -41,6 +43,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "${FAKE_CURL_LOG:-}" ] && printf '%s\n' "$url" >>"$FAKE_CURL_LOG"
+
+# FAKE_PROXY_POISON=1: model a dead local proxy — with any proxy env var set,
+# every fetch dies the way curl does behind a dead socks tunnel (exit 97,
+# "Can't complete SOCKS connection"); clearing the vars (the pool's control
+# fetch) revives it. Models the deploy-host footgun: ALL_PROXY pointing at a
+# running-but-tunnel-dead hysteria poisoned every candidate at once.
+if [ -n "${FAKE_PROXY_POISON:-}" ] \
+  && [ -n "${all_proxy:-}${ALL_PROXY:-}${http_proxy:-}${https_proxy:-}${HTTPS_PROXY:-}" ]; then
+  exit 97
+fi
 
 route() { # $1=ROUTE → env FAKE_<ROUTE>_{MODE,TIME,BODY}
   local mode t body
@@ -217,4 +229,51 @@ _curl_urls() { grep -c "$1" "$FAKE_CURL_LOG"; }
   local out
   out="$(GH_POOL_ORDER_RAW= gh_pool_fetch "https://raw.githubusercontent.com/o/r/main/f")"
   [ "$out" = "SECOND" ]
+}
+
+@test "pool: dead shell proxy (ALL_PROXY) poisons every candidate → named diagnosis, not 'network?'" {
+  export FAKE_PROXY_POISON=1 ALL_PROXY="socks5h://127.0.0.1:20808"
+  run gh_pool_fetch "https://raw.githubusercontent.com/o/r/main/f"
+  [ "$status" -ne 0 ]
+  # the culprit var is NAMED, with the fix
+  case "$output" in
+  *ALL_PROXY*) : ;;
+  *) false ;;
+  esac
+  case "$output" in
+  *"WITHOUT your shell proxy"*) : ;;
+  *) false ;;
+  esac
+  # the generic "network?" hint is NOT this failure's verdict
+  case "$output" in
+  *"hints: aibox clash on"*) false ;;
+  *) : ;;
+  esac
+}
+
+@test "pool: proxy set + network REALLY down → control fails → generic hint stays honest" {
+  export FAKE_PROXY_POISON=1 ALL_PROXY="socks5h://127.0.0.1:20808"
+  export FAKE_DIRECT_MODE=dead FAKE_GH_PROXY_MODE=dead FAKE_GHPROXY_NET_MODE=dead FAKE_API_MODE=dead
+  run gh_pool_fetch "https://raw.githubusercontent.com/o/r/main/f"
+  [ "$status" -ne 0 ]
+  case "$output" in
+  *"hints: aibox clash on"*) : ;;
+  *) false ;;
+  esac
+  # no false proxy blame when the control fetch also fails
+  case "$output" in
+  *"WITHOUT your shell proxy"*) false ;;
+  *) : ;;
+  esac
+}
+
+@test "pool: diagnosis control walk honors AIBOX_GH_POOL=direct (no mirror calls)" {
+  export FAKE_PROXY_POISON=1 ALL_PROXY="socks5h://127.0.0.1:20808" AIBOX_GH_POOL=direct
+  run gh_pool_fetch "https://raw.githubusercontent.com/o/r/main/f"
+  [ "$status" -ne 0 ]
+  [ "$(_curl_urls "gh-proxy.com")" -eq 0 ]
+  [ "$(_curl_urls "ghproxy.net")" -eq 0 ]
+  [ "$(_curl_urls "api.github.com")" -eq 0 ]
+  # direct raced AND control-fetched — both through the raw URL
+  [ "$(_curl_urls "raw.githubusercontent.com")" -ge 2 ]
 }

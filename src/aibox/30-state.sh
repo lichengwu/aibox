@@ -134,9 +134,11 @@ apply_proxy() {
     AIBOX_PROXY_ENABLED=1
     return 0   # Don't overwrite AIBOX_PROXY_URL: keep the static value for clash-off fallback + `proxy show`.
   elif [ "$AIBOX_PROXY_ENABLED" = "1" ]; then
-    if [ -n "${http_proxy:-}" ] || [ -n "${https_proxy:-}" ] || [ -n "${all_proxy:-}" ]; then
+    if [ -n "${http_proxy:-}" ] || [ -n "${https_proxy:-}" ] || [ -n "${all_proxy:-}" ] || [ -n "${ALL_PROXY:-}" ]; then
       # Already set in env -> respect it, don't usurp, only normalize-export.
-      eff="${http_proxy:-${https_proxy:-${all_proxy:-}}}"
+      # ALL_PROXY (uppercase) counts too: curl honors it — a socks setup that
+      # exports only the uppercase form is still "the env decided", not config.
+      eff="${http_proxy:-${https_proxy:-${all_proxy:-${ALL_PROXY:-}}}}"
       no_p="${no_proxy:-$AIBOX_NO_PROXY}"
       AIBOX_PROXY_SOURCE="env"
     elif [ -n "$AIBOX_PROXY_URL" ]; then
@@ -163,8 +165,13 @@ apply_proxy() {
 }
 
 # --no-proxy: bypass the proxy entirely for this invocation (even env-set ones).
+# ALL_PROXY (uppercase) is on the unset list on purpose: curl READS it (socks
+# setups export exactly that form), and it used to survive the bypass — the
+# operator believed they had bypassed while every fetch still died inside the
+# dead local proxy (live-caught on a deploy host: ALL_PROXY=socks5h://
+# 127.0.0.1:20808 with hysteria listening but its tunnel dead).
 bypass_proxy() {
-  unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY || true
+  unset http_proxy https_proxy all_proxy ALL_PROXY HTTP_PROXY HTTPS_PROXY no_proxy NO_PROXY || true
   unset AIBOX_PROXY_URL AIBOX_NO_PROXY || true
   export AIBOX_PROXY_ENABLED=0
   AIBOX_PROXY_SOURCE="bypass"

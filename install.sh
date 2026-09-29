@@ -107,7 +107,7 @@ fetch_pool() { # $1=url, $2=outfile → 0 on success
     curl -fsSL --max-time 60 "$url" -o "$out"
     return $?
   fi
-  local mirrors="" m tmpd i pid pids="" body="" deadline alive j
+  local mirrors="" m tmpd i pid pids="" body="" deadline alive j pv v cu cu_urls
   m="${AIBOX_GH_MIRROR:-${CLASH_MIRROR:-}}"
   if [ -n "$m" ]; then mirrors="${m%/} "; fi
   mirrors="${mirrors}${AIBOX_GH_POOL:-https://gh-proxy.com https://ghproxy.net}"
@@ -158,6 +158,36 @@ fetch_pool() { # $1=url, $2=outfile → 0 on success
     cp "$body" "$out"
     rm -rf "$tmpd"
     return 0
+  fi
+  # Dead-proxy diagnosis (twin of the manager's pool logic — bootstrap-local,
+  # install.sh cannot source the manager): a shell-exported ALL_PROXY etc.
+  # drags every worker above through it, so ONE dead local proxy fails the
+  # whole pool while the network is fine. One control fetch with the proxy env
+  # removed separates the two (live-caught on a deploy host: hysteria up,
+  # tunnel dead — direct + both mirrors "failed" only behind it). The control
+  # walks the SAME route set the workers raced: direct + the mirrors var.
+  pv=""
+  for v in all_proxy ALL_PROXY http_proxy https_proxy HTTPS_PROXY; do
+    if printenv "${v}" >/dev/null 2>&1; then
+      pv="${pv:+${pv} }${v}"
+    fi
+  done
+  if [ -n "${pv}" ]; then
+    cu_urls="${url}"
+    # shellcheck disable=SC2086
+    for m in ${mirrors}; do
+      cu_urls="${cu_urls} ${m%/}/${url}"
+    done
+    # shellcheck disable=SC2086
+    for cu in ${cu_urls}; do
+      if (
+        unset all_proxy ALL_PROXY http_proxy https_proxy HTTPS_PROXY no_proxy NO_PROXY
+        curl -fsSL --max-time 10 "${cu}" -o /dev/null 2>/dev/null
+      ); then
+        warn "every source failed BEHIND your shell proxy (${pv} set — each worker ran through it); unset it and retry"
+        break
+      fi
+    done
   fi
   rm -rf "$tmpd"
   return 1

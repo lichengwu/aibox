@@ -143,6 +143,50 @@ _gh_pool_cand_get() { # kind loc url
   esac
 }
 
+# ---------- dead-proxy diagnosis (the pool's no-winner path) ----------
+# A shell-exported proxy var (ALL_PROXY / all_proxy / http_proxy / https_proxy /
+# HTTPS_PROXY) drags EVERY pool candidate through it — curl honors the env for
+# direct, mirror AND api candidates alike — so ONE dead local proxy fails the
+# whole pool while the network is fine, and the generic "network?" hint sends
+# the operator to fix the wrong thing. Live-caught on a deploy host: zsh
+# exported ALL_PROXY=socks5h://127.0.0.1:20808 (hysteria listening, tunnel
+# dead); every candidate died with "Can't complete SOCKS5 connection" while
+# all four routes were 200 without the var. Uppercase ALL_PROXY is the sneaky
+# one: curl reads it, but it slipped past both bypass_proxy() and apply_proxy()'s
+# env check while they only looked at the lowercase twin.
+_gh_pool_proxy_env_vars() { # → space-separated names of the SET proxy env vars
+  local v out=""
+  for v in all_proxy ALL_PROXY http_proxy https_proxy HTTPS_PROXY; do
+    if printenv "${v}" >/dev/null 2>&1; then
+      out="${out:+${out} }${v}"
+    fi
+  done
+  printf '%s' "${out}"
+  return 0
+}
+
+# Control fetch: the pool's own candidate walk with the user's proxy env
+# REMOVED — decides "network down" vs "your shell's proxy is the culprit".
+# Runs only on the no-winner path WITH a proxy var set (already a failure;
+# the extra fetches cost nothing). A passing control proves the pool would
+# have worked without the env — so name the var instead of hinting "network?".
+_gh_pool_control_ok() { # $1 = url → 0 when any candidate succeeds WITHOUT the proxy env
+  local url="$1" fam cand kind loc
+  fam="$(_gh_pool_family "${url}")"
+  # shellcheck disable=SC2086
+  for cand in $(_gh_pool_candidates "${fam}"); do
+    kind="${cand%%|*}"
+    loc="${cand#*|}"
+    if (
+      unset all_proxy ALL_PROXY http_proxy https_proxy HTTPS_PROXY no_proxy NO_PROXY
+      _gh_pool_cand_get "${kind}" "${loc}" "${url}" >/dev/null
+    ); then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Fetch a URL through the source pool. First fetch of a family RACES all
 # candidates on the actual URL (concurrent, bounded): the fastest successful
 # candidate serves the fetch, its measured ranking is cached for the run, and
@@ -284,8 +328,19 @@ gh_pool_fetch() { # $1 = url → content on stdout; nonzero when everything fail
   # Explicit stderr diagnostic: this path used to return 1 SILENTLY (measured
   # live: `update self` failed with zero output — callers without their own
   # die left the user with nothing). One dim line; callers add their context.
-  printf '%s  gh pool: no source could fetch %s (%s candidate(s) tried; hints: aibox clash on, AIBOX_GH_MIRROR=<mirror>)%s\n' \
-    "${C_DIM:-}" "${url}" "${total}" "${C_RST:-}" >&2
+  # Dead-proxy diagnosis FIRST: with a proxy env var set, every candidate above
+  # ran THROUGH it; one control fetch without the env separates a dead proxy
+  # from a dead network — and stops the generic "network?" hint from sending
+  # the operator to fix the wrong thing.
+  local pvars
+  pvars="$(_gh_pool_proxy_env_vars)"
+  if [ -n "${pvars}" ] && _gh_pool_control_ok "${url}"; then
+    printf '%s  gh pool: no source could fetch %s — but it is reachable WITHOUT your shell proxy (%s set; every candidate ran through it). unset it, or run: aibox --no-proxy <command>%s\n' \
+      "${C_DIM:-}" "${url}" "${pvars}" "${C_RST:-}" >&2
+  else
+    printf '%s  gh pool: no source could fetch %s (%s candidate(s) tried; hints: aibox clash on, AIBOX_GH_MIRROR=<mirror>)%s\n' \
+      "${C_DIM:-}" "${url}" "${total}" "${C_RST:-}" >&2
+  fi
   rm -rf "${tmpd}"
   return 1
 }

@@ -537,7 +537,7 @@ PF2
 # tries to fetch and check the release SHA256SUMS sidecar (graceful if absent).
 
 cmd_self_update() {
-  local before after boot_body
+  local before after boot_body pv
   before="$AIBOX_VERSION"
   log "aibox self-update: currently ${before}, re-bootstrapping ..."
   # AIBOX_RAW must be PASSED THROUGH to install.sh (it re-derives RAW from its
@@ -552,9 +552,18 @@ cmd_self_update() {
   # explicit message (the silent ones were measured live: the pool's no-winner
   # path returns 1 with zero output, and the old else-branch was a bare
   # `return 1` with no message at all).
-  if ! boot_body="$(gh_pool_fetch "$AIBOX_RAW/install.sh" 2>/dev/null)"; then
+  # stderr is NOT swallowed (it used to end in 2>/dev/null): the pool's
+  # diagnostics ARE the failure story — which source won the race, or the
+  # dead-proxy diagnosis (a shell ALL_PROXY killing every candidate) — and
+  # they never reached the operator from inside a discarded stderr.
+  if ! boot_body="$(gh_pool_fetch "$AIBOX_RAW/install.sh")"; then
     bad "self-update FAILED: could not fetch install.sh from ${AIBOX_RAW} (the source pool was tried — the binary is UNCHANGED at ${before})"
-    warn "network? try: aibox clash on / aibox proxy on; or pin a mirror: AIBOX_GH_MIRROR=https://gh-proxy.com"
+    pv="$(_gh_pool_proxy_env_vars)"
+    if [ -n "${pv}" ]; then
+      warn "note: your shell exports ${pv} — every candidate ran through it (see the diagnosis above); unset it or: aibox --no-proxy update self"
+    else
+      warn "network? try: aibox clash on / aibox proxy on; or pin a mirror: AIBOX_GH_MIRROR=https://gh-proxy.com"
+    fi
     return 1
   fi
   if [ -z "${boot_body}" ]; then
