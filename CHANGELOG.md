@@ -7,6 +7,31 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.29.2] — 2026-09-29
+
+### Fixed
+
+- **Up/Down did not work in terminals that use SS3 arrow sequences.** Navigation keys
+  arrive as ESC + a sequence in two spellings: CSI (`ESC[A`, normal mode) and SS3
+  (`ESCOA`, the "application cursor keys" mode many terminals switch to). The parser only
+  knew CSI — and its accumulator broke on the first letter, which also kept SS3
+  unreachable — so Up/Down looked dead. Both spellings (plus `ESC[5~`, `ESC[1~`,
+  `ESC[1;2A` …) are handled now, with a regression test driving the raw bytes.
+- **Keys felt sluggish.** The loop slept a full second AFTER every keypress, so each input
+  waited for the timer before the next frame. The key read already waits up to a second, so
+  that sleep is gone: a pressed key is handled immediately (a test asserts 10 keypresses
+  cost well under the old ≥9s).
+- **The selection could walk off the last row** (the marker simply disappeared, which reads
+  as "selection doesn't work"). `sel` is now clamped to the visible row count.
+
+### Changed
+
+- **Readability pass on the frames**: the selected row is highlighted (reverse video) and
+  marked, column headers are bold, the duplicated separator line is gone, and the stub
+  `AGE` column (always `0s`) was removed — the honest sample age now lives in the status
+  line (`age:12s`, formatted s/m/h). `AIBOX_DASH_FORCE_COLOR=1` forces the highlight when
+  output is piped.
+
 ## [0.29.1] — 2026-09-29
 
 ### Fixed
@@ -1989,6 +2014,7 @@ One icon per module on the dashboard header tells the whole story — installed
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
+[0.29.2]: https://github.com/lichengwu/aibox/compare/v0.29.1...v0.29.2
 [0.29.1]: https://github.com/lichengwu/aibox/compare/v0.29.0...v0.29.1
 [0.29.0]: https://github.com/lichengwu/aibox/compare/v0.28.5...v0.29.0
 [0.28.4]: https://github.com/lichengwu/aibox/compare/v0.28.3...v0.28.4

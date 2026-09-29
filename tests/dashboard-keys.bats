@@ -70,6 +70,55 @@ _dash_headless() { # $1=keys file, $2=frames → run one headless session
   case "$output" in *"[?25"*) false ;; esac
 }
 
+@test "arrows: the parser accepts BOTH CSI (ESC[A) and SS3 (ESCOA) sequences" {
+  # SS3 is "application cursor keys" (DECCKM) — many terminals switch to it, and the
+  # parser only knowing CSI is why Up/Down looked dead (reported live).
+  frag="$(mktemp)"
+  sed -n '/^_dash_key_read() {/,/^}/p' "$REPO_ROOT/src/aibox/74-dashboard-tui.sh" >"$frag"
+  [ -s "$frag" ] || false
+  run bash -c "printf '\033OB' | bash -c '. \"$frag\"; _dash_key_read'"
+  [ "$output" = "DOWN" ] || false
+  run bash -c "printf '\033[A' | bash -c '. \"$frag\"; _dash_key_read'"
+  [ "$output" = "UP" ] || false
+  run bash -c "printf '\033[5~' | bash -c '. \"$frag\"; _dash_key_read'"
+  [ "$output" = "PGUP" ] || false
+  rm -f "$frag"
+}
+
+@test "keys: Down moves the selection and it is clamped to the last row" {
+  local f="$BATS_TMPDIR/keys-sel.txt"
+  printf 'DOWN\nq\n' >"$f"
+  run env AIBOX_DASH_SNAPSHOT="$(_fixture)" AIBOX_DASH_SIZE=100x30 \
+    AIBOX_DASH_KEYS="$f" AIBOX_DASH_FRAMES=3 bash "$REPO_ROOT/bin/aibox" dashboard
+  [ "$status" -eq 0 ] || false
+  # the first frame selects row 1, the second row 2 (xiaozhi)
+  case "$output" in *"▸"*xiaozhi*) ;; *) false ;; esac
+}
+
+@test "keys: handled immediately — 10 keypresses must not cost 10 sleeps" {
+  local f="$BATS_TMPDIR/keys-fast.txt" i t0 t1
+  : >"$f"
+  for i in 1 2 3 4 5 6 7 8 9 10; do printf 'j\n' >>"$f"; done
+  t0="$(date +%s)"
+  run env AIBOX_DASH_SNAPSHOT="$(_fixture)" AIBOX_DASH_SIZE=100x30 \
+    AIBOX_DASH_KEYS="$f" AIBOX_DASH_FRAMES=11 bash "$REPO_ROOT/bin/aibox" dashboard
+  t1="$(date +%s)"
+  [ "$status" -eq 0 ] || false
+  # the old loop slept 1s AFTER every key (≥9s here; reported as "keys are slow")
+  [ "$((t1 - t0))" -lt 6 ] || false
+}
+
+@test "frame: the selected row is highlighted and no stub AGE column exists" {
+  local f="$BATS_TMPDIR/keys-visual.txt"
+  printf 'DOWN\nq\n' >"$f"
+  run env AIBOX_DASH_SNAPSHOT="$(_fixture)" AIBOX_DASH_SIZE=100x30 AIBOX_DASH_FORCE_COLOR=1 \
+    AIBOX_DASH_KEYS="$f" AIBOX_DASH_FRAMES=3 bash "$REPO_ROOT/bin/aibox" dashboard
+  [ "$status" -eq 0 ] || false
+  case "$output" in *$'\033[7m'*) ;; *) false ;; esac   # reverse video on the selection
+  case "$output" in *AGE*) false ;; esac                # the always-0s column is gone
+  case "$output" in *"▸"*) ;; *) false ;; esac          # the marker still reads
+}
+
 @test "keys: a filtered name narrows the module rows (filter input via / )" {
   local f="$BATS_TMPDIR/keys-filter.txt"
   printf 'p\n/\ngitlab\nq\n' >"$f"

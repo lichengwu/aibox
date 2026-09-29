@@ -57,7 +57,7 @@ if [ -z "${AIBOX_BIN_DIR:-}" ]; then
     ;;
   esac
 fi
-AIBOX_VERSION="0.29.1"
+AIBOX_VERSION="0.29.2"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 
@@ -6822,6 +6822,25 @@ _dash_records() { # $1=file $2=record kind → the record bodies (kind token str
   sed -n "s/^${2} //p" "${1}" 2>/dev/null || true
 }
 
+# Selected-row highlight (reverse video) when the terminal can show colors; empty
+# pigment otherwise so the marker alone still reads.
+C_REV=""
+if [ -z "${NO_COLOR:-}" ] && { [ -t 1 ] || [ -n "${AIBOX_DASH_FORCE_COLOR:-}" ]; }; then C_REV=$'\033[7m'; fi
+
+_dash_row_count() { # $1=file $2=pane $3=filter → rows the pane would render (pure bash)
+  local file="$1" pane="$2" filter="$3" rec name n=0 kind=MODULE
+  case "${pane}" in containers) kind=CONTAINER ;; esac
+  while IFS= read -r rec; do
+    [ -n "${rec}" ] || continue
+    name="$(_dash_kv_get "${rec}" name)"
+    case "${filter}" in '' | '-') ;; *) case "${name}" in *"${filter}"*) ;; *) continue ;; esac ;; esac
+    n=$((n + 1))
+  done <<DASHCNT
+$(_dash_records "${file}" "${kind}")
+DASHCNT
+  printf '%s' "${n}"
+}
+
 _dash_state_seg() { # $1=state → colored one-glyph segment for the table
   case "${1:-}" in
   ok | running | healthy) printf '%s●%s' "${C_GRN}" "${C_RST}" ;;
@@ -6882,15 +6901,15 @@ DASHREC
     c_ports=16; c_ep=$((w * 26 / 100)); c_up=12
   fi
   if [ "${tiny}" = 1 ]; then
-    printf '%s %s\n' "$(_dash_pad MODULE "${c_name}")" "$(_dash_pad STATE "${c_state}")"
+    printf '%s%s%s\n' "${C_BOLD}" "$(printf '%s %s' "$(_dash_pad MODULE "${c_name}")" "$(_dash_pad STATE "${c_state}")")" "${C_RST}"
   elif [ "${narrow}" = 1 ]; then
-    printf '%s %s %s %s %s\n' "$(_dash_pad MODULE "${c_name}")" "$(_dash_pad MVER "${c_mver}")" \
-      "$(_dash_pad STATE "${c_state}")" "$(_dash_pad PORTS "${c_ports}")" "$(_dash_pad UPGRADE "${c_up}")"
+    printf '%s%s%s\n' "${C_BOLD}" "$(printf '%s %s %s %s %s' "$(_dash_pad MODULE "${c_name}")" "$(_dash_pad MVER "${c_mver}")" \
+      "$(_dash_pad STATE "${c_state}")" "$(_dash_pad PORTS "${c_ports}")" "$(_dash_pad UPGRADE "${c_up}")")" "${C_RST}"
   else
-    printf '%s %s %s %s %s %s %s %s%s\n' \
+    printf '%s%s%s\n' "${C_BOLD}" "$(printf '%s %s %s %s %s %s %s %s' \
       "$(_dash_pad MODULE "${c_name}")" "$(_dash_pad PROFILE "${c_profile}")" "$(_dash_pad MVER "${c_mver}")" \
       "$(_dash_pad APP "${c_app}")" "$(_dash_pad STATE "${c_state}")" "$(_dash_pad PORTS "${c_ports}")" \
-      "$(_dash_pad ENDPOINT "${c_ep}")" "$(_dash_pad UPGRADE "${c_up}")" "AGE" | cut -c"1-${w}"
+      "$(_dash_pad ENDPOINT "${c_ep}")" "$(_dash_pad UPGRADE "${c_up}")" | cut -c"1-${w}")" "${C_RST}"
   fi
   local i=0
   while IFS='	' read -r name prof mver aver state ports ep upgrade lit; do
@@ -6901,13 +6920,17 @@ DASHREC
       line="$(printf '%s %s %s %s %s' "$(_dash_pad "${name}" "${c_name}")" "$(_dash_pad "${mver}" "${c_mver}")" \
         "$(_dash_pad "${state}" "${c_state}")" "$(_dash_pad "${ports}" "${c_ports}")" "$(_dash_pad "${upgrade}" "${c_up}")")"
     else
-      line="$(printf '%s %s %s %s %s %s %s %s %s' \
+      line="$(printf '%s %s %s %s %s %s %s %s' \
         "$(_dash_pad "${name}" "${c_name}")" "$(_dash_pad "${prof}" "${c_profile}")" \
         "$(_dash_pad "${mver}" "${c_mver}")" "$(_dash_pad "${aver}" "${c_app}")" \
         "$(_dash_pad "${state}" "${c_state}")" "$(_dash_pad "${ports}" "${c_ports}")" \
-        "$(_dash_pad "${ep}" "${c_ep}")" "$(_dash_pad "${upgrade}" "${c_up}")" "0s")"
+        "$(_dash_pad "${ep}" "${c_ep}")" "$(_dash_pad "${upgrade}" "${c_up}")")"
     fi
-    printf '%s%s %s\n' "$(_state_marker "${i}" "${sel}")" "$(_dash_state_seg "${state}")" "${line}"
+    if [ "${i}" = "${sel}" ]; then
+      printf '%s▸%s %s%s%s%s\n' "${C_BOLD}" "${C_RST}" "$(_dash_state_seg "${state}")" "${C_REV}" "${line}" "${C_RST}"
+    else
+      printf '  %s %s\n' "$(_dash_state_seg "${state}")" "${line}"
+    fi
     i=$((i + 1))
   done <<DASHROWS
 ${rows}
@@ -6942,18 +6965,22 @@ $(_dash_records "${file}" CONTAINER)
 DASHREC
   printf '%s%s%s %s· %s%d container(s)%s\n' "${C_BOLD}" "${C_CYA}" "CONTAINERS" "${C_DIM}" "${C_RST}" "${total}" "${C_RST}"
   printf '%s%s%s\n' "${C_DIM}" "$(printf '─%.0s' $(seq 1 "${w}"))" "${C_RST}"
-  printf '%s\n' "$(printf '%s %s %s %s %s %s %s' \
+  printf '%s%s%s\n' "${C_BOLD}" "$(printf '%s %s %s %s %s %s %s' \
     "$(_dash_pad CONTAINER $((w * 26 / 100)))" "$(_dash_pad IMAGE $((w * 26 / 100)))" \
     "$(_dash_pad CPU% 7)" "$(_dash_pad MEM $((w * 16 / 100)))" "$(_dash_pad UPTIME 10)" \
-    "$(_dash_pad RST 4)" "HEALTH" | cut -c"1-${w}")"
+    "$(_dash_pad RST 4)" "HEALTH" | cut -c"1-${w}")" "${C_RST}"
   local i=0
   while IFS='	' read -r name image cpu mem up restarts health; do
     [ -n "${name}" ] || continue
-    printf '%s%s %s\n' "$(_state_marker "${i}" "${sel}")" "$(_dash_state_seg "${health}")" \
-      "$(printf '%s %s %s %s %s %s %s' \
-        "$(_dash_pad "${name}" $((w * 26 / 100)))" "$(_dash_pad "${image}" $((w * 26 / 100)))" \
-        "$(_dash_pad "${cpu}" 7)" "$(_dash_pad "${mem}" $((w * 16 / 100)))" \
-        "$(_dash_pad "${up}" 10)" "$(_dash_pad "${restarts}" 4)" "${health}" | cut -c"1-${w}")"
+    line="$(printf '%s %s %s %s %s %s %s' \
+      "$(_dash_pad "${name}" $((w * 26 / 100)))" "$(_dash_pad "${image}" $((w * 26 / 100)))" \
+      "$(_dash_pad "${cpu}" 7)" "$(_dash_pad "${mem}" $((w * 16 / 100)))" \
+      "$(_dash_pad "${up}" 10)" "$(_dash_pad "${restarts}" 4)" "${health}" | cut -c"1-${w}")"
+    if [ "${i}" = "${sel}" ]; then
+      printf '%s▸%s %s%s%s%s\n' "${C_BOLD}" "${C_RST}" "$(_dash_state_seg "${health}")" "${C_REV}" "${line}" "${C_RST}"
+    else
+      printf '  %s %s\n' "$(_dash_state_seg "${health}")" "${line}"
+    fi
     i=$((i + 1))
   done <<DASHROWS
 ${rows}
@@ -7037,14 +7064,32 @@ _dash_frame_about() { # $1=file $2=width
 
 _dash_status_line() { # $1=file $2=pane $3=interval $4=paused $5=filter $6=sortkey $7=frames
   local file="$1" pane="$2" interval="$3" paused="$4" filter="$5" sortkey="$6" frames="$7"
-  local stale docker load
+  local stale docker load age ts now
   stale="$(_dash_snapshot_field "${file}" stale)"
   docker="$(_dash_snapshot_field "${file}" docker)"
   load="$(_dash_snapshot_field "${file}" load)"
-  printf '%s  pane:%s  interval:%ss%s  filter:%s  sort:%s  load:%s  docker:%s%s' \
+  # How old is the sample the frame is showing? (the AGE column was a stub — this is
+  # the honest number, and it makes a stalled sampler visible at a glance.)
+  age=""
+  ts="$(_dash_snapshot_field "${file}" ts)"
+  case "${ts}" in '' | *[!0-9]*) ts="" ;; esac
+  if [ -n "${ts}" ]; then
+    now="$(date +%s)"
+    case "${now}" in '' | *[!0-9]*) now="${ts}" ;; esac
+    local age_s=$((now - ts))
+    [ "${age_s}" -ge 0 ] 2>/dev/null || age_s=0
+    if [ "${age_s}" -lt 60 ]; then
+      age="  age:${age_s}s"
+    elif [ "${age_s}" -lt 3600 ]; then
+      age="  age:$((age_s / 60))m"
+    else
+      age="  age:$((age_s / 3600))h"
+    fi
+  fi
+  printf '%s  pane:%s  interval:%ss%s  filter:%s  sort:%s  load:%s  docker:%s%s%s' \
     "$(date '+%H:%M:%S')" "${pane}" "${interval}" \
     "$([ "${paused}" = 1 ] && printf ' PAUSED' || true)" "${filter}" "${sortkey}" \
-    "${load}" "${docker}" \
+    "${load}" "${docker}" "${age}" \
     "$([ "${stale}" = 1 ] && printf ' %s(stale — showing the last good sample)%s' "${C_YEL}" "${C_RST}" || true)"
 }
 
@@ -7142,7 +7187,7 @@ _dash_cleanup() {
 }
 
 _dash_key_read() { # → one key token on stdout ("" when the source is exhausted)
-  local k a b
+  local k cc seq
   if [ -n "${AIBOX_DASH_KEYS:-}" ]; then
     [ -f "${AIBOX_DASH_KEYS}" ] || return 0
     k="$(head -1 "${AIBOX_DASH_KEYS}" 2>/dev/null || true)"
@@ -7155,22 +7200,54 @@ _dash_key_read() { # → one key token on stdout ("" when the source is exhauste
   fi
   IFS= read -r -s -n 1 -t 1 k 2>/dev/null || k=""
   if [ "${k}" = "$(printf '\033')" ]; then
-    IFS= read -r -s -n 1 -t 1 a 2>/dev/null || a=""
-    if [ -z "${a}" ]; then
+    # Nav keys arrive as ESC + a sequence, in EITHER form:
+    #   CSI  \033[A   — what most terminals send in normal mode
+    #   SS3  \033OA   — "application cursor keys" (DECCKM), which many terminals
+    #                   switch to and which made Up/Down look DEAD (reported live)
+    # plus numeric variants (\033[5~, \033[1;2A …). Read the tail until its final
+    # byte, then map both spellings.
+    local seq="" cc
+    IFS= read -r -s -n 1 -t 1 cc 2>/dev/null || cc=""
+    if [ -z "${cc}" ]; then
       printf 'ESC'
       return 0
     fi
-    IFS= read -r -s -n 1 -t 1 b 2>/dev/null || b=""
-    case "${a}${b}" in
-    '[A') printf 'UP' ;;
-    '[B') printf 'DOWN' ;;
-    '[C') printf 'RIGHT' ;;
-    '[D') printf 'LEFT' ;;
-    '[H') printf 'HOME' ;;
-    '[F') printf 'END' ;;
+    seq="${cc}"
+    local last=""
+    while [ "${#seq}" -lt 6 ]; do
+      # Completeness rule: SS3 is exactly ESC O <letter>; CSI is ESC [ … <letter>|~,
+      # where the tail may carry digits/';' (ESC[1;2A). Breaking on the FIRST letter
+      # was the bug that kept SS3 arrows dead (caught by the parser regression test).
+      case "${seq}" in
+      'O'*) [ "${#seq}" -ge 2 ] && break ;;
+      '['*)
+        # CSI is complete at its final byte (a letter or '~'); digits and ';' mean more
+        # is coming (ESC[5~, ESC[1;2A). `last` = the last character of seq.
+        last="${seq%?}"
+        last="${seq#"${last}"}"
+        case "${last}" in
+        [A-Za-z] | '~') break ;;
+        *) : ;;
+        esac
+        ;;
+      *) break ;;
+      esac
+      IFS= read -r -s -n 1 -t 1 cc 2>/dev/null || break
+      [ -n "${cc}" ] || break
+      seq="${seq}${cc}"
+    done
+    case "${seq}" in
+    '[A' | 'OA') printf 'UP' ;;
+    '[B' | 'OB') printf 'DOWN' ;;
+    '[C' | 'OC') printf 'RIGHT' ;;
+    '[D' | 'OD') printf 'LEFT' ;;
+    '[H' | 'OH' | '[1~' | '[7~') printf 'HOME' ;;
+    '[F' | 'OF' | '[4~' | '[8~') printf 'END' ;;
     '[Z') printf 'BTAB' ;;
-    '[5') printf 'PGUP' ;;
-    '[6') printf 'PGDN' ;;
+    '[5~' | '[5') printf 'PGUP' ;;
+    '[6~' | '[6') printf 'PGDN' ;;
+    *'A') printf 'UP' ;;
+    *'B') printf 'DOWN' ;;
     *) printf 'ESC' ;;
     esac
     return 0
@@ -7320,7 +7397,6 @@ cmd_dashboard() {
       printf '%s%s%s\n' "${C_DIM}" \
         "$(_dash_status_line "${file}" "${pane_now}" "${interval}" "${paused}" "${filter}" "${sortkey}" "${frames}")" "${C_RST}"
       _dash_render_once "${file}" "${pane_now}" "${w}" "${filter}" "${sortkey}"
-      printf '%s%s%s\n' "${C_DIM}" "$(printf '─%.0s' $(seq 1 "${w}"))" "${C_RST}"
       _dash_keybar
       printf '\033[J'
     } 2>/dev/null | head -n "${h}" || true
@@ -7387,7 +7463,20 @@ cmd_dashboard() {
       need_resample=0
       bash "$(_dash_self)" __dashboard-sample "${dir}" --once --interval "${interval}" >/dev/null 2>&1 &
     fi
-    [ "${paused}" = 1 ] || sleep 1
+    # Keep the cursor INSIDE the visible rows: pressing Down past the last row used to
+    # move the marker off-screen, which reads as "up/down does not work" (reported).
+    local nrows
+    nrows="$(_dash_row_count "${file}" "${pane_now}" "${filter}")"
+    case "${nrows}" in '' | *[!0-9]*) nrows=0 ;; esac
+    if [ "${nrows}" -ge 1 ]; then
+      [ "${sel}" -ge "${nrows}" ] && sel=$((nrows - 1))
+    else
+      sel=0
+    fi
+    [ "${sel}" -lt 0 ] && sel=0
+    # NO sleep here: `_dash_key_read` already waits up to a second, so a pressed key is
+    # handled IMMEDIATELY. The old unconditional `sleep 1` made every keypress feel
+    # sluggish (reported live as "other keys are slow").
   done
   _dash_cleanup
   return 0
