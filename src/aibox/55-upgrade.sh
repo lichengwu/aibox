@@ -76,6 +76,16 @@ _upgrade_path_compute() {
 # Highest version tag among the stdin lines (optional ERE filter in $1). Prints the tag.
 upgrade_pick_tag() {
   local pat="${1:-}" line best=""
+  # Defensive: the registry parser shell-escapes metadata values (\ " $ `) when it
+  # emits them FOR EVAL, and a code path that reads the raw form hands those
+  # escapes on — live-caught: gitlab's ^[0-9]+\.[0-9]+\.[0-9]+-ce\.0$ arrived as
+  # \\\\. / \$ , matched nothing, and `aibox upgrade gitlab` reported "cannot
+  # resolve" although every mirror answered with the full tag list. Unescaping is
+  # a no-op for a pattern that arrived clean.
+  pat="${pat//\\\\/\\}"
+  pat="${pat//\\\$/\$}"
+  pat="${pat//\\\"/\"}"
+  pat="${pat//\\\`/\`}"
   while IFS= read -r line; do
     line="$(printf '%s' "${line}" | tr -d '[:space:]')"
     [ -n "${line}" ] || continue

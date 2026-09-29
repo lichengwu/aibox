@@ -76,7 +76,7 @@ _status_probe_latest() { # $1=module → prints the latest version
       | grep -m1 -oE '"tag_name": *"[^"]+"' | sed -e 's/.*"tag_name": *"//' -e 's/"$//' || true)" 
     ;;
   dockerhub-tags)
-    out="$(dockerhub_tags_fetch "${repo}" | upgrade_pick_tag "${pattern}" || true)"
+    out="$(dockerhub_tags_fresh "${repo}" | upgrade_pick_tag "${pattern}" || true)"
     ;;
   *) return 0 ;;
   esac

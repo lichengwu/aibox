@@ -165,3 +165,51 @@ _direct_hits() { grep -c "hub.docker.com" "$FAKE_CURL_LOG" || true; }
   dockerhub_tags_fetch "gitlab/gitlab-ce" >/dev/null || false
   [ "$(_direct_hits)" -ge 1 ] || false   # expired → direct re-probed honestly
 }
+
+@test "tags in a fresh process: hidden verb + call sites (nested-subshell race cure)" {
+  # the manager must expose the hidden verb and re-enter itself for it
+  run grep -q '__docker-tags)' "$REPO_ROOT/src/aibox/90-main.sh"
+  [ "$status" -eq 0 ] || false
+  run grep -q 'AIBOX_SELF=' "$REPO_ROOT/src/aibox/90-main.sh"
+  [ "$status" -eq 0 ] || false
+  # every tag-fetching call site goes through the fresh-process wrapper
+  run bash -c "grep -rn 'dockerhub_tags_fetch \"\${repo}\"' '$REPO_ROOT/src/aibox' | wc -l | tr -d ' '"
+  [ "$output" = "0" ] || false
+  run bash -c "grep -rln 'dockerhub_tags_fresh' '$REPO_ROOT/src/aibox' | wc -l | tr -d ' '"
+  [ "$output" -ge 3 ] || false
+  # the wrapper prefers the subprocess, and falls back when it yields nothing
+  stub="$BATS_TMPDIR/selfstub"; printf '#!/usr/bin/env bash\n[ "$1" = __docker-tags ] && { echo 9.9.9-ce.0; exit 0; }\nexit 1\n' >"$stub"; chmod +x "$stub"
+  frag="$BATS_TMPDIR/tags-frag.sh"; sed -n '/^dockerhub_tags_fresh() {/,/^}/p' "$REPO_ROOT/tools/_shared/lib/32-docker-tags.sh" >"$frag"
+  [ -s "$frag" ] || false
+  run env AIBOX_SELF="$stub" bash -c ". '$frag'; dockerhub_tags_fetch() { echo FALLBACK; }; dockerhub_tags_fresh gitlab/gitlab-ce"
+  [ "$output" = "9.9.9-ce.0" ] || false
+  stub2="$BATS_TMPDIR/selfstub2"; printf '#!/usr/bin/env bash\nexit 1\n' >"$stub2"; chmod +x "$stub2"
+  run env AIBOX_SELF="$stub2" bash -c ". '$frag'; dockerhub_tags_fetch() { echo FALLBACK; }; dockerhub_tags_fresh gitlab/gitlab-ce"
+  [ "$output" = "FALLBACK" ] || false
+  # no AIBOX_SELF (module hook context) → straight to the in-process fetch
+  run bash -c ". '$frag'; dockerhub_tags_fetch() { echo INPROC; }; dockerhub_tags_fresh x/y"
+  [ "$output" = "INPROC" ] || false
+  # the resolver distinguishes "cannot fetch" from "no tag matched"
+  run grep -q 'cannot fetch tag list' "$REPO_ROOT/src/aibox/65-upgrade-state.sh"
+  [ "$status" -eq 0 ] || false
+  run grep -q 'no tag in' "$REPO_ROOT/src/aibox/65-upgrade-state.sh"
+  [ "$status" -eq 0 ]
+}
+
+@test "upgrade_pick_tag: an over-escaped tag_pattern still matches (live-caught)" {
+  frag="$BATS_TMPDIR/pick-frag.sh"
+  { sed -n '/^upgrade_pick_tag() {/,/^}/p' "$REPO_ROOT/src/aibox/55-upgrade.sh"
+    sed -n '/^upgrade_ver_cmp() {/,/^}/p' "$REPO_ROOT/src/aibox/55-upgrade.sh"; } >"$frag"
+  [ -s "$frag" ] || false
+  clean='^[0-9]+\.[0-9]+\.[0-9]+-ce\.0$'
+  # mirror the metadata parser's esc() exactly (awk: \ -> \\ , $ -> \$ , " -> \" )
+  esc="$(printf '%s\n' "$clean" | awk '{ gsub(/\\/, "\\\\"); gsub(/\$/, "\\$"); gsub(/"/, "\\\""); print }')"
+  [ "$esc" != "$clean" ] || false
+  run bash -c ". '$frag'; printf '%s\n' 18.9.1-ce.0 19.4.1-ce.0 | upgrade_pick_tag \"\$1\"" _ "$esc"
+  [ "$status" -eq 0 ] || false
+  [ "$output" = "19.4.1-ce.0" ] || false
+  run bash -c ". '$frag'; printf '%s\n' 18.9.1-ce.0 19.4.1-ce.0 | upgrade_pick_tag \"\$1\"" _ "$clean"
+  [ "$output" = "19.4.1-ce.0" ] || false
+  run grep -q 'aibox upgrade \${name} --to' "$REPO_ROOT/src/aibox/65-upgrade-state.sh"
+  [ "$status" -eq 0 ]
+}

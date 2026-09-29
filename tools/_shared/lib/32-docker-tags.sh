@@ -5,6 +5,21 @@
 # in $AIBOX_HOME/dockerpool.cache.
 DK_TAGS_POOL_DEFAULT="docker.1ms.run hub.rat.dev docker.1panel.live hub.1panel.dev proxy.vvvv.ee docker.m.daocloud.io hub3.nat.tf hub4.nat.tf docker.367231.xyz docker.apiba.cn"
 
+# Tags via a FRESH PROCESS. The pool race fetches inside background subshells,
+# and that silently yields nothing when the caller is itself inside a command
+# substitution — measured live: `$(dockerhub_tags_fetch … | pick)` returns empty
+# inside the upgrade/status flows while the identical call works standalone. The
+# manager exposes them as a hidden verb; calling it in its own process is the
+# same cure the status probe already uses (src/aibox/90-main.sh __status-probe).
+dockerhub_tags_fresh() { # $1=repo → tag names, one per line
+  local self="${AIBOX_SELF:-}" out=""
+  if [ -n "${self}" ] && [ -f "${self}" ]; then
+    out="$(bash "${self}" __docker-tags "$1" 2>/dev/null || true)"
+    if [ -n "${out}" ]; then printf '%s\n' "${out}"; return 0; fi
+  fi
+  dockerhub_tags_fetch "$1"
+}
+
 dockerhub_tags_fetch() { # $1=repo (e.g. gitlab/gitlab-ce) → tag names, one per line
   local repo="$1" cached order m tags seen_direct=0 pool
   local tmo="${AIBOX_DOCKER_TAGS_TIMEOUT:-8}"

@@ -60,7 +60,7 @@ _upgrade_hop_latest_patch() { # $1=repo $2=pattern $3=stop(major.minor)
   # selector); the full tag list + the stop-anchored pattern below subsume the
   # old ?name=<stop> substring filter (the ^<stop>. prefix weeds out the cross
   # matches like 8.17.8 vs 17.8).
-  cand="$(dockerhub_tags_fetch "${repo}" | upgrade_pick_tag "${anchor}" || true)"
+  cand="$(dockerhub_tags_fresh "${repo}" | upgrade_pick_tag "${anchor}" || true)"
   if [ -n "${cand}" ] && [ -n "${pat}" ] && ! printf '%s' "${cand}" | grep -qE "${pat}"; then
     cand=""
   fi

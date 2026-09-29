@@ -31,6 +31,11 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     apply_proxy
   fi
 
+  # Absolute path to this CLI: child processes re-enter it for the hidden verbs
+  # (__status-probe / __docker-tags) whose work must not run in a subshell.
+  AIBOX_SELF="${AIBOX_SELF:-$0}"
+  export AIBOX_SELF
+
   # ---------- dispatch ----------
   # Help first, uniformly: `aibox <verb> --help|-h` (any position) and
   # `aibox help <verb>` render that verb's block and exit 0. Before this, only
@@ -64,6 +69,11 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     # instant failure); a fresh process runs the pool exactly like any CLI
     # invocation. Not in help; harmless if invoked directly.
     __status-probe)     shift; _status_probe_cmd "$@" ;;
+    # hidden internal verb: the tag pool race must run at TOP LEVEL (inside a
+    # command substitution its background racers fail silently — measured on a
+    # deploy host where `aibox upgrade gitlab` could not resolve anything while
+    # the same fetch worked standalone). Called by dockerhub_tags_fresh.
+    __docker-tags)      shift; dockerhub_tags_fetch "$@" ;;
     version|-v|--version) echo "aibox $AIBOX_VERSION" ;;
     help|-h|--help)   usage ;;
     *)

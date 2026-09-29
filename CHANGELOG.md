@@ -7,6 +7,29 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.28.2] — 2026-09-29
+
+### Fixed
+
+- **"cannot resolve the latest version" even though every mirror answered.** Two
+  independent defects, both live-caught on a host whose docker.io mirrors returned
+  the full tag list in milliseconds:
+  1. the tag pool's racers run in BACKGROUND subshells, and when the caller is
+     itself a command substitution they fail silently — the same documented failure
+     mode the status probe already worked around. The manager now exposes a hidden
+     `__docker-tags` verb, and the three call sites (upgrade · pool `--latest` ·
+     the status "updates available" probe) go through a fresh process
+     (`dockerhub_tags_fresh`, with an in-process fallback for hook contexts).
+  2. the module metadata parser shell-escapes values (backslash, quote, dollar,
+     backtick) when it emits them for `eval`; a raw read handed gitlab's
+     `tag_pattern` over in escaped form, which matched nothing. `upgrade_pick_tag`
+     now normalises an over-escaped pattern — a no-op for a clean one.
+  The resolver also distinguishes "cannot fetch any tag list" from "no tag matches
+  the pattern", and names the module rather than the env key.
+
+  Verified live: on the reporting host `aibox upgrade gitlab --check` now resolves
+  the full staged path (39 hops, 18.9.1 → 19.4.1-ce.0).
+
 ## [0.28.1] — 2026-09-29
 
 ### Fixed
@@ -1859,6 +1882,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.28.2]: https://github.com/lichengwu/aibox/compare/v0.28.1...v0.28.2
 [0.28.1]: https://github.com/lichengwu/aibox/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/lichengwu/aibox/compare/v0.27.1...v0.28.0
 [0.27.1]: https://github.com/lichengwu/aibox/compare/v0.27.0...v0.27.1

@@ -412,7 +412,12 @@ cmd_upgrade() {
           | grep -m1 -oE '"tag_name": *"[^"]+"' | sed -e 's/.*"tag_name": *"//' -e 's/"$//' || true)"
         ;;
       dockerhub-tags)
-        target="$(dockerhub_tags_fetch "${repo}" | upgrade_pick_tag "${pattern}" || true)"
+        _raw="$(dockerhub_tags_fresh "${repo}" || true)"
+        if [ -z "${_raw}" ]; then
+          die "cannot fetch tag list for ${repo} — every endpoint is unreachable from this host (try: aibox clash on / aibox proxy on; or pin explicitly: aibox upgrade ${k} --to <version>)"
+        fi
+        target="$(printf '%s\n' "${_raw}" | upgrade_pick_tag "${pattern}" || true)"
+        [ -n "${target}" ] || die "${name}: no tag in ${repo} matches the module's tag_pattern (see what is available: aibox upgrade ${name} --to <version>)"
         ;;
       *)
         die "${name}: unknown upgrade source '${src}' (github-release | dockerhub-tags)"

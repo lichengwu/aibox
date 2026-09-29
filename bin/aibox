@@ -57,7 +57,7 @@ if [ -z "${AIBOX_BIN_DIR:-}" ]; then
     ;;
   esac
 fi
-AIBOX_VERSION="0.28.1"
+AIBOX_VERSION="0.28.2"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 
@@ -876,6 +876,21 @@ docker_pool_prepull() { # $@ = image refs
 # local-mirror → pool order the image pulls use, with the sticky winner cached
 # in $AIBOX_HOME/dockerpool.cache.
 DK_TAGS_POOL_DEFAULT="docker.1ms.run hub.rat.dev docker.1panel.live hub.1panel.dev proxy.vvvv.ee docker.m.daocloud.io hub3.nat.tf hub4.nat.tf docker.367231.xyz docker.apiba.cn"
+
+# Tags via a FRESH PROCESS. The pool race fetches inside background subshells,
+# and that silently yields nothing when the caller is itself inside a command
+# substitution — measured live: `$(dockerhub_tags_fetch … | pick)` returns empty
+# inside the upgrade/status flows while the identical call works standalone. The
+# manager exposes them as a hidden verb; calling it in its own process is the
+# same cure the status probe already uses (src/aibox/90-main.sh __status-probe).
+dockerhub_tags_fresh() { # $1=repo → tag names, one per line
+  local self="${AIBOX_SELF:-}" out=""
+  if [ -n "${self}" ] && [ -f "${self}" ]; then
+    out="$(bash "${self}" __docker-tags "$1" 2>/dev/null || true)"
+    if [ -n "${out}" ]; then printf '%s\n' "${out}"; return 0; fi
+  fi
+  dockerhub_tags_fetch "$1"
+}
 
 dockerhub_tags_fetch() { # $1=repo (e.g. gitlab/gitlab-ce) → tag names, one per line
   local repo="$1" cached order m tags seen_direct=0 pool
@@ -4769,6 +4784,16 @@ _upgrade_path_compute() {
 # Highest version tag among the stdin lines (optional ERE filter in $1). Prints the tag.
 upgrade_pick_tag() {
   local pat="${1:-}" line best=""
+  # Defensive: the registry parser shell-escapes metadata values (\ " $ `) when it
+  # emits them FOR EVAL, and a code path that reads the raw form hands those
+  # escapes on — live-caught: gitlab's ^[0-9]+\.[0-9]+\.[0-9]+-ce\.0$ arrived as
+  # \\\\. / \$ , matched nothing, and `aibox upgrade gitlab` reported "cannot
+  # resolve" although every mirror answered with the full tag list. Unescaping is
+  # a no-op for a pattern that arrived clean.
+  pat="${pat//\\\\/\\}"
+  pat="${pat//\\\$/\$}"
+  pat="${pat//\\\"/\"}"
+  pat="${pat//\\\`/\`}"
   while IFS= read -r line; do
     line="$(printf '%s' "${line}" | tr -d '[:space:]')"
     [ -n "${line}" ] || continue
@@ -4896,7 +4921,7 @@ _upgrade_hop_latest_patch() { # $1=repo $2=pattern $3=stop(major.minor)
   # selector); the full tag list + the stop-anchored pattern below subsume the
   # old ?name=<stop> substring filter (the ^<stop>. prefix weeds out the cross
   # matches like 8.17.8 vs 17.8).
-  cand="$(dockerhub_tags_fetch "${repo}" | upgrade_pick_tag "${anchor}" || true)"
+  cand="$(dockerhub_tags_fresh "${repo}" | upgrade_pick_tag "${anchor}" || true)"
   if [ -n "${cand}" ] && [ -n "${pat}" ] && ! printf '%s' "${cand}" | grep -qE "${pat}"; then
     cand=""
   fi
@@ -5431,7 +5456,12 @@ cmd_upgrade() {
           | grep -m1 -oE '"tag_name": *"[^"]+"' | sed -e 's/.*"tag_name": *"//' -e 's/"$//' || true)"
         ;;
       dockerhub-tags)
-        target="$(dockerhub_tags_fetch "${repo}" | upgrade_pick_tag "${pattern}" || true)"
+        _raw="$(dockerhub_tags_fresh "${repo}" || true)"
+        if [ -z "${_raw}" ]; then
+          die "cannot fetch tag list for ${repo} — every endpoint is unreachable from this host (try: aibox clash on / aibox proxy on; or pin explicitly: aibox upgrade ${k} --to <version>)"
+        fi
+        target="$(printf '%s\n' "${_raw}" | upgrade_pick_tag "${pattern}" || true)"
+        [ -n "${target}" ] || die "${name}: no tag in ${repo} matches the module's tag_pattern (see what is available: aibox upgrade ${name} --to <version>)"
         ;;
       *)
         die "${name}: unknown upgrade source '${src}' (github-release | dockerhub-tags)"
@@ -5654,7 +5684,7 @@ _status_probe_latest() { # $1=module → prints the latest version
       | grep -m1 -oE '"tag_name": *"[^"]+"' | sed -e 's/.*"tag_name": *"//' -e 's/"$//' || true)" 
     ;;
   dockerhub-tags)
-    out="$(dockerhub_tags_fetch "${repo}" | upgrade_pick_tag "${pattern}" || true)"
+    out="$(dockerhub_tags_fresh "${repo}" | upgrade_pick_tag "${pattern}" || true)"
     ;;
   *) return 0 ;;
   esac
@@ -7123,6 +7153,11 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     apply_proxy
   fi
 
+  # Absolute path to this CLI: child processes re-enter it for the hidden verbs
+  # (__status-probe / __docker-tags) whose work must not run in a subshell.
+  AIBOX_SELF="${AIBOX_SELF:-$0}"
+  export AIBOX_SELF
+
   # ---------- dispatch ----------
   # Help first, uniformly: `aibox <verb> --help|-h` (any position) and
   # `aibox help <verb>` render that verb's block and exit 0. Before this, only
@@ -7156,6 +7191,11 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     # instant failure); a fresh process runs the pool exactly like any CLI
     # invocation. Not in help; harmless if invoked directly.
     __status-probe)     shift; _status_probe_cmd "$@" ;;
+    # hidden internal verb: the tag pool race must run at TOP LEVEL (inside a
+    # command substitution its background racers fail silently — measured on a
+    # deploy host where `aibox upgrade gitlab` could not resolve anything while
+    # the same fetch worked standalone). Called by dockerhub_tags_fresh.
+    __docker-tags)      shift; dockerhub_tags_fetch "$@" ;;
     version|-v|--version) echo "aibox $AIBOX_VERSION" ;;
     help|-h|--help)   usage ;;
     *)
