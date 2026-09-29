@@ -74,7 +74,13 @@ _snap() { # → newest snapshot file content
 }
 
 @test "sampler: docker absent → docker=down and no CONTAINER records" {
-  run bash -c "env PATH=/usr/bin:/bin bash '$REPO_ROOT/bin/aibox' __dashboard-sample '$AIBOX_HOME/dashboard' --once"
+  # Deterministic: shadow `docker` with a failing shim. Without this the test depends on
+  # the HOST (CI runners ship a working docker, the test image does not) — caught by CI.
+  mkdir -p "$BATS_TMPDIR/nodocker"
+  printf '#!/bin/sh\nexit 1\n' >"$BATS_TMPDIR/nodocker/docker"
+  chmod +x "$BATS_TMPDIR/nodocker/docker"
+  run env PATH="$BATS_TMPDIR/nodocker:/usr/bin:/bin" \
+    bash "$REPO_ROOT/bin/aibox" __dashboard-sample "$AIBOX_HOME/dashboard" --once
   [ "$status" -eq 0 ] || false
   grep -q 'docker=down' "$AIBOX_HOME/dashboard/snapshot.1" || false
   run grep -c '^CONTAINER ' "$AIBOX_HOME/dashboard/snapshot.1"
