@@ -78,3 +78,15 @@ _dash_headless() { # $1=keys file, $2=frames → run one headless session
   [ "$status" -eq 0 ] || false
   case "$output" in *"filter:gitlab"*) ;; *) false ;; esac
 }
+
+@test "keys: Ctrl-C arriving as a byte quits the loop (pty/no-ISIG safety net)" {
+  local f="$BATS_TMPDIR/keys-int.txt"
+  printf '\003\n' >"$f"
+  run env AIBOX_DASH_SNAPSHOT="$(_fixture)" AIBOX_DASH_SIZE=100x30 \
+    AIBOX_DASH_KEYS="$f" AIBOX_DASH_FRAMES=5 bash "$REPO_ROOT/bin/aibox" dashboard
+  [ "$status" -eq 0 ] || false
+  local n
+  n="$(printf '%s' "$output" | grep -c 'aibox dashboard' || true)"
+  [ "$n" = "1" ] || false
+}
+

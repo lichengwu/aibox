@@ -7285,7 +7285,11 @@ cmd_dashboard() {
     tput civis 2>/dev/null || true
     stty -echo -icanon min 1 time 0 2>/dev/null || true
   fi
-  trap '_dash_cleanup' EXIT INT TERM HUP QUIT
+  # Ctrl-C / SIGTERM must actually EXIT (a trap that merely cleans up resumes the
+  # loop: `expect eof` then never returns and the pty test hangs — measured risk on
+  # slower runners). The EXIT trap still runs the (idempotent) cleanup exactly once.
+  trap '_dash_cleanup; exit 130' INT TERM HUP QUIT
+  trap '_dash_cleanup' EXIT
   bash "$(_dash_self)" __dashboard-sample "${dir}" --interval "${interval}" >/dev/null 2>&1 &
   SAMPLER_PID=$!
 
@@ -7300,7 +7304,7 @@ cmd_dashboard() {
       file="${dir}/snapshot.1"
       printf '\033[H\033[2J%swaiting for the first sample…%s\n' "${C_DIM}" "${C_RST}"
       key="$(_dash_key_read)"
-      case "${key}" in q | ESC) break ;; esac
+      case "${key}" in q | ESC | $'\003') break ;; esac
       continue
     fi
     size="$(_dash_size)"
@@ -7324,7 +7328,7 @@ cmd_dashboard() {
     if [ "${frames_max}" != 0 ] && [ "${frames}" -ge "${frames_max}" ]; then break; fi
     key="$(_dash_key_read)"
     case "${key}" in
-    q | ESC) break ;;
+    q | ESC | $'\003') break ;;   # the control byte 003 = Ctrl-C arriving as a keystroke (no ISIG, or a pty)
     r) need_resample=1 ;;
     p | SPACE) [ "${paused}" = 1 ] && paused=0 || paused=1 ;;
     '+') interval="$(_dash_interval_cycle "${interval}")" ;;
