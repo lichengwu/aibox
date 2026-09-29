@@ -7,6 +7,20 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.29.3] — 2026-09-29
+
+### Fixed
+
+- **Up/Down still did not move the selection — the renderer ignored it.** The pane frames
+  received a selection index, but `_dash_render_once` passed a hardcoded `0`, so ↑/↓ updated
+  the state while every frame kept highlighting the first row. The selection is now passed
+  through to the frames (modules AND containers), so the marker follows the cursor.
+- **Two test bugs that had hidden the above**: the selection assertions were containment
+  checks (`*▸*xiaozhi*`), which pass even when the marker never moves — they now assert PER
+  LINE (the marker's own line must name the expected row), and one test lost its data
+  because bats' `run` OVERWRITES `$output` (the output is snapshotted before asserting).
+  That is the lesson of AGENTS pitfall #11 applied to the suite itself.
+
 ## [0.29.2] — 2026-09-29
 
 ### Fixed
@@ -2014,6 +2028,7 @@ One icon per module on the dashboard header tells the whole story — installed
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
+[0.29.3]: https://github.com/lichengwu/aibox/compare/v0.29.2...v0.29.3
 [0.29.2]: https://github.com/lichengwu/aibox/compare/v0.29.1...v0.29.2
 [0.29.1]: https://github.com/lichengwu/aibox/compare/v0.29.0...v0.29.1
 [0.29.0]: https://github.com/lichengwu/aibox/compare/v0.28.5...v0.29.0

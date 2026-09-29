@@ -341,13 +341,13 @@ _dash_keybar() {
 
 # ---------- one-shot rendering (P1: --once, --json, the degrade path) ----------
 
-_dash_render_once() { # $1=file $2=pane $3=width $4=filter $5=sortkey
-  local file="$1" pane="$2" w="$3" filter="$4" sortkey="$5"
+_dash_render_once() { # $1=file $2=pane $3=width $4=filter $5=sortkey $6=sel
+  local file="$1" pane="$2" w="$3" filter="$4" sortkey="$5" sel="${6:-0}"
   case "${pane}" in
-  containers) _dash_frame_containers "${file}" "${w}" "${filter}" "${sortkey}" 0 ;;
+  containers) _dash_frame_containers "${file}" "${w}" "${filter}" "${sortkey}" "${sel}" ;;
   upgrades) _dash_frame_upgrades "${file}" "${w}" ;;
   residue) _dash_frame_residue "${file}" "${w}" ;;
-  *) _dash_frame_modules "${file}" "${w}" "${filter}" "${sortkey}" 0 ;;
+  *) _dash_frame_modules "${file}" "${w}" "${filter}" "${sortkey}" "${sel}" ;;
   esac
 }
 
@@ -637,7 +637,7 @@ cmd_dashboard() {
         "$((pane_idx + 1))" "${npane}" "${C_RST}"
       printf '%s%s%s\n' "${C_DIM}" \
         "$(_dash_status_line "${file}" "${pane_now}" "${interval}" "${paused}" "${filter}" "${sortkey}" "${frames}")" "${C_RST}"
-      _dash_render_once "${file}" "${pane_now}" "${w}" "${filter}" "${sortkey}"
+      _dash_render_once "${file}" "${pane_now}" "${w}" "${filter}" "${sortkey}" "${sel}"
       _dash_keybar
       printf '\033[J'
     } 2>/dev/null | head -n "${h}" || true

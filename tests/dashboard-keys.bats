@@ -85,14 +85,55 @@ _dash_headless() { # $1=keys file, $2=frames → run one headless session
   rm -f "$frag"
 }
 
-@test "keys: Down moves the selection and it is clamped to the last row" {
-  local f="$BATS_TMPDIR/keys-sel.txt"
+@test "keys: Down moves the marker to the NEXT row (per-line, not containment)" {
+  local f="$BATS_TMPDIR/keys-sel.txt" dash_out
   printf 'DOWN\nq\n' >"$f"
-  run env AIBOX_DASH_SNAPSHOT="$(_fixture)" AIBOX_DASH_SIZE=100x30 \
+  run env AIBOX_DASH_SNAPSHOT="$(_fixture)" AIBOX_DASH_SIZE=100x30 AIBOX_DASH_FORCE_COLOR=1 \
     AIBOX_DASH_KEYS="$f" AIBOX_DASH_FRAMES=3 bash "$REPO_ROOT/bin/aibox" dashboard
   [ "$status" -eq 0 ] || false
-  # the first frame selects row 1, the second row 2 (xiaozhi)
-  case "$output" in *"▸"*xiaozhi*) ;; *) false ;; esac
+  dash_out="$output"   # `run` OVERWRITES $output — snapshot it before asserting again
+  # PER LINE: a containment check (*▸*xiaozhi*) passed even while the renderer hardcoded
+  # sel=0 and the marker never moved — that is exactly how this bug hid the first time.
+  run bash -c "printf '%s\n' \"\$1\" | grep '▸' | head -1 | grep -q gitlab" _ "$dash_out"
+  [ "$status" -eq 0 ] || false
+  run bash -c "printf '%s\n' \"\$1\" | grep '▸' | tail -1 | grep -q xiaozhi" _ "$dash_out"
+  [ "$status" -eq 0 ] || false
+}
+
+@test "keys: Up returns to the previous row; Down past the end stays on the last row" {
+  local f="$BATS_TMPDIR/keys-sel3.txt" dash_out
+  printf 'DOWN\nDOWN\nUP\nq\n' >"$f"
+  run env AIBOX_DASH_SNAPSHOT="$(_fixture)" AIBOX_DASH_SIZE=100x30 AIBOX_DASH_FORCE_COLOR=1 \
+    AIBOX_DASH_KEYS="$f" AIBOX_DASH_FRAMES=5 bash "$REPO_ROOT/bin/aibox" dashboard
+  [ "$status" -eq 0 ] || false
+  dash_out="$output"
+  # TWO modules: the marker walk is gitlab → xiaozhi → xiaozhi (clamped) → gitlab (UP).
+  # Compare the LAST TWO marker lines: the second-to-last proves DOWN got there, the last
+  # proves UP came back (checking only the last line would not distinguish UP from a no-op).
+  run bash -c "printf '%s\n' \"\$1\" | grep '▸' | tail -2 | head -1 | grep -q xiaozhi" _ "$dash_out"
+  [ "$status" -eq 0 ] || false
+  run bash -c "printf '%s\n' \"\$1\" | grep '▸' | tail -1 | grep -q gitlab" _ "$dash_out"
+  [ "$status" -eq 0 ] || false
+  printf 'DOWN\nDOWN\nDOWN\nq\n' >"$f"
+  run env AIBOX_DASH_SNAPSHOT="$(_fixture)" AIBOX_DASH_SIZE=100x30 AIBOX_DASH_FORCE_COLOR=1 \
+    AIBOX_DASH_KEYS="$f" AIBOX_DASH_FRAMES=5 bash "$REPO_ROOT/bin/aibox" dashboard
+  dash_out="$output"
+  # walking past the last row must leave the marker ON the last row (clamped)
+  run bash -c "printf '%s\n' \"\$1\" | grep '▸' | tail -1 | grep -q xiaozhi" _ "$dash_out"
+  [ "$status" -eq 0 ] || false
+}
+
+@test "keys: selection works in the containers pane too" {
+  local f="$BATS_TMPDIR/keys-selc.txt" dash_out
+  printf 'TAB\nDOWN\nq\n' >"$f"
+  run env AIBOX_DASH_SNAPSHOT="$(_fixture)" AIBOX_DASH_SIZE=100x30 AIBOX_DASH_FORCE_COLOR=1 \
+    AIBOX_DASH_KEYS="$f" AIBOX_DASH_FRAMES=4 bash "$REPO_ROOT/bin/aibox" dashboard
+  [ "$status" -eq 0 ] || false
+  dash_out="$output"
+  # the fixture has ONE container: the pane must render and the marker must sit on it
+  case "$dash_out" in *"CONTAINERS · 1 container(s)"*) ;; *) false ;; esac
+  run bash -c "printf '%s\n' \"\$1\" | grep '▸' | tail -1 | grep -q aibox-gitlab" _ "$dash_out"
+  [ "$status" -eq 0 ] || false
 }
 
 @test "keys: handled immediately — 10 keypresses must not cost 10 sleeps" {
