@@ -7,6 +7,17 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.28.3] — 2026-09-29
+
+### Fixed
+
+- **The apt index refresh ran on every call on macOS/BSD hosts** (caught by CI's
+  macOS bash 3.2 job, which is exactly why that job runs the whole suite): the
+  emptiness check used `find … -print -quit`, a GNU-only flag. BSD find rejects it,
+  the check read a POPULATED index as empty, and every dependency install paid for
+  a needless `apt-get update`. Now a pure-bash glob (portable, no subprocess), with
+  the same unit test passing under Linux and macOS.
+
 ## [0.28.2] — 2026-09-29
 
 ### Fixed
@@ -1882,6 +1893,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.28.3]: https://github.com/lichengwu/aibox/compare/v0.28.2...v0.28.3
 [0.28.2]: https://github.com/lichengwu/aibox/compare/v0.28.1...v0.28.2
 [0.28.1]: https://github.com/lichengwu/aibox/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/lichengwu/aibox/compare/v0.27.1...v0.28.0

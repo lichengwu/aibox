@@ -461,12 +461,19 @@ _pm_index_refresh() { # $1 = pm, $2 = "force" to refresh even when the index exi
   # operation — aibox autoclean advises it) makes EVERY apt install fail with
   # "Unable to locate package". Cheap to detect, so detect it instead of failing
   # with a package-manager error the operator has to decode.
-  local lists
+  local lists has e
   lists="${AIBOX_APT_LISTS_DIR:-/var/lib/apt/lists}"
   case "${1:-}" in
   apt-get)
-    if [ "${2:-}" != "force" ] && [ -n "$(find "${lists}" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
-      return 0
+    # Pure-bash emptiness check: `find -quit` is GNU-only and BSD find (macOS)
+    # rejects it, which made the helper treat a POPULATED index as empty and run
+    # an update on every call (caught by CI's macOS bash 3.2 job).
+    if [ "${2:-}" != "force" ]; then
+      has=""
+      for e in "${lists}"/*; do
+        [ -e "${e}" ] && { has=1; break; }
+      done
+      [ -n "${has}" ] && return 0
     fi
     info "  apt package index is empty/stale — running: apt-get update (bounded 300s)"
     timeout 300 apt-get update >/dev/null 2>&1 || true
