@@ -51,6 +51,38 @@ keeping 5k lines in one hand-edited file forced "inline twins" of shared helpers
 drifting. `tests/bundle.bats` locks the contract (fragments parse standalone, only the head
 fragment has a shebang, artifact == concatenation).
 
+### Test environment (mandatory)
+
+**Never run any aibox functionality on the host.** Not `bats tests/*.bats`, not
+`bin/aibox …`, not a module hook, not an extracted helper, not "just this one
+function", not even for a read-only check. The development machine is the operator's
+live host: a stray install/uninstall/start touches real deployments, and a local run
+proves nothing about the environment that matters — the project promises bash 3.2 and
+BSD tools, which a Linux/host run silently does not exercise (that mismatch has
+produced false "green" more than once, e.g. a `find -quit` that BSD find rejects).
+
+Everything runs inside the pinned container image (`tests/docker/Dockerfile`,
+`aibox-test:local`):
+
+```bash
+tests/docker/run.sh                  # gates -> fast suite as root AND non-root -> summary
+tests/docker/run.sh --fast-only      # the fast suite only
+tests/docker/run.sh --integration    # + daemon-backed suites (mounts the docker socket)
+tests/docker/run.sh --no-build       # reuse the aibox-test:local image
+docker run --rm -v "$PWD":/repo -w /repo aibox-test:local \
+  bash -c 'cd /repo && bats tests/<file>.bats'        # a single suite
+```
+
+- **bash 3.2 / BSD-tool behaviour** is covered by CI's `macos-bash32` job, which runs
+the whole fast suite under `/bin/bash 3.2` — the authoritative runtime gate for the
+platform this project promises. Never "approximate" it on the host: reproduce a
+Linux-side concern in the container and let CI cover 3.2.
+- A CI-only failure is diagnosed from the job log (`gh run view --job <id> --log-failed`)
+and reproduced in the container — do **not** re-run the failing test on the host.
+- Verifying a real deploy host (its own `aibox`, explicitly requested by the operator)
+is a *deployment task step*: it is never a substitute for the suite, and never run from
+the development machine against `$AIBOX_HOME`.
+
 ### bash coding conventions (mandatory)
 
 1. **`set -euo pipefail`** at the top of every script (for `src/aibox/*.sh`: once, in `00-head.sh`).
@@ -261,7 +293,7 @@ scripts/new-module.sh <name> [--desc "..."] [--no-compose] [--out <dir>]   # sca
 scripts/validate-module.sh <name> | --all                                  # conformance gate: 0 ERRORs required (WARNs tolerated)
 ```
 
-**Flow**: scaffold → fill `module.yaml` (ports/checks/deps/services/usage/includes) → implement the hooks → `scripts/validate-module.sh <name>` until PASS → `bats tests/*.bats` → live smoke (install / start / status / logs / stop / uninstall on a docker host) → add the module row to README(.zh). **`tools/gitlab/` is the reference implementation onboarded with exactly this flow.**
+**Flow**: scaffold → fill `module.yaml` (ports/checks/deps/services/usage/includes) → implement the hooks → `scripts/validate-module.sh <name>` until PASS → `tests/docker/run.sh --fast-only` (never a local `bats` run — see §Test environment) → live smoke (install / start / status / logs / stop / uninstall on a docker host) → add the module row to README(.zh). **`tools/gitlab/` is the reference implementation onboarded with exactly this flow.**
 
 **CLI conventions** (validator-enforced; the instruction-system contract, spec §CLI surface / §Exit codes): every manager verb answers `--help` (identical to `aibox help <verb>`); every service module declares `doctor` (the shared `module_doctor`: deps + docker daemon + `status_info` state + port listeners); dispatch-CLI modules alias `start`/`stop`/`restart` onto their CLI's own verbs; usage errors in hooks go through `usage_die` (exit `2`), never `die`; exit codes are stable for automation — `1` runtime, `2` usage/declined, `3` dependency missing, `4` precheck failed, `10` upgrade rolled back, `20` manual intervention (hooks add `30` not ready, `40` lock conflict, `50` cancelled).
 
