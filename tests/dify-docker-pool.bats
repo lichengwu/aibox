@@ -26,7 +26,7 @@ setup() {
   # deploy root so compose() is satisfied (the fake docker does the parsing)
   mkdir -p "$AIBOX_HOME/apps/dify"
   : >"$AIBOX_HOME/apps/dify/docker-compose.yml"
-  export FAKE_COMPOSE_IMAGES="langgenius/dify-api:1.17.1 postgres:15-alpine cr.weaviate.io/semitechnologies/weaviate:1.39.2 nginx:latest"
+  export FAKE_COMPOSE_IMAGES="langgenius/dify-api:1.17.1 postgres:15-alpine semitechnologies/weaviate:1.39.2 nginx:latest"
 
   export FAKE_DOCKER_CACHED="$SANDBOX/cached"
   export FAKE_DOCKER_TAGLOG="$SANDBOX/taglog"
@@ -217,7 +217,26 @@ EOF
   local imgs
   imgs="$(compose_images)"
   printf '%s\n' "$imgs" | grep -q "^langgenius/dify-api:1.17.1$"
-  printf '%s\n' "$imgs" | grep -q "^cr.weaviate.io/semitechnologies/weaviate:1.39.2$"
+  printf '%s\n' "$imgs" | grep -q "^semitechnologies/weaviate:1.39.2$"
+}
+
+@test "update.sh: migrates the old cr.weaviate.io WEAVIATE_IMAGE default; custom values kept" {
+  local root
+  root="$(deploy_root)"
+  mkdir -p "${root}"
+  # OLD rendered default → rewritten to the Docker Hub ref (mirror-pool reachable)
+  printf 'SECRET_KEY=s\nWEAVIATE_IMAGE=cr.weaviate.io/semitechnologies/weaviate:1.39.2\n' >"${root}/.env"
+  run bash "${REPO_ROOT}/tools/dify/update.sh" --no-restart
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^WEAVIATE_IMAGE=semitechnologies/weaviate:1.39.2$' "${root}/.env" || false
+  grep -q '^SECRET_KEY=s$' "${root}/.env" || false
+  [[ "$output" == *"migrated WEAVIATE_IMAGE"* ]]
+  # a deliberately customized value is the user's — untouched
+  printf 'SECRET_KEY=s\nWEAVIATE_IMAGE=my-registry.example/weaviate:custom\n' >"${root}/.env"
+  run bash "${REPO_ROOT}/tools/dify/update.sh" --no-restart
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^WEAVIATE_IMAGE=my-registry.example/weaviate:custom$' "${root}/.env" || false
+  [[ "$output" != *"migrated WEAVIATE_IMAGE"* ]]
 }
 
 

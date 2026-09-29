@@ -13,7 +13,13 @@ DEFAULT_PLUGIN_DAEMON_IMAGE="langgenius/dify-plugin-daemon:0.6.10-local"
 DEFAULT_AGENT_BACKEND_IMAGE="langgenius/dify-agent-backend:1.17.1"
 DEFAULT_DB_IMAGE="postgres:15-alpine"
 DEFAULT_REDIS_IMAGE="redis:6-alpine"
-DEFAULT_WEAVIATE_IMAGE="cr.weaviate.io/semitechnologies/weaviate:1.39.2"
+# The vector store ships from DOCKER HUB on purpose: a mirror-configured docker
+# daemon cannot pull OTHER registries on blocked networks — with registry-mirrors
+# set, the daemon resolves a cr.weaviate.io pull against the blocked
+# registry-1.docker.io and times out (live-measured on a CN deploy host; the
+# host itself reached cr.weaviate.io fine). The Hub tag is the same upstream
+# release and rides the daemon's docker.io mirrors + this module's ranked pool.
+DEFAULT_WEAVIATE_IMAGE="semitechnologies/weaviate:1.39.2"
 # Shared library (output helpers + docker.io pool): repo tools/_shared/common.sh,
 # shipped per-module as _common.sh (module.yaml includes: [common]).
 LIB_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

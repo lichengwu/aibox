@@ -1,5 +1,5 @@
 name: dify
-version: 1.24.0
+version: 1.24.1
 module_iface: 1
 description: "Dify self-hosted (docker compose): LLM app builder (api/worker/web/nginx + weaviate)"
 platform: ""
@@ -126,7 +126,7 @@ services_optional:
   - base:redis#dify
 
 # MANDATORY preflight (docs/module-spec.md §Preflight checks). All images come
-# from docker.io / cr.weaviate.io (daemon-pulled), so connectivity is probed
+# from docker.io (daemon-pulled), so connectivity is probed
 # daemon-routed via hello-world; when every image below is already cached, the
 # pull probe is skipped and offline restarts pass. No host-curl consumers
 # (dify pulls nothing from github via curl), so no `domains:`. Disk floor
@@ -146,4 +146,4 @@ checks:
     - langgenius/dify-agent-backend:1.17.1
     - postgres:15-alpine
     - redis:6-alpine
-    - cr.weaviate.io/semitechnologies/weaviate:1.39.2
+    - semitechnologies/weaviate:1.39.2

@@ -28,6 +28,25 @@ chmod +x "${ROOT}/nginx/docker-entrypoint.sh" "${ROOT}/ssrf_proxy/docker-entrypo
 log "refreshed compose + nginx/ssrf_proxy templates → ${ROOT}"
 log "kept existing ${ROOT}/.env (image tags there override the compose defaults)"
 
+# VALUE migration (not a user-edit clobber): installs rendered by ≤1.24.0
+# pinned the vector store to cr.weaviate.io — which a mirror-configured
+# docker daemon cannot pull on blocked networks: with registry-mirrors set,
+# the daemon resolves that pull against the blocked registry-1.docker.io
+# and times out (live-measured on a CN deploy host; the host itself reached
+# cr.weaviate.io fine). The same tag ships from Docker Hub, where the
+# daemon's docker.io route and this module's ranked mirror pool both reach
+# it. Rewrite ONLY the exact old default — a deliberately customized
+# WEAVIATE_IMAGE is the user's and stays untouched.
+OLD_WEAVIATE_IMAGE="cr.weaviate.io/semitechnologies/weaviate:1.39.2"
+if [ -f "${ROOT}/.env" ] && grep -q "^WEAVIATE_IMAGE=${OLD_WEAVIATE_IMAGE}$" "${ROOT}/.env"; then
+  MIG_TMP="$(mktemp "${ROOT}/.env.mig.XXXXXX")" || die "mktemp failed for the .env migration"
+  grep -v '^WEAVIATE_IMAGE=' "${ROOT}/.env" >"${MIG_TMP}"
+  printf 'WEAVIATE_IMAGE=%s\n' "${DEFAULT_WEAVIATE_IMAGE}" >>"${MIG_TMP}"
+  cat "${MIG_TMP}" >"${ROOT}/.env"
+  rm -f "${MIG_TMP}"
+  log "migrated WEAVIATE_IMAGE: ${OLD_WEAVIATE_IMAGE} → ${DEFAULT_WEAVIATE_IMAGE} (Docker Hub ref, mirror-pool reachable)"
+fi
+
 # Apply: recreate containers so the new image tags/env take effect.
 case "${1:-}" in
 --restart)

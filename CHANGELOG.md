@@ -7,6 +7,26 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [Unreleased]
+
+### Fixed
+
+- **dify: the vector store now ships from Docker Hub, so `aibox dify start`
+  works on mirror-saved networks.** The default `WEAVIATE_IMAGE` moved from
+  `cr.weaviate.io/semitechnologies/weaviate` (same tag, same upstream release)
+  to `semitechnologies/weaviate`: a docker daemon with `registry-mirrors`
+  configured cannot pull OTHER registries on blocked networks — it resolves the
+  pull against the blocked `registry-1.docker.io` and times out (live-measured
+  on a CN deploy host: `aibox dify start` died mid-pull while every docker.io
+  image and the host's own route to cr.weaviate.io were fine). The Hub ref
+  rides the daemon's docker.io mirrors and the module's ranked pool.
+  `aibox dify update` migrates the old rendered default in the deploy `.env`
+  automatically — a deliberately customized `WEAVIATE_IMAGE` is kept untouched.
+
+### Module versions
+
+dify 1.24.1
+
 ## [0.28.5] — 2026-09-29
 
 ### Fixed

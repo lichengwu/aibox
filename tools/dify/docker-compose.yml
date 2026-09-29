@@ -357,7 +357,7 @@ services:
   # use another store, drop this service and set VECTOR_STORE + the matching
   # service/env manually (see docs/DEVELOPMENT.md).
   weaviate:
-    image: ${WEAVIATE_IMAGE:-cr.weaviate.io/semitechnologies/weaviate:1.39.2}
+    image: ${WEAVIATE_IMAGE:-semitechnologies/weaviate:1.39.2}
     restart: always
     volumes:
       - dify_weaviate:/var/lib/weaviate

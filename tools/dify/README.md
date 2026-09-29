@@ -37,7 +37,7 @@ services dify needs out of the box:
 | `api` / `api_websocket` / `worker` / `worker_beat` | langgenius/dify-api:1.17.1 | API + celery worker + beat |
 | `web` | langgenius/dify-web:1.17.1 | Next.js frontend |
 | `nginx` | nginx:latest | entry reverse proxy (vendored envsubst templates) |
-| `weaviate` | cr.weaviate.io/semitechnologies/weaviate:1.39.2 | default vector store |
+| `weaviate` | semitechnologies/weaviate:1.39.2 | default vector store (Docker Hub — mirror-pooled) |
 
 The `nginx/` and `ssrf_proxy/` config templates are **vendored verbatim** from
 dify v1.17.1's `docker/` tree — their entrypoint scripts run `envsubst`/`awk`
@@ -130,8 +130,16 @@ cached.
 | `AIBOX_DOCKER_MIRROR` | (unset) | your mirror — joins the race first |
 | `AIBOX_DOCKER_FORCE_POOL` | `0` | `1` = skip the direct probe, always engage |
 
-Images on OTHER registries (the `cr.weaviate.io` vector store) stay
-direct-only — no mainstream mirror proxies them.
+The vector store ships from **Docker Hub** (`semitechnologies/weaviate`),
+the same tag as the upstream `cr.weaviate.io` release, so it rides the same
+ranked mirror pool as every other image. It previously defaulted to
+`cr.weaviate.io` — a registry a mirror-configured docker daemon cannot pull
+on blocked networks (measured live: with `registry-mirrors` set, the daemon
+resolved that pull against the blocked `registry-1.docker.io` and timed out,
+while the host itself reached `cr.weaviate.io` fine); `aibox dify update`
+migrates the old rendered default in the deploy `.env` automatically, and a
+custom `WEAVIATE_IMAGE` is kept untouched. Images on genuinely OTHER
+registries stay direct-only — no mainstream mirror proxies them.
 
 ## Preflight
 
