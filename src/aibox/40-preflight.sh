@@ -476,7 +476,14 @@ _pm_index_refresh() { # $1 = pm, $2 = "force" to refresh even when the index exi
       [ -n "${has}" ] && return 0
     fi
     info "  apt package index is empty/stale — running: apt-get update (bounded 300s)"
-    timeout 300 apt-get update >/dev/null 2>&1 || true
+    # `timeout` is GNU coreutils and ABSENT on macOS/BSD — there the refresh simply
+    # never ran (caught by CI's macOS bash 3.2 job). Bound it when possible, run it
+    # plainly otherwise; either way the update happens.
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 300 apt-get update >/dev/null 2>&1 || true
+    else
+      apt-get update >/dev/null 2>&1 || true
+    fi
     ;;
   esac
   return 0

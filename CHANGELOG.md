@@ -7,6 +7,19 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.28.4] — 2026-09-29
+
+### Fixed
+
+- **The apt index refresh did nothing where GNU coreutils are missing.** The helper
+  bounded its update with `timeout 300`, and `timeout` does not exist on macOS/BSD:
+  the command failed instantly and the refresh was silently skipped — leaving the very
+  situation the helper exists for (an emptied `/var/lib/apt/lists`) unfixed there. It
+  was the only `timeout` use in the tree; the refresh is now bounded when `timeout` is
+  available and runs plainly otherwise. Caught by CI's macOS bash 3.2 job — the third
+  defect that job surfaced in this area, after the GNU-only `find -quit` and the
+  duplicate-default-server HTTPS bug.
+
 ## [0.28.3] — 2026-09-29
 
 ### Fixed
@@ -1893,6 +1906,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
+[0.28.4]: https://github.com/lichengwu/aibox/compare/v0.28.3...v0.28.4
 [0.28.3]: https://github.com/lichengwu/aibox/compare/v0.28.2...v0.28.3
 [0.28.2]: https://github.com/lichengwu/aibox/compare/v0.28.1...v0.28.2
 [0.28.1]: https://github.com/lichengwu/aibox/compare/v0.28.0...v0.28.1
