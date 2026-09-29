@@ -7,48 +7,39 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
-## [Unreleased]
+## [0.29.0] — 2026-09-29
 
-### Fixed
+### Added
 
-- **dify: the vector store now ships from Docker Hub, so `aibox dify start`
-  works on mirror-saved networks.** The default `WEAVIATE_IMAGE` moved from
-  `cr.weaviate.io/semitechnologies/weaviate` (same tag, same upstream release)
-  to `semitechnologies/weaviate`: a docker daemon with `registry-mirrors`
-  configured cannot pull OTHER registries on blocked networks — it resolves the
-  pull against the blocked `registry-1.docker.io` and times out (live-measured
-  on a CN deploy host: `aibox dify start` died mid-pull while every docker.io
-  image and the host's own route to cr.weaviate.io were fine). The Hub ref
-  rides the daemon's docker.io mirrors and the module's ranked pool.
-  `aibox dify update` migrates the old rendered default in the deploy `.env`
-  automatically — a deliberately customized `WEAVIATE_IMAGE` is kept untouched.
+- **`aibox dashboard` — an htop-style LIVE view.** `status` is unchanged (the instantaneous,
+  scriptable snapshot); the new verb is the monitor. Four panes: **Modules** (state, ports
+  with the listening verdict, endpoint, cached upgrade), **Containers** (`docker stats`:
+  CPU%, MEM, uptime, restarts, health), **Upgrades** (cached latest-version probes + the
+  apply hint), **Residue** (a READ-ONLY preview of what `aibox autoclean --apply` would free).
+  Keys: `q` quit · Tab pane · ↑↓/j k select · `d` detail · `/` filter · `s` sort · `p` pause ·
+  `+`/`-` interval (1·2·5·10·30s) · `r` resample · `?` help · `a` about. Narrow terminals drop
+  columns (<80 → compact, <40 → name+state). Non-interactive use is first-class: `--once`
+  (single frame; automatic when stdout is not a TTY, with a one-line hint) and `--json`
+  (a superset of `status --json`; `status --json` itself is untouched).
+- Architecture, grounded in this repo's own incidents: the UI **never** runs docker or network
+  calls — a separate process (`aibox __dashboard-sample`) samples on a hard budget (2s local /
+  8s docker stats / 60s disk / 15min cached upgrade probes) and publishes the snapshot
+  **atomically** into a double buffer. The snapshot is line records parsed by pure bash (data,
+  never sourced). The terminal state is saved and restored exactly (`stty -g`) through an
+  idempotent signal trap; pty tests (expect) cover entering/leaving the alternate screen,
+  cursor restore, exit 0 and Ctrl-C cleanup. **Strictly read-only** — every write stays an
+  explicit command (`aibox <module> start`, `aibox autoclean --apply`, `aibox upgrade <module>`).
 
-### Module versions
+### Changed
 
-dify 1.24.1
+- The `dashboard` tombstone from 0.26.0 is gone: the name is a first-class verb again, now with
+  the interactive semantics above. Module-level `aibox <module> dashboard` points at the two
+  real views (`aibox dashboard` / `aibox <module> status`).
 
-## [0.28.5] — 2026-09-29
+### Notes
 
-### Fixed
-
-- **`aibox --no-proxy` now really clears the shell's proxy.** `bypass_proxy` unsets
-  the UPPERCASE `ALL_PROXY` as well: curl reads that form (socks setups export
-  exactly it), and it used to survive the bypass — every fetch kept dying inside
-  a dead local proxy while the operator believed they had bypassed it. `apply_proxy`'s
-  env-respect branch now detects the uppercase form too. Live-caught on a deploy
-  host: `ALL_PROXY=socks5h://127.0.0.1:20808` with hysteria listening but its
-  tunnel dead — `aibox --no-proxy <command>` still routed through it.
-- **The download source pool names a dead shell proxy instead of hinting "network?".**
-  curl drags every pool candidate (direct, mirrors, the api.github.com fallback)
-  through a shell-exported `ALL_PROXY`/`all_proxy`/`http_proxy`/`https_proxy`/
-  `HTTPS_PROXY`, so one dead local proxy fails the WHOLE pool with a verdict that
-  sends the operator to fix the wrong thing (the same deploy host: all four routes
-  were 200 without the var, yet `update self` hinted "try clash / pin a mirror").
-  On the no-winner path a control fetch with the proxy env removed now separates
-  "your shell's proxy is dead" from "the network is down", and the failure names
-  the exact variable to unset. `install.sh`'s inlined pool carries the same
-  diagnosis, and `update self` no longer discards the pool's stderr — the
-  diagnosis actually reaches the operator.
+- No `tools/**` change: the module contract is untouched, so **no module version bumps** —
+  only the manager version moves.
 
 ## [0.28.4] — 2026-09-29
 
@@ -96,6 +87,7 @@ dify 1.24.1
 
   Verified live: on the reporting host `aibox upgrade gitlab --check` now resolves
   the full staged path (39 hops, 18.9.1 → 19.4.1-ce.0).
+
 ## [0.28.1] — 2026-09-29
 
 ### Fixed
@@ -1948,7 +1940,7 @@ One icon per module on the dashboard header tells the whole story — installed
 
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
-[0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
+[0.29.0]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.29.0
 [0.28.4]: https://github.com/lichengwu/aibox/compare/v0.28.3...v0.28.4
 [0.28.3]: https://github.com/lichengwu/aibox/compare/v0.28.2...v0.28.3
 [0.28.2]: https://github.com/lichengwu/aibox/compare/v0.28.1...v0.28.2

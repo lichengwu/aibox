@@ -150,6 +150,8 @@ aibox upgrade <module> [flags]    升级部署的上游版本（dockerhub/github
 aibox check <module>|self         预检演练；self = 环境检查
 aibox status [--available]     总览（已安装模块）/ 目录
 aibox status <module>          单模块详情 + 健康探测（头部显示应用版本）
+aibox dashboard                htop 式实时视图（默认 2s 刷新、键盘驱动）：modules · containers ·
+                               upgrades · residue 四个 pane；--once | --json | --pane P | --interval N
 aibox autoclean [<module>...|self]    残留扫描/清理（默认 dry-run；--apply 先确认、
                                   再问是否停运行中容器）
 aibox proxy {show|set|on|off|…}   静态出口代理配置（全局）
@@ -188,6 +190,9 @@ aibox <module> <action> --help    单个动作的用法（参数 + 描述）
 ```bash
 aibox status            # 版本 + 端口表 + 每个已安装模块的监听状态
 aibox status <module>   # 单模块应用版本 + 端点 + 健康
+aibox dashboard         # 实时视图（htop 式）：q 退出 · Tab 切 pane · ↑↓ 选择 · d 详情
+                        # / 过滤 · s 排序 · p 暂停 · + / - 刷新间隔 · r 立即重采样 · ? 帮助
+                        # 只读：绝不 start/stop/清理（写操作仍用显式命令）
 aibox <module> status      # 同上，来自模块本身
 ```
 

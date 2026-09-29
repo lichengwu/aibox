@@ -1,6 +1,7 @@
 # aibox dashboard — Interactive (htop-style) View Design
 
-> Status: **Confirmed design** (no code yet; this round writes the design only)
+> Status: **Implemented** (P1–P4 landed; §11 records where the implementation departs
+> from this design — read it before trusting the details below)
 > Date: 2026-09-29
 > Scope: A new interactive `aibox dashboard` verb — a continuously refreshing, keyboard-driven
 > view ("htop for aibox"). `aibox status` keeps its current meaning untouched.
@@ -69,7 +70,7 @@ its own).
   xiaozhi    default  1.7.0   v1.5.0        ⚠ drift     31130 31131      http://host:31131       —     2s
   openmaic   default  1.7.0   —             ✗ stopped   31140            —                       —     9s
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────
- Tab pane · ↑↓ select · Enter detail · / filter · s sort · p pause · +/- interval · r resample · ? help · q quit
+ Tab pane · ↑↓ select · d detail · / filter · s sort · p pause · +/- interval · r resample · ? help · q quit
  snapshot 14:07:33 (samplers: local 2s · upgrade check in 9m)            [stale: docker unresponsive — last good snapshot]
 ```
 
@@ -127,7 +128,7 @@ would do. The footer repeats the explicit-command path.
  │ r / F5          resample now                    ↑↓ j k      move      │
  │ p / space       pause / resume                  g / G       first/last│
  │ + / -           interval 1·2·5·10·30s           PgUp/PgDn   page      │
- │ /               filter (name/state)             Enter       module    │
+ │ /               filter (name/state)             d  (Enter)  module    │
  │ s               sort (name/cpu/mem/state/port/up)           detail    │
  │ ?  F1           this help                       a           about     │
  ├──────────────────────────────────────────────────────────────────────┤
@@ -149,7 +150,7 @@ would do. The footer repeats the explicit-command path.
 | `Tab` `Shift-Tab` | Cycle panes | — |
 | `↑` `↓` `j` `k` | Move selection | ↑↓ |
 | `PgUp` `PgDn` `g` `G` | Page / first / last | PgUp/PgDn |
-| `Enter` | Module detail — reuses `cmd_status_detail` (leaves the alternate screen, prints the full snapshot, any key returns) | Enter |
+| `d` | Module detail — reuses `cmd_status_detail` (leaves the alternate screen, prints the full snapshot, any key returns). `Enter` is NOT usable in the TTY path: bash 3.2's `read -n 1` returns "" both on timeout and when Enter is pressed, so the two are indistinguishable — the injected key source (tests) may still send `ENTER`. | Enter |
 | `/` | Filter (live; name / state / pane-specific fields) | F4 |
 | `s` | Sort-key picker | F6 |
 | `?` `F1` | Help overlay | F1 |
@@ -233,7 +234,7 @@ c.ports=80 443 31222
 c.health=healthy
 ```
 
-Plain `KEY=VALUE` records separated by `---`, parsed with the existing `cfg_kv_*` helpers
+Line records (`SNAPSHOT`/`MODULE`/`CONTAINER`/`RESIDUE`, space-separated `k=v`), parsed by `_dash_kv_get` — pure bash, no per-field awk. (`cfg_kv_*` is NOT used here: snapshot keys repeat per record and `cfg_kv_get` returns the first match only.)
 (**never sourced** — spec §State model). Publication is atomic: write `snapshot.tmp`, then `mv`
 into the alternating `snapshot.1` / `snapshot.2`. `cost_ms` and `stale` make the dashboard
 self-diagnosing.
@@ -345,3 +346,20 @@ No `coproc`, no associative arrays, no `${v,,}`; **no fractional `read -t`** (in
    (a dedicated/throwaway terminal session), per the rule that host-side runs are deployment steps.
 3. **`dashboard --json` consumers**: confirm nobody scripts against `status --json` fields that
    would move (the design keeps `status --json` untouched; only additions).
+## 11. Implementation notes (where the shipped code departs from the design above)
+
+| Topic | As designed | As implemented (and why) |
+|---|---|---|
+| Snapshot format | `KEY=VALUE` blocks separated by `---`, parsed with `cfg_kv_*` | **Line records** (`SNAPSHOT`/`MODULE`/`CONTAINER`/`RESIDUE`, space-separated `k=v`) parsed by `_dash_kv_get` in pure bash. `cfg_kv_get` returns the FIRST match for a key, and snapshot keys repeat per record — so the generic reader is the wrong tool here. Still data, never sourced. |
+| Detail key | `Enter` | **`d`** (plus `ENTER` from the injected key source). bash 3.2 has no `read -N`, and `read -n 1` returns "" both on timeout and when Enter is pressed — the two are indistinguishable in the TTY path. |
+| Compact mode | all panes | Implemented for the Modules pane (columns dropped below 80 and below 40 columns); the Containers pane keeps fixed columns because its rows are short. |
+| Upgrades pane | hop path shown in the pane | Shows the cached latest + `apply: aibox upgrade <m> --check`. The staged hop path needs the module lib and a network walk — the pane stays local and read-only, and the CLI already prints the path. |
+| Residue pane | sizes from the reclaim scanners | Item counts + the `docker system df` summary (the scanners are reused read-only; nothing is applied). |
+| Test seams | injectable keys | `AIBOX_DASH_SNAPSHOT` (frame/JSON fixtures), `AIBOX_DASH_KEYS` (headless key source — implies no stty/alt-screen), `AIBOX_DASH_FRAMES`, `AIBOX_DASH_SIZE`, `AIBOX_DASH_QUIET`, `AIBOX_NO_TUI`. |
+| pty testing | optional, needed `expect` in the image | `expect` was ALREADY in `tests/docker/Dockerfile` — the pty suite runs in the harness, and covers alternate-screen enter/leave, cursor restore, exit 0 and Ctrl-C cleanup. |
+| Cadence | same table | 2s local; docker stats every 4th pass (8s); residue every 30th (60s); upgrade probes 15 min, one bounded process per module. |
+
+Evidence: `tests/dashboard-sample.bats` · `dashboard-frame.bats` · `dashboard-keys.bats` ·
+`dashboard-tty.bats` (25 tests, pty included) + the full docker harness (fast suite as root
+AND non-root) green before release. Live interactive feel is signed off as a deployment step
+on a real terminal (AGENTS §Test environment), never by running the CLI on a dev host.

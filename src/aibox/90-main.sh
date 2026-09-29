@@ -47,7 +47,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
         _verb_help "${2}" || { usage; exit 2; }
         exit 0
       fi ;;
-    install|uninstall|update|upgrade|check|status|autoclean|proxy|version)
+    install|uninstall|update|upgrade|check|status|dashboard|autoclean|proxy|version)
       case "${2:-}" in -h|--help) _verb_help "$1"; exit 0 ;; esac ;;
   esac
 
@@ -59,9 +59,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     check)            shift; cmd_check "$@" ;;
     autoclean)        shift; cmd_autoclean "$@" ;;
     status)        shift; cmd_status "$@" ;;
-    dashboard)
-      # removed in 0.26.0 — merged into `status` (its module-level rich views too)
-      usage_die "the 'dashboard' verb was merged into 'status' — use: aibox status [<module>]" ;;
+    dashboard)        shift; cmd_dashboard "$@" ;;
     proxy)            shift; cmd_proxy "$@" ;;
     # hidden internal verb: the status's async latest-version probe runs as
     # a SEPARATE process (bash $0 __status-probe …) — gh_pool_fetch's race
@@ -69,6 +67,11 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     # instant failure); a fresh process runs the pool exactly like any CLI
     # invocation. Not in help; harmless if invoked directly.
     __status-probe)     shift; _status_probe_cmd "$@" ;;
+    # hidden internal verb: the dashboard's SAMPLER runs as its own process — the
+    # interactive view must never block (it only reads snapshot files), and the
+    # probe/pool races misbehave inside command substitutions (see __status-probe
+    # above). Not in help; harmless if invoked directly.
+    __dashboard-sample) shift; _dash_cmd_sample "$@" ;;
     # hidden internal verb: the tag pool race must run at TOP LEVEL (inside a
     # command substitution its background racers fail silently — measured on a
     # deploy host where `aibox upgrade gitlab` could not resolve anything while

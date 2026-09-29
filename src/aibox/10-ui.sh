@@ -1,6 +1,6 @@
 # ---------- unknown-argument UX (suggestions + one consistent hint) ----------
 # Verbs the dispatcher understands (typo suggestions for the first arg).
-AIBOX_VERBS="install uninstall update upgrade check status autoclean proxy clash help version"
+AIBOX_VERBS="install uninstall update upgrade check status dashboard autoclean proxy clash help version"
 
 # "Close enough to be a typo" for short ASCII words: prefix either way, one
 # substitution, or one transposition. Cheaper than a full Levenshtein and
@@ -192,6 +192,30 @@ credentials, ports + listeners, residue, and the async "updates available" list.
 
 The status is the authoritative view for DERIVED values (profile ports,
 container names, env paths) — docs deliberately point here instead of hardcoding.
+EOF
+    ;;
+  dashboard)
+    cat <<'EOF'
+usage: aibox dashboard [<module>] [--pane modules|containers|upgrades|residue]
+                       [--once] [--json] [--interval N] [--no-color]
+
+An htop-style LIVE view: it keeps refreshing (default every 2s) and is driven by
+keys — unlike `aibox status`, which prints one instantaneous snapshot and exits.
+READ-ONLY: it never starts, stops or cleans anything; writes stay explicit
+commands (aibox <module> start, aibox autoclean --apply, aibox upgrade <module>).
+
+  <module>        open focused on one module (presets the filter)
+  --pane P        modules (default) | containers | upgrades | residue
+  --once          print a single frame (automatic when stdout is not a TTY)
+  --json          the snapshot as one JSON object (superset of status --json)
+  --interval N    refresh interval seconds (default 2; +/- cycles 1·2·5·10·30)
+  --no-color      plain output (same as NO_COLOR=1)
+
+keys: q quit · Tab pane · ↑↓/j k select · d detail · / filter · s sort
+      p pause · + / - interval · r resample · ? help · a about
+
+Sampling runs in a SEPARATE process (aibox __dashboard-sample) so the view never
+blocks; snapshots live in $AIBOX_HOME/dashboard (data — never sourced).
 EOF
     ;;
   autoclean)

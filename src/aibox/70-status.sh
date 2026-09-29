@@ -667,12 +667,12 @@ cmd_module_action() {
     return
   fi
   if [ "${action}" = "dashboard" ]; then
-    usage_die "the 'dashboard' action was merged into 'status' — run: aibox ${name} status"
+    usage_die "module-level dashboards don't exist: use aibox dashboard (interactive, all modules) or aibox ${name} status (this module's view)"
   fi
   # status: module-OWNED rich view wins when the module declares a status action
   # (its svc.sh renders domain data — clash shows nodes+latency, base shows
   # databases, windmill forwards its own status...); otherwise the manager's
-  # generic view (status_info + health). `status` was merged into `status`.
+  # generic view (status_info + health). The old `dashboard` view was folded in here.
   if [ "${action}" = "status" ]; then
     local _acts=""
     _acts="$(_module_meta_local "${name}" actions)"

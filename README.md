@@ -166,6 +166,8 @@ aibox upgrade <module> [flags]    bump the deployed UPSTREAM version (dockerhub 
 aibox check <module>|self         preflight dry-run; self = environment check
 aibox status [--available]     overview (installed modules) / catalog
 aibox status <module>          single-module detail + health probe (app version in the header)
+aibox dashboard                htop-style LIVE view (2s refresh, keys): modules · containers ·
+                               upgrades · residue panes; --once | --json | --pane P | --interval N
 aibox autoclean [<module>...|self]    residue scan/cleanup (dry-run by default; --apply
                                   confirms, then asks about RUNNING containers)
 aibox proxy {show|set|on|off|…}   static egress proxy config (global)
@@ -208,6 +210,9 @@ Find the actual ports and endpoints at any time:
 ```bash
 aibox status            # versions + the port table + listeners for every installed module
 aibox status <module>   # the single module's app version + endpoint + health
+aibox dashboard         # LIVE view (htop-style): q quit · Tab pane · ↑↓ select · d detail
+                        # / filter · s sort · p pause · + / - interval · r resample · ? help
+                        # read-only: it never starts/stops/cleans anything (see below)
 aibox <module> status      # same, from the module itself
 ```
 

@@ -122,6 +122,10 @@ Fast suite (`bats tests/*.bats`, no docker/network, ~seconds) — **38 files**:
 - `config-system.bats`
 - `config.bats`
 - `status-template.bats`
+- `dashboard-frame.bats`
+- `dashboard-keys.bats`
+- `dashboard-sample.bats`
+- `dashboard-tty.bats`
 - `deps-at-action.bats`
 - `dify-docker-pool.bats`
 - `docker-tags-pool.bats`

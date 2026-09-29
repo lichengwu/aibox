@@ -31,6 +31,8 @@ aibox uninstall <module>|self [--purge] [--yes]   # --purge: also delete data; s
 aibox update <module>|self|--all [--restart|--no-restart] [--skip-checks]   # self = aibox itself; --all = modules + self
 aibox check <module>|self                    # module preflight; self = environment check
 aibox status [--available] [<module>]     # overview (versions+endpoints+credentials+ports) / catalog / detail+health
+aibox dashboard [--once|--json|--pane P] [--interval N]   # htop-style LIVE view (read-only): modules ·
+                                          # containers · upgrades · residue panes; keys Tab/↑↓/d///s/p/+/-/r/?/q
 aibox autoclean [<module>...|self] [--apply] [--stop] [--yes]  # residue scan/cleanup (dry-run default)
 aibox <module> <action> [args]            # pass-through to module svc.sh
 aibox proxy {show|set <url>|unset|on|off|check [url]|env}   # static proxy config (global; see README "Proxy")
@@ -384,6 +386,32 @@ bash -e -c '[[ a == b ]] || false; echo X' # → exits 1 (correct — the workar
 - Verified workaround list: `|| false`, `[ ]` form, or running the suite under a correct bash (CI / `docker run bash:5`).
 
 **Detection**: a test that should obviously fail passes locally — re-run it on ubuntu (`docker run --rm -v "$PWD":/repo -w /repo ubuntu:24.04` + `apt-get install bats`) before trusting it.
+
+### #13 bash TUIs: save/restore the EXACT terminal state, and prefer letter keys over Enter
+
+**Symptom** (three separate ones, all hit while building `aibox dashboard`):
+1. a frame's first column lost its first character — `▸●itlab` instead of `▸● gitlab`;
+2. `a` and `d` opened the HELP overlay instead of about/detail;
+3. a headless test (keys injected through `AIBOX_DASH_KEYS`) still went down the
+   non-interactive path and printed one frame.
+
+**Root causes**: (1) a `cut -c2-` used to strip an alignment space struck the padded
+*name* column, not the prefix — column math must never post-process a rendered row;
+(2) in a `case` pattern, `?` is a GLOB (any single char), so `\? | h)`'s unescaped
+sibling swallowed every later one-character key — escape it (`\?`); (3) the degrade
+rule keyed on `TERM=dumb`, which is exactly what CI containers report, so the
+injected-key path must bypass terminal-capability rules entirely.
+
+**Rules for any TUI here**: save `stty -g` and restore exactly (never `stty sane`);
+enter the alternate screen (`tput smcup`) and leave it on every exit path through an
+**idempotent** `trap … EXIT INT TERM HUP`; `read -n 1` returns "" BOTH on timeout and
+when Enter is pressed (bash 3.2 has no `read -N`) — so bind actions to LETTER keys
+(`d` for detail) and keep `AIBOX_DASH_*` seams injectable for tests; drive pty tests
+with `expect` (pitfall #7), not `script`.
+
+**Detection**: a rendered row whose first character is missing → grep the row
+pipeline for `cut`; a single-character key that opens the wrong overlay → grep the
+`case` arms for an unescaped `?`.
 
 ### #11 Test glob patterns: `*"X"` anchors at END-OF-STRING — a miss is pattern semantics, not a bash bug (a misdiagnosis post-mortem)
 
