@@ -1,5 +1,5 @@
 name: clash
-version: 1.9.0
+version: 1.9.1
 module_iface: 1
 description: "Clash subscription proxy pool — mihomo kernel orchestration (auto speed-test/switch/failover)"
 platform: ""

@@ -7,6 +7,29 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.29.4] — 2026-10-01
+
+### Fixed
+
+- **`aibox <module> config set` quoted values that compose interpolates INSIDE a scalar.**
+  Modules write knobs into the deploy `.env`, and many compose lines embed the variable in a
+  larger string (`- "${NEW_API_PORT:-30300}:3000"`, `image: ${NEW_API_IMAGE:-…}`). A quoted
+  value survives into that scalar: the port became `"3000":3000` (`invalid hostPort`) and the
+  image reference `"calciumion/new-api:v1.0.0-rc.30"` (`invalid reference format`) — both
+  live-caught while migrating a new-api deployment onto aibox, where the stack could not start
+  at all until the `.env` was hand-fixed. `cfg_kv_set` now writes simple values BARE (only
+  whitespace, quotes, `$`, backticks … force quoting) and the next write repairs an
+  already-quoted value in place. Whole-value interpolations (`FOO=${FOO}`) were never
+  affected — that is why the earlier gitlab migration did not hit this.
+- new-api: the start hint claimed `First login: root / 123456` unconditionally; it now states
+  that this holds for a VIRGIN database only — a restored/migrated DB keeps its own accounts
+  (the same honesty rule the credentials audit applied elsewhere).
+
+### Module versions
+
+base 1.10.1 · clash 1.9.1 · dify 1.24.2 · gitlab 1.12.1 · new-api 1.6.1 · openmaic 1.7.1 ·
+pi-web 1.9.1 · windmill 1.9.2 · xiaozhi 1.7.1  (the shared include changed)
+
 ## [0.29.3] — 2026-09-29
 
 ### Fixed
@@ -2028,6 +2051,7 @@ One icon per module on the dashboard header tells the whole story — installed
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
+[0.29.4]: https://github.com/lichengwu/aibox/compare/v0.29.3...v0.29.4
 [0.29.3]: https://github.com/lichengwu/aibox/compare/v0.29.2...v0.29.3
 [0.29.2]: https://github.com/lichengwu/aibox/compare/v0.29.1...v0.29.2
 [0.29.1]: https://github.com/lichengwu/aibox/compare/v0.29.0...v0.29.1

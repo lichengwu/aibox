@@ -38,6 +38,7 @@ start)
     if api_up "${port}"; then
       ok "new-api is up: http://127.0.0.1:${port}"
       log "First login: root / 123456 — change it immediately (top-right user → personal settings)"
+      log "             (true for a VIRGIN database only: a restored/migrated DB keeps its own accounts)"
       exit 0
     fi
     sleep 5

@@ -33,9 +33,14 @@ teardown() {
   cfg_kv_set "$SANDBOX/s.env" PORT 30400
   cfg_kv_set "$SANDBOX/s.env" NEWKEY v1
   head -1 "$SANDBOX/s.env" | grep -q '^# deploy env$'
-  grep -q '^PORT="30400"$' "$SANDBOX/s.env"
+  # simple values are written BARE (compose interpolates them INSIDE scalars: a quoted
+  # port/image produced "invalid hostPort"/"invalid reference format" — live-caught)
+  grep -q '^PORT=30400$' "$SANDBOX/s.env"
+  grep -q '^NEWKEY=v1$' "$SANDBOX/s.env"
+  # untouched keys keep their original spelling, and a value that NEEDS quotes gets them
   grep -q '^SECRET="abc"$' "$SANDBOX/s.env"
-  grep -q '^NEWKEY="v1"$' "$SANDBOX/s.env"
+  cfg_kv_set "$SANDBOX/s.env" MSG "hello world"
+  grep -q '^MSG="hello world"$' "$SANDBOX/s.env"
   # portable mode check (BSD/GNU stat shapes differ; find -perm works everywhere)
   find "$SANDBOX/s.env" -perm 600 | grep -q .
   # idempotent

@@ -84,3 +84,22 @@ load test_helper
   grep -q 'cfg_kv_load' "$REPO_ROOT/docs/module-spec.md" || false
   grep -q 'State model' "$REPO_ROOT/AGENTS.md" || false
 }
+
+@test "cfg_kv_set: simple values are written BARE, complex ones quoted" {
+  # Regression: a quoted port/image made compose fail with "invalid hostPort" /
+  # "invalid reference format" (live-caught migrating a new-api deployment) — the
+  # writer must emit bare values whenever they can survive a plain KEY=VALUE line.
+  frag="$(mktemp)"
+  sed -n '/^cfg_kv_set() {/,/^}/p' "$REPO_ROOT/tools/_shared/lib/40-cfg.sh" >"$frag"
+  [ -s "$frag" ] || false
+  run bash -c ". '$frag'; f=\$(mktemp); cfg_kv_set \"\$f\" NEW_API_PORT 3000; cfg_kv_set \"\$f\" NEW_API_IMAGE calciumion/new-api:v1.0.0-rc.30; cfg_kv_set \"\$f\" MSG 'hello world'; cat \"\$f\""
+  [ "$status" -eq 0 ] || false
+  case "$output" in *"NEW_API_PORT=3000"*) ;; *) false ;; esac
+  case "$output" in *"NEW_API_IMAGE=calciumion/new-api:v1.0.0-rc.30"*) ;; *) false ;; esac
+  case "$output" in *'MSG="hello world"'*) ;; *) false ;; esac
+  # and an existing quoted value is REPAIRED in place by the next write
+  run bash -c ". '$frag'; f=\$(mktemp); printf 'NEW_API_PORT=\"3000\"\n' >\"\$f\"; cfg_kv_set \"\$f\" NEW_API_PORT 3000; cat \"\$f\""
+  [ "$output" = "NEW_API_PORT=3000" ] || false
+  rm -f "$frag"
+}
+

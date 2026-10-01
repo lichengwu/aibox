@@ -1045,13 +1045,24 @@ cfg_kv_get() { # $1=file $2=KEY
 # KEY=value store writer: replaces the FIRST matching line in place (comments,
 # order and mode preserved), appends when the key is new. Idempotent.
 cfg_kv_set() { # $1=file $2=KEY $3=value
-  local f="$1" k="$2" v="$3" tmp mode
+  local f="$1" k="$2" v="${3:-}" tmp mode vq
   [ -n "$k" ] || return 0
+  # A value that compose interpolates INSIDE a scalar must be written BARE:
+  # `NEW_API_PORT="3000"` made compose emit `"3000":3000` → "invalid hostPort",
+  # and a quoted image ref → "invalid reference format" (both live-caught while
+  # migrating a new-api deployment). Quote ONLY what could not survive a plain
+  # KEY=VALUE line: whitespace, quotes, $, backticks, …
+  case "${v}" in
+  *[!A-Za-z0-9._:/@,+-]*)
+    vq="\"${v}\""
+    ;;
+  *) vq="${v}" ;;
+  esac
   tmp="${f}.cfgtmp.$$"
   if [ ! -f "$f" ]; then
     (
       umask 077
-      printf '%s="%s"\n' "$k" "$v" >"$f"
+      printf '%s=%s\n' "$k" "$vq" >"$f"
     ) || {
       warn "cannot write $f"
       return 1
@@ -1059,10 +1070,10 @@ cfg_kv_set() { # $1=file $2=KEY $3=value
     return 0
   fi
   # keys are [A-Z_0-9] (validator-enforced) — no awk-regex metachars
-  awk -v k="$k" -v v="$v" '
-    $0 ~ "^"k"=" && !done { print k "=\"" v "\""; done = 1; next }
+  awk -v k="$k" -v v="$vq" '
+    $0 ~ "^"k"=" && !done { print k "=" v; done = 1; next }
     { print }
-    END { if (!done) print k "=\"" v "\"" }
+    END { if (!done) print k "=" v }
   ' "$f" >"$tmp" || {
     rm -f "$tmp"
     warn "cannot rewrite $f"
