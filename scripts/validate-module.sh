@@ -595,6 +595,14 @@ validate_module() {
   if printf '%s\n' $acts | grep -qx start; then
     for need in stop restart status logs; do
       printf '%s\n' $acts | grep -qx "$need" || err "service-type module (actions has start) missing lifecycle action: $need"
+  # --- S17: first-run preparation (spec §First-run preparation) ---
+  fr="$(module_field "$m" first_run 2>/dev/null || true)"
+  if [ -n "${fr}" ]; then
+    printf '%s\n' $acts | grep -qx "${fr}" \
+      || err "first_run '${fr}' is not in actions: (start would invoke a non-existent action)"
+    [ -n "$(module_field "$m" first_run_note 2>/dev/null || true)" ] \
+      || warn "first_run is set but first_run_note is empty (start prints it before the heavy step)"
+  fi
     done
     # Standard diagnostic verb (spec §CLI surface): `doctor` must exist so the
     # same command works everywhere. Modules may implement it themselves (clash,

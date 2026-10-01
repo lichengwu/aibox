@@ -7,6 +7,38 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.31.0] — 2026-10-01
+
+### Added
+
+- **First-run preparation: `aibox <module> start` now performs the module's declared deploy
+  step.** `aibox install <module>` was never meant to be heavy — it caches the module, places
+  the CLI/compose/.env and ensures the shared base (fast, repeatable) — while *deploying the
+  app* belongs to the verb whose contract is "make it run": `start`. Eight of nine modules
+  deliver the app as a published image / npm package / binary, so `install` → `start` just
+  worked; **openmaic is the only source-build module** (clone + local `docker build` with a
+  Chromium layer, up to ~1h, ~20G), which is why it needed a separate deploy and why
+  "install then start" died with a raw `cd: …/app: No such file or directory` (live-reported
+  on 50.55). Now:
+  - `module.yaml` declares the contract: `first_run: install` + `first_run_note: "clone +
+    build …"`;
+  - the shared helper `module_ensure_deployed` (one implementation, used by the module's
+    `start`) checks the artifact, prints `first run: … — running: …` with the note, runs the
+    prepare command and re-checks the artifact (exit `30` = not ready);
+  - `--no-prepare` / `AIBOX_NO_PREPARE=1` refuses the heavy step and prints the command
+    instead; `status_info` reports `state=stopped` + a `health=` line naming the deploy
+    command when the app is not deployed yet;
+  - `aibox install <module>` prints `Next: aibox <module> start` (plus the first-run note),
+    so the sequence is stated rather than implied;
+  - validator **S17** requires `first_run` to be one of the declared `actions:`.
+  The net effect: for every module, `aibox install X` → `aibox X start` works — the heavy
+  step is performed on demand, announced first, and refusable.
+
+### Module versions
+
+base 1.10.3 · clash 1.9.2 · dify 1.24.3 · gitlab 1.12.2 · new-api 1.6.2 · openmaic 1.7.3 ·
+pi-web 1.9.3 · windmill 1.9.3 · xiaozhi 1.7.3  (the shared include changed)
+
 ## [0.30.1] — 2026-10-01
 
 ### Fixed
@@ -2092,6 +2124,7 @@ One icon per module on the dashboard header tells the whole story — installed
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
+[0.31.0]: https://github.com/lichengwu/aibox/compare/v0.30.1...v0.31.0
 [0.30.1]: https://github.com/lichengwu/aibox/compare/v0.30.0...v0.30.1
 [0.30.0]: https://github.com/lichengwu/aibox/compare/v0.29.4...v0.30.0
 [0.29.4]: https://github.com/lichengwu/aibox/compare/v0.29.3...v0.29.4

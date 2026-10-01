@@ -103,6 +103,13 @@ cmd_install() {
   local svc_rc=0
   ensure_services "$name" || svc_rc=1
   log "Installed $name module $(module_field "$name" version) -> $dest"
+  # Uniform next step (spec §First-run preparation): `start` is the verb whose contract is
+  # "make it run" — it also performs the module's declared first-run step when needed.
+  if printf '%s\n' "$(module_field "$name" actions)" | grep -qx start; then
+    log "Next    : aibox $name start"
+    _fr_note="$(module_field "$name" first_run_note 2>/dev/null || true)"
+    [ -n "${_fr_note}" ] && log "          first run: ${_fr_note}"
+  fi
   # Module scripts are in place, but a declared service dependency that didn't
   # start means the module CANNOT work yet — the old flow exited 0 with the
   # failure buried mid-scroll (live-caught: install new-api → "✓ installed",

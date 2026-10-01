@@ -40,7 +40,14 @@ fi
 case "${action}" in
 # Standard lifecycle aliases: dispatch CLIs expose their own verbs (openmaic uses
 # up/down), but `aibox <module> start|stop` must work everywhere (spec §CLI surface).
-start)  action="up" ;;
+start)
+  # First run: the app is built FROM SOURCE on this host (clone + docker build) —
+  # `aibox install openmaic` installs the module only. Deploy on demand here, with the
+  # declared note printed first; --no-prepare refuses (scripts/CI).
+  for _a in "$@"; do [ "${_a}" = "--no-prepare" ] && AIBOX_NO_PREPARE=1; done
+  module_ensure_deployed openmaic "${DIR}/module.yaml" \
+    "$(openmaic_deploy_root)/app/docker-compose.yml" || exit 30
+  action="up" ;;
 stop)   action="down" ;;
 status) action="status" ;;
 esac

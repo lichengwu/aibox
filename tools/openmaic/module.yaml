@@ -1,5 +1,5 @@
 name: openmaic
-version: 1.7.2
+version: 1.7.3
 module_iface: 1
 description: "OpenMAIC ops CLI (install/upgrade/backup/doctor)"
 platform: ""
@@ -30,6 +30,11 @@ services:
 # base images are pulled by the docker DAEMON (own egress: mirrors/proxy) →
 # probed daemon-routed via hello-world, not host curl. Disk: source tree +
 # docker build (the render-service Chromium layer is heavy) + pg_data growth.
+# `aibox install openmaic` installs THE MODULE (fast); the APP is built from source on
+# the deploy host, so `start` triggers the deploy on demand and says so first.
+# (≠ `aibox openmaic install`, which is that deploy itself: clone + build + start.)
+first_run: install
+first_run_note: "clone + build from source (render-service Chromium layer is heavy; up to ~1h, needs ~20G free)"
 checks:
   disk_gb: 20
   domains:

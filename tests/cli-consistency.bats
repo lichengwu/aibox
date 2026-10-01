@@ -222,7 +222,9 @@ YAML
 }
 
 @test "dispatch modules alias the standard lifecycle verbs" {
-  grep -qE '^start\) +action="up"' "$REPO_ROOT/tools/openmaic/svc.sh" || { echo "openmaic: no start alias"; false; }
+  # the start arm may carry a first-run preparation call before the alias, so scan the arm
+  awk '/^start\)/{f=1} f&&/action="up"/{ok=1} f&&/;;/{f=0} END{exit !ok}' \
+    "$REPO_ROOT/tools/openmaic/svc.sh" || { echo "openmaic: no start alias"; false; }
   grep -qE '^stop\) +action="down"' "$REPO_ROOT/tools/openmaic/svc.sh" || false
   grep -q '^  - start$' "$REPO_ROOT/tools/openmaic/module.yaml" || false
   # windmill's CLI already speaks start/stop/restart; it only needed the doctor alias
@@ -290,6 +292,53 @@ YAML
   run env PATH="$b:$PATH" OPENMAIC_BASE_DIR="$d" bash "$REPO_ROOT/tools/openmaic/cli/openmaic" up
   [ "$status" -eq 30 ] || { echo "status=$status"; echo "$output"; false; }
   [[ "$output" == *"not deployed on this host yet"* ]] || false
+  [[ "$output" == *"aibox openmaic install"* ]] || false
+  [[ "$output" != *"No such file or directory"* ]] || false
+}
+
+@test "first-run preparation: helper no-ops, refuses (--no-prepare) and runs the declared step" {
+  local frag y art s
+  frag="$(mktemp)"; s="$(mktemp)"
+  sed -n '/^module_ensure_deployed() {/,/^}/p' "$REPO_ROOT/tools/_shared/lib/58-prepare.sh" >"$frag"
+  [ -s "$frag" ] || false
+  y="$BATS_TMPDIR/fr.yaml"; art="$BATS_TMPDIR/fr-artifact"
+  printf 'first_run: install\nfirst_run_note: "clone + build"\n' >"$y"
+  cat >"$s" <<'SH'
+# the output helpers live in the shared include (00-out.sh) — stub them here
+warn() { printf '%s\n' "$*" >&2; }
+log()  { printf '%s\n' "$*"; }
+meta_field() { case "$2" in first_run) printf install ;; first_run_note) printf 'clone + build' ;; esac; }
+. "$FRAG"
+module_ensure_deployed x "$FR_YAML" "$FR_ART" "$FR_PREP"
+SH
+  # (a) artifact present -> silent no-op
+  : >"$art"
+  run bash -c "env FRAG='$frag' FR_YAML='$y' FR_ART='$art' FR_PREP='touch $art' bash '$s' 2>&1"
+  [ "$status" -eq 0 ] || false
+  [ -z "$output" ] || false
+  # (b) missing + --no-prepare -> exit 30, prints the command, runs NOTHING
+  rm -f "$art"
+  run bash -c "env AIBOX_NO_PREPARE=1 FRAG='$frag' FR_YAML='$y' FR_ART='$art' FR_PREP='touch $art' bash '$s' 2>&1"
+  [ "$status" -eq 30 ] || false
+  case "$output" in *"skipped (--no-prepare)"*) ;; *) false ;; esac
+  [ ! -e "$art" ] || false
+  # (c) missing + a prepare command that creates the artifact -> runs it and succeeds
+  run bash -c "env FRAG='$frag' FR_YAML='$y' FR_ART='$art' FR_PREP='touch $art' bash '$s' 2>&1"
+  [ "$status" -eq 0 ] || false
+  case "$output" in *"first run:"*) ;; *) false ;; esac
+  [ -e "$art" ] || false
+  rm -f "$frag" "$s"
+}
+
+@test "first-run preparation: openmaic start refuses the heavy deploy with --no-prepare (exit 30)" {
+  local d="$BATS_TMPDIR/omc-fr" b="$BATS_TMPDIR/omc-fr-bin"
+  rm -rf "$d" "$b"; mkdir -p "$d" "$b"
+  printf '#!/bin/sh\nexit 0\n' >"$b/docker"; chmod +x "$b/docker"
+  # the hook requires the ops CLI on PATH first (that is what `aibox install openmaic` does)
+  run env PATH="$REPO_ROOT/tools/openmaic/cli:$b:$PATH" OPENMAIC_BASE_DIR="$d" AIBOX_NO_PREPARE=1 \
+    bash "$REPO_ROOT/tools/openmaic/svc.sh" start 2>&1
+  [ "$status" -eq 30 ] || { echo "status=$status"; echo "$output"; false; }
+  [[ "$output" == *"first-run step skipped"* ]] || false
   [[ "$output" == *"aibox openmaic install"* ]] || false
   [[ "$output" != *"No such file or directory"* ]] || false
 }

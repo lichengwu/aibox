@@ -57,7 +57,7 @@ if [ -z "${AIBOX_BIN_DIR:-}" ]; then
     ;;
   esac
 fi
-AIBOX_VERSION="0.30.1"
+AIBOX_VERSION="0.31.0"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 
@@ -1643,6 +1643,35 @@ verify_download() { # $1 = file, $2 = manifest ("" = skip), $3 = repo-relative p
   [ "${want}" = "${got}" ] && return 0
   printf '%s' "sha256 mismatch for ${rel}: manifest ${want}, downloaded ${got}" >&2
   return 1
+}
+# ---------- first-run preparation (the contract that `start` must make it run) ----------
+# A module whose app must be PREPARED before it can run declares that in module.yaml:
+#   first_run: install                     # the action `start` invokes when the app is absent
+#   first_run_note: "clone + build (~1h)"  # printed before the (possibly long) step
+# `aibox install <module>` stays LIGHT (fast, repeatable — it puts the CLI/compose/.env in
+# place and ensures the shared base); deploying the APP is the app's own lifecycle, so it is
+# triggered by the verb whose contract is "make it run": `start`. Without this, "install then
+# start" produced a raw `cd: …/app: No such file or directory` (live-reported on 50.55) —
+# reasonable expectations, unstated contract.
+module_ensure_deployed() { # $1=module $2=module.yaml $3=artifact path $4=prepare-cmd(optional)
+  local m="$1" yaml="$2" artifact="$3" prep="${4:-}" action="" note=""
+  [ -e "${artifact}" ] && return 0
+  action="$(meta_field "${yaml}" first_run 2>/dev/null || true)"
+  note="$(meta_field "${yaml}" first_run_note 2>/dev/null || true)"
+  [ -n "${prep}" ] || prep="${AIBOX_FIRST_RUN_CMD:-aibox ${m} ${action:-install}}"
+  if [ "${AIBOX_NO_PREPARE:-0}" = 1 ]; then
+    warn "${m} is not deployed yet (${artifact} missing) — first-run step skipped (--no-prepare)"
+    log "  deploy it when ready: ${prep}"
+    return 30
+  fi
+  log "first run: ${m} is not deployed yet — running: ${prep}"
+  [ -n "${note}" ] && log "           ${note}"
+  if ! sh -c "${prep}"; then
+    warn "the first-run step failed — retry it directly: ${prep}"
+    return 30
+  fi
+  [ -e "${artifact}" ] || { warn "still missing after the first-run step: ${artifact}"; return 30; }
+  return 0
 }
 # ---------- profiles (name → deterministic ports, registered + conflict-checked) ----------
 # A "profile" is a second instance of a module family (base, pi-web, …). Ports are
@@ -4494,6 +4523,13 @@ cmd_install() {
   local svc_rc=0
   ensure_services "$name" || svc_rc=1
   log "Installed $name module $(module_field "$name" version) -> $dest"
+  # Uniform next step (spec §First-run preparation): `start` is the verb whose contract is
+  # "make it run" — it also performs the module's declared first-run step when needed.
+  if printf '%s\n' "$(module_field "$name" actions)" | grep -qx start; then
+    log "Next    : aibox $name start"
+    _fr_note="$(module_field "$name" first_run_note 2>/dev/null || true)"
+    [ -n "${_fr_note}" ] && log "          first run: ${_fr_note}"
+  fi
   # Module scripts are in place, but a declared service dependency that didn't
   # start means the module CANNOT work yet — the old flow exited 0 with the
   # failure buried mid-scroll (live-caught: install new-api → "✓ installed",

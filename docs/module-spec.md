@@ -1140,3 +1140,28 @@ Single DB: `<module>`; multiple DBs: `<module>_<usage>`. `aibox base create post
 ### hooks field parsing
 
 The awk parser strips the parent prefix for `hooks:` nesting (`hooks.install` → `AIBOX_MODULE_<name>_install`, compatible with `module_field`); upstream/status keep the prefix (`_upstream_homepage`, `_status_hint`).
+
+## First-run preparation (`start` must make it run)
+
+`aibox install <module>` is deliberately LIGHT and repeatable: it caches the module, places the
+CLI/compose/.env, and ensures the shared base — it never performs a heavy application deploy.
+The verb whose CONTRACT is "make it run" is `aibox <module> start`, so preparation lives there:
+
+```yaml
+first_run: install                     # the action `start` invokes when the app is absent
+first_run_note: "clone + build (~1h)"  # printed before the (possibly long) step
+```
+
+- The shared helper `module_ensure_deployed <module> <module.yaml> <artifact-path> [cmd]`
+  checks the artifact, prints `first run: … — running: …` plus the note, runs the prepare
+  command, and re-checks the artifact (exit `30` = not ready when it is skipped or fails).
+- `--no-prepare` (or `AIBOX_NO_PREPARE=1`) refuses the heavy step and prints the command
+  instead — for scripts, CI and "just show me the state" workflows.
+- `status_info` should report `state=stopped` + a `health=` line naming the deploy command when
+  the app is not deployed yet (never pretend to be live).
+- Modules whose app arrives as a published image / npm package / binary need no `first_run`:
+  `start` already does everything (that is why 8 of 9 modules worked after `install` while
+  openmaic — the only source-build module — did not).
+- `aibox install <module>` prints `Next: aibox <module> start` (plus the note above), so the
+  sequence is stated rather than implied.
+

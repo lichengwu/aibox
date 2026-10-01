@@ -166,6 +166,12 @@ status_info() {
   [ -n "${v}" ] && echo "version=${v}"
   echo "endpoint=http://127.0.0.1:31140"
   echo "credential=.env.local (API Key, access password)"
+  # Not deployed yet? Say so (and what fixes it) instead of pretending to be a live deploy.
+  if [ ! -f "$(openmaic_deploy_root)/app/docker-compose.yml" ]; then
+    echo "state=stopped"
+    echo "health=not deployed yet — 'aibox openmaic start' deploys it (clone + build)"
+    return 0
+  fi
   # na: CLI-type module — its "state" is a remote deploy's state, not a local
   # service's; `aibox openmaic status` (dispatched to the CLI) is the real view.
   echo "state=na"

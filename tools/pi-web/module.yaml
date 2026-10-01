@@ -1,5 +1,5 @@
 name: pi-web
-version: 1.9.2
+version: 1.9.3
 module_iface: 1
 description: "Deploy @agegr/pi-web as a launchd/systemd service (HTTP Basic auth, auto-restart)"
 platform: ""
