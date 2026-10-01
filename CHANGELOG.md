@@ -7,7 +7,7 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
-## [0.32.0] — 2026-10-02
+## [0.32.0] — 2026-10-01
 
 ### Added
 
@@ -2255,7 +2255,12 @@ One icon per module on the dashboard header tells the whole story — installed
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
-[0.31.6]: https://github.com/lichengwu/aibox/compare/v0.31.5...v0.31.6\n[0.31.5]: https://github.com/lichengwu/aibox/compare/v0.31.4...v0.31.5\n[0.31.4]: https://github.com/lichengwu/aibox/compare/v0.31.3...v0.31.4\n[0.31.3]: https://github.com/lichengwu/aibox/compare/v0.31.2...v0.31.3\n[0.31.2]: https://github.com/lichengwu/aibox/compare/v0.31.1...v0.31.2
+[0.32.0]: https://github.com/lichengwu/aibox/compare/v0.31.6...v0.32.0
+[0.31.6]: https://github.com/lichengwu/aibox/compare/v0.31.5...v0.31.6
+[0.31.5]: https://github.com/lichengwu/aibox/compare/v0.31.4...v0.31.5
+[0.31.4]: https://github.com/lichengwu/aibox/compare/v0.31.3...v0.31.4
+[0.31.3]: https://github.com/lichengwu/aibox/compare/v0.31.2...v0.31.3
+[0.31.2]: https://github.com/lichengwu/aibox/compare/v0.31.1...v0.31.2
 [0.31.1]: https://github.com/lichengwu/aibox/compare/v0.31.0...v0.31.1
 [0.31.0]: https://github.com/lichengwu/aibox/compare/v0.30.1...v0.31.0
 [0.30.1]: https://github.com/lichengwu/aibox/compare/v0.30.0...v0.30.1
