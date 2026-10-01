@@ -76,7 +76,7 @@ teardown() {
   [[ "$output" != *"re-run with --skip-checks to bypass"* ]] || false
 }
 
-@test "preflight: a failing check (commands) still offers the --skip-checks bypass" {
+@test "preflight: a bypassable failure (network class) still offers the --skip-checks bypass" {
   run bash -c "
     source '$AIBOX_BIN'
     # a NETWORK-class failure is the bypassable kind now that disk only warns
