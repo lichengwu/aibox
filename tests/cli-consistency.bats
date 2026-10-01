@@ -398,3 +398,12 @@ SH
   [ "$status" -eq 0 ]
 }
 
+@test "openmaic: the source fetch retries and gets progressively shallower (throttled links)" {
+  run grep -q 'OPENMAIC_FETCH_ATTEMPTS' "$REPO_ROOT/tools/openmaic/cli/openmaic"
+  [ "$status" -eq 0 ] || false
+  run grep -q 'shallow="--depth 1"' "$REPO_ROOT/tools/openmaic/cli/openmaic"
+  [ "$status" -eq 0 ] || false
+  run grep -q 'FETCH_ATTEMPTS' "$REPO_ROOT/tools/openmaic/module.yaml"
+  [ "$status" -eq 0 ]
+}
+

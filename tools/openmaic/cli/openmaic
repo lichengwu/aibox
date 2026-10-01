@@ -615,22 +615,25 @@ latest_tag() {
 
 # Multi-channel fallback for pulling source. The proxy channel is tried only when PROXY_URL is non-empty.
 git_fetch_tag() {
-  local tag="$1" url
-  if [ -n "$PROXY_URL" ]; then
+  local tag="$1" url attempt=1 max="${OPENMAIC_FETCH_ATTEMPTS:-4}" shallow=""
+  while [ "$attempt" -le "$max" ]; do
+    # Attempt 1 is a full fetch (keeps history for describe/rollback); later attempts go
+    # SHALLOW — on throttled links (small requests pass, bulk transfers get reset) a
+    # one-commit fetch is far more likely to complete, and git keeps whatever objects it
+    # already received, so each retry effectively resumes. Live-caught on 50.55: the probe
+    # answered while every bulk fetch died.
+    [ "$attempt" -le 1 ] || shallow="--depth 1"
+    if [ -n "$PROXY_URL" ]; then
+      url="https://github.com/$REPO.git"
+      log "channel: direct (via proxy ${PROXY_DISPLAY}) attempt ${attempt}/${max}${shallow:+ (shallow)}"
+      if ( cd "$APP_DIR" && env "https_proxy=$PROXY_URL" "http_proxy=$PROXY_URL" \
+             GIT_TERMINAL_PROMPT=0 git fetch $shallow --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
+    fi
+    log "channel: direct (no proxy) attempt ${attempt}/${max}${shallow:+ (shallow)}"
     url="https://github.com/$REPO.git"
-    log "channel: direct (via proxy ${PROXY_DISPLAY})"
-    if ( cd "$APP_DIR" && env "https_proxy=$PROXY_URL" "http_proxy=$PROXY_URL" \
-           GIT_TERMINAL_PROMPT=0 git fetch --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
-  fi
-  log "channel: direct (no proxy)"
-  url="https://github.com/$REPO.git"
-  if ( cd "$APP_DIR" && GIT_TERMINAL_PROMPT=0 git fetch --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
-
-  local base
-  for base in "https://ghproxy.net/https://github.com" "https://gh-proxy.com/https://github.com"; do
-    url="$base/$REPO.git"
-    log "channel: $base"
-    if ( cd "$APP_DIR" && GIT_TERMINAL_PROMPT=0 git fetch --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
+    if ( cd "$APP_DIR" && GIT_TERMINAL_PROMPT=0 git fetch $shallow --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
+    attempt=$((attempt + 1))
+    [ "$attempt" -le "$max" ] && { dim "  fetch did not complete — retrying"; sleep 10; }
   done
   return 1
 }
