@@ -294,7 +294,7 @@ services:                          # optional. shared-component deps (CI validat
                                    # `aibox install` auto-installs missing providers first)
   - base:postgres#<your-db>
 checks:                            # REQUIRED. preflight contract (enforced by install/update; see below)
-  disk_gb: 5                       #   min free disk (GB) at $AIBOX_HOME's filesystem
+  disk_gb: 5                       #   recommended free disk (GB); INFORMATIONAL — warns only
   domains:                         #   HOST-probed domains (git/npm/curl consumers); probed as https://<host>/
     - github.com
   docker_pull: hello-world         #   optional. DAEMON-routed pull probe (registry consumers; tiny image)
@@ -914,7 +914,7 @@ section's presence and its field formats.
 | ------- | -------- | ----------- |
 | deps | `deps:` field | strict: missing after an auto-install attempt → **FAIL** (the old warn-and-continue behavior is gone). Auto-install is bounded (`AIBOX_PM_TIMEOUT`, default 600s — announce + heartbeat + kill-tree on timeout) and **deduplicated by package set** (docker/docker-compose and node/npm share one PM invocation); `AIBOX_NO_AUTO_DEPS=1` disables it entirely |
 | commands | `checks.commands` | binary must exist (`cmd@platform` supported; no auto-install — these are OS facilities like `systemctl@linux` / `launchctl@darwin`) |
-| disk | `checks.disk_gb` | free space at `$AIBOX_HOME`'s filesystem ≥ N GB → else **FAIL** |
+| disk | `checks.disk_gb` | free space at `$AIBOX_HOME`'s filesystem ≥ N GB → else **WARN** (informational: never blocks install/update) |
 | domains | `checks.domains` | each probed as `https://<host>/` via the **host's** curl/egress; any HTTP response (even 401/404) = reachable, connection failure = not. All must pass |
 | docker pull | `checks.docker_pull` | **daemon-routed** probe: `docker pull <tiny image>` proves the daemon's actual registry path (its mirrors/proxy differ from the host's). Skipped when docker is absent (deps reports that) |
 | docker images | `checks.docker_images` | when **all** refs exist locally, the domain AND pull probes are skipped (offline restart/install works) |
@@ -975,7 +975,8 @@ AIBOX_CHECK_TIMEOUT=3 aibox check <module>   # per-probe timeout (default 8s)
 `--skip-checks` bypasses the WHOLE preflight (deps included) — for air-gapped installs
 with pre-staged dependencies; whatever is genuinely missing then fails later at the hook.
 Without it a failed preflight aborts install/update **before** any hook runs: hard
-requirements (deps, commands, services) → exit `3`; soft checks (disk, domains, pull) →
+requirements (deps, commands, services) → exit `3`; failing checks (domains, pull) → exit `4`;
+`checks.disk_gb` is informational → warn only:
 exit `4` with the `--skip-checks` hint.
 
 **Action-surface conventions** (validator-enforced, so every module feels the same):

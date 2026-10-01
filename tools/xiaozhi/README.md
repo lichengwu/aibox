@@ -80,7 +80,7 @@ Declared in `module.yaml` `checks:` — enforced by `aibox install/update`
 aibox check xiaozhi
 ```
 
-- `disk_gb: 10` — server ~1.5G + web ~0.7G + mysql + optional SenseVoice model
+- `disk_gb: 8` — server ~1.5G + web ~0.7G + mysql + optional SenseVoice model
 - `docker_images:` all-cached short-circuit (no network probes when local)
 
 ## Upgrade

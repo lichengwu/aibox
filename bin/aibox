@@ -57,7 +57,7 @@ if [ -z "${AIBOX_BIN_DIR:-}" ]; then
     ;;
   esac
 fi
-AIBOX_VERSION="0.29.4"
+AIBOX_VERSION="0.30.0"
 AIBOX_LAST_DEST=""
 AIBOX_CONFIG="${AIBOX_CONFIG:-$AIBOX_HOME/config}"
 
@@ -3817,17 +3817,22 @@ _preflight_commands() {
   return $fail
 }
 
-# checks.disk_gb — free space at $AIBOX_HOME's filesystem.
+# checks.disk_gb — free space at $AIBOX_HOME's filesystem. INFORMATIONAL (0.30.0):
+# the number is a safety MARGIN, not a hard requirement, so a tight disk must not block an
+# install (live-hit: a host with 4G free could not install a module whose images needed ~0.5G,
+# and the operator had to free space by hand). It warns and proceeds; deps, commands,
+# domains/docker_pull and services: still gate.
 _preflight_disk() {
   local name="$1" req free
   req="$(module_field "$name" checks_disk_gb)"
   [ -n "$req" ] || return 0
   free="$(_disk_free_gb "$AIBOX_HOME")"
   if [ "$free" -lt "$req" ]; then
-    bad "disk: ${free}G free at ${AIBOX_HOME}, ${name} requires ${req}G"
-    return 1
+    warn "disk: ${free}G free at ${AIBOX_HOME}; ${name} recommends ${req}G — continuing (the install may fail if the space runs out)"
+    return 0
   fi
   info "✓ disk: ${free}G free (requires ${req}G)"
+  return 0
 }
 
 # Shared short-circuit: all checks.docker_images present locally?

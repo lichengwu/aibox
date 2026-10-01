@@ -134,7 +134,7 @@ YAML
   cat >"$repo/tools/softmod/module.yaml" <<'YAML'
 name: softmod
 version: 1.0.0
-description: "soft failure only"
+description: "disk is informational only"
 dir: tools/softmod
 hooks:
   install: install.sh
@@ -153,9 +153,10 @@ YAML
   run env AIBOX_NO_AUTO_DEPS=1 bash "$AIBOX_BIN" install depmod
   [ "$status" -eq 3 ] || { echo "hard-dep exit=${status}"; echo "$output"; false; }
   [[ "$output" == *"can't be bypassed"* ]] || false
+  # disk no longer gates: an impossible disk_gb must still INSTALL (with a warning)
   run bash "$AIBOX_BIN" install softmod
-  [ "$status" -eq 4 ] || { echo "soft exit=${status}"; echo "$output"; false; }
-  [[ "$output" == *"--skip-checks"* ]] || false
+  [ "$status" -eq 0 ] || { echo "informational-disk exit=${status}"; echo "$output"; false; }
+  [[ "$output" == *"recommends 99999999G"* ]] || false
 }
 
 @test "exit codes: the spec's table and the manager agree" {

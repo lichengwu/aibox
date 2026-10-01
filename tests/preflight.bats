@@ -52,14 +52,16 @@ EOF
   [[ "$output" =~ ^[0-9]+$ ]]
 }
 
-@test "_preflight_disk: fails when disk_gb exceeds free space, passes when tiny" {
+@test "_preflight_disk: WARNS (never fails) when disk_gb exceeds free space" {
   run bash -c "
     source '$REPO_ROOT/bin/aibox'
     AIBOX_MODULE_fake_checks_disk_gb=99999999
     _preflight_disk fake
   "
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"requires 99999999G"* ]]
+  # informational since 0.30.0: a tight disk must not block install/update (live-hit)
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"recommends 99999999G"* ]]
+  [[ "$output" == *"continuing"* ]]
 
   run bash -c "
     source '$REPO_ROOT/bin/aibox'
@@ -227,7 +229,8 @@ EOF
   run bash -c "
     source '$REPO_ROOT/bin/aibox'
     PREFLIGHT_SKIP=0
-    AIBOX_MODULE_fake_checks_disk_gb=99999999
+    # a STRICT check fails (commands are never auto-installed) — disk can no longer fail
+    AIBOX_MODULE_fake_checks_commands="zz-no-such-binary"
     preflight_module fake
   "
   [ "$status" -ne 0 ]
@@ -239,7 +242,7 @@ EOF
   run bash -c "
     source '$REPO_ROOT/bin/aibox'
     PREFLIGHT_SKIP=1
-    AIBOX_MODULE_fake_checks_disk_gb=99999999
+    AIBOX_MODULE_fake_checks_commands="zz-no-such-binary"
     preflight_module fake
   "
   [ "$status" -eq 0 ]

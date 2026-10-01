@@ -7,6 +7,28 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.30.0] — 2026-10-01
+
+### Changed
+
+- **A tight disk no longer blocks install/update — it warns.** `checks.disk_gb` was enforced as
+  a hard preflight failure, so a host with 4G free could not install a module whose requirement
+  was a *safety margin* (5G) while the actual images needed ~0.5G — live-hit on a deploy host,
+  where the operator had to free disk space by hand before the install would even start. Disk is
+  now informational: the preflight prints `⚠ disk: NG free … recommends NG — continuing` and
+  proceeds. Dependencies, `checks.commands`, `checks.domains`/`checks.docker_pull` and
+  `services:` readiness still gate. The spec was self-contradictory (one table said FAIL while
+  the exit-code section already called disk a soft check) and AGENTS rule 3 listed it as a hard
+  gate — both now agree with the code.
+- **Lowered the disk floors that were pure margin** (measured against real installs):
+  base 5 → 3 GB · pi-web 2 → 1 GB · xiaozhi 10 → 8 GB. windmill (12 GB; images measured ~9.5 GB),
+  gitlab (15 GB; data grows with repositories), dify (10 GB; eight images) and openmaic (20 GB;
+  source build with a Chromium layer) keep theirs.
+
+### Module versions
+
+base 1.10.2 · pi-web 1.9.2 · xiaozhi 1.7.2  (checks.disk_gb changed)
+
 ## [0.29.4] — 2026-10-01
 
 ### Fixed
@@ -2051,6 +2073,7 @@ One icon per module on the dashboard header tells the whole story — installed
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
+[0.30.0]: https://github.com/lichengwu/aibox/compare/v0.29.4...v0.30.0
 [0.29.4]: https://github.com/lichengwu/aibox/compare/v0.29.3...v0.29.4
 [0.29.3]: https://github.com/lichengwu/aibox/compare/v0.29.2...v0.29.3
 [0.29.2]: https://github.com/lichengwu/aibox/compare/v0.29.1...v0.29.2

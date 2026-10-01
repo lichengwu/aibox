@@ -1,5 +1,5 @@
 name: base
-version: 1.10.1
+version: 1.10.2
 module_iface: 1
 description: "Shared base components (PostgreSQL 18 + Redis 7); each module gets its own DB"
 platform: ""
@@ -34,7 +34,7 @@ state_files:
 # would false-fail exactly the mirror-saved networks. The deps check still
 # hard-gates the docker DAEMON's existence.
 checks:
-  disk_gb: 5
+  disk_gb: 3
   docker_images:
     - postgres:18
     - redis:7

@@ -1,5 +1,5 @@
 name: xiaozhi
-version: 1.7.1
+version: 1.7.2
 module_iface: 1
 description: "Xiaozhi ESP32 server (docker compose): backend for xiaozhi-esp32 AI voice devices (manager console + websocket relay + bundled MySQL)"
 platform: ""
@@ -101,7 +101,7 @@ status:
 # web) + the docker.io mirror pool (mysql). deps still hard-gates the daemon.
 # disk floor: server ~1.5G + web ~0.7G + mysql + optional SenseVoice model.
 checks:
-  disk_gb: 10
+  disk_gb: 8
   docker_images:
     - ghcr.io/xinnan-tech/xiaozhi-esp32-server:server_0.9.6
     - ghcr.io/xinnan-tech/xiaozhi-esp32-server:web_0.9.6

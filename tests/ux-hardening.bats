@@ -76,10 +76,12 @@ teardown() {
   [[ "$output" != *"re-run with --skip-checks to bypass"* ]] || false
 }
 
-@test "preflight: soft failure (disk) still offers the --skip-checks bypass" {
+@test "preflight: a failing check (commands) still offers the --skip-checks bypass" {
   run bash -c "
     source '$AIBOX_BIN'
-    AIBOX_MODULE_fake2_checks_disk_gb=99999999
+    # a NETWORK-class failure is the bypassable kind now that disk only warns
+    # (commands/deps are the non-bypassable ones: the message must not offer the bypass)
+    AIBOX_MODULE_fake2_checks_domains="nonexistent.invalid"
     preflight_module fake2
   "
   [ "$status" -ne 0 ] || false

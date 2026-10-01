@@ -1,5 +1,5 @@
 name: pi-web
-version: 1.9.1
+version: 1.9.2
 module_iface: 1
 description: "Deploy @agegr/pi-web as a launchd/systemd service (HTTP Basic auth, auto-restart)"
 platform: ""
@@ -20,7 +20,7 @@ ports:
 # would false-fail exactly the mirror-saved networks (measured: npmjs metadata 4.3s
 # vs 0.15s on npmmirror, worse cases hang).
 checks:
-  disk_gb: 2
+  disk_gb: 1
   commands:
     - launchctl@darwin
     - systemctl@linux
