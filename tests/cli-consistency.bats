@@ -347,3 +347,15 @@ SH
   [[ "$output" != *"No such file or directory"* ]] || false
 }
 
+@test "openmaic: version resolution falls back to git ls-remote when the release API fails" {
+  # The API is rate-limited and can be blocked while the git endpoint works (live on
+  # 50.55: api.github.com empty, ls-remote listed every tag) — the CLI must not die on
+  # "cannot determine target version" while the fetch channel is perfectly usable.
+  run grep -q 'ls-remote --tags --refs' "$REPO_ROOT/tools/openmaic/cli/openmaic"
+  [ "$status" -eq 0 ] || false
+  run grep -q 'OPENMAIC_TAG' "$REPO_ROOT/tools/openmaic/svc.sh"
+  [ "$status" -eq 0 ] || false
+  run grep -q 'OPENMAIC_TAG' "$REPO_ROOT/tools/openmaic/module.yaml"
+  [ "$status" -eq 0 ]
+}
+

@@ -52,8 +52,17 @@ start)
   # first run). `.env.local` is exactly the piece `docker compose up` cannot produce itself;
   # a deploy interrupted later (during the build) keeps it, and `up` finishes that job by
   # building the missing images.
+  # An explicit OPENMAIC_TAG (conf file) pins the deployed version: re-deploys are then
+  # deterministic and need no release lookup at all.
+  # guarded: the conf need not exist (fresh host / tests) and `set -euo pipefail` would
+  # otherwise abort the whole start arm on a missing file (caught by the suite).
+  _omc_conf="${OPENMAIC_CONF_DIR:-/etc/openmaic}/openmaic.conf"
+  _omc_tag=""
+  [ -f "${_omc_conf}" ] && _omc_tag="$(sed -n 's/^OPENMAIC_TAG=//p' "${_omc_conf}" 2>/dev/null | head -1 || true)"
+  # shellcheck disable=SC2086
   module_ensure_deployed openmaic "${DIR}/module.yaml" \
-    "$(openmaic_deploy_root)/app/.env.local" || exit 30
+    "$(openmaic_deploy_root)/app/.env.local" \
+    "aibox openmaic install${_omc_tag:+ --tag ${_omc_tag}}" || exit 30
   action="up" ;;
 stop)   action="down" ;;
 status) action="status" ;;

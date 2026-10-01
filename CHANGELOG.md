@@ -7,6 +7,22 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.31.3] — 2026-10-01
+
+### Fixed
+
+- **openmaic could not resolve the version to deploy when the GitHub release API hiccuped.**
+  `latest_tag` only asked `api.github.com/repos/…/releases/latest` (60 requests/hour
+  unauthenticated) and had no other channel, so a rate limit or a blocked API ended the deploy
+  with `cannot determine target version (network unreachable; specify --tag vX.Y.Z explicitly)`
+  — even though the git endpoint was perfectly usable (live-caught on 50.55: the API returned
+  nothing while `git ls-remote` listed every tag, up to v1.1.2). It now falls back to
+  `git ls-remote --tags --refs` and picks the newest semver tag — the same channel the fetch
+  step already uses, so "resolution failed" now really means "fetch would fail too".
+- **New `OPENMAIC_TAG` knob** (`/etc/openmaic/openmaic.conf`): pin the deployed version and
+  `start` passes `--tag` to the deploy — re-deploys become deterministic and need no release
+  lookup at all (also the right answer for an air-gapped or rate-limited host).
+
 ## [0.31.2] — 2026-10-01
 
 ### Fixed
@@ -2159,7 +2175,7 @@ One icon per module on the dashboard header tells the whole story — installed
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
-[0.31.2]: https://github.com/lichengwu/aibox/compare/v0.31.1...v0.31.2
+[0.31.3]: https://github.com/lichengwu/aibox/compare/v0.31.2...v0.31.3\n[0.31.2]: https://github.com/lichengwu/aibox/compare/v0.31.1...v0.31.2
 [0.31.1]: https://github.com/lichengwu/aibox/compare/v0.31.0...v0.31.1
 [0.31.0]: https://github.com/lichengwu/aibox/compare/v0.30.1...v0.31.0
 [0.30.1]: https://github.com/lichengwu/aibox/compare/v0.30.0...v0.30.1

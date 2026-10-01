@@ -566,14 +566,26 @@ previous_tag() { [ -f "$P_TAG" ] && cat "$P_TAG" || echo ""; }
 current_commit() { ( cd "$APP_DIR" 2>/dev/null && git rev-parse --short HEAD 2>/dev/null ) || echo "unknown"; }
 
 latest_tag() {
-  local api="https://api.github.com/repos/$REPO/releases/latest" out=""
+  local api="https://api.github.com/repos/$REPO/releases/latest" out="" t=""
   out=$(curl -fsS --max-time 20 "$api" 2>/dev/null) || out=""
   if [ -z "$out" ] && [ -n "$PROXY_URL" ]; then
     out=$(curl -fsS --max-time 25 -x "$PROXY_URL" "$api" 2>/dev/null) || out=""
   fi
+  if [ -n "$out" ]; then
+    t=$(printf '%s' "$out" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
+        | sed -E 's/.*"([^"]*)"$/\1/')
+    [ -n "$t" ] && { printf '%s' "$t"; return 0; }
+  fi
+  # Fallback: the GitHub release API is rate-limited (60/h unauthenticated) and can be
+  # blocked while the git endpoint is fine — ask the repository itself, which is the
+  # SAME channel the fetch step uses (live-caught on 50.55: api.github.com returned
+  # nothing while `git ls-remote` listed every tag).
+  printf '  %srelease API unavailable — resolving the newest tag via git ls-remote%s\n' \
+    "${C_DIM:-}" "${C_RST:-}" >&2
+  out=$(GIT_TERMINAL_PROMPT=0 git ls-remote --tags --refs "https://github.com/$REPO.git" 2>/dev/null \
+        | sed -n 's#.*refs/tags/##p' | grep -E '^v?[0-9]+(\.[0-9]+)+' | sort -V | tail -1)
   [ -n "$out" ] || return 1
-  printf '%s' "$out" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
-    | sed -E 's/.*"([^"]*)"$/\1/'
+  printf '%s' "$out"
 }
 
 # Multi-channel fallback for pulling source. The proxy channel is tried only when PROXY_URL is non-empty.

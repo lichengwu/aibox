@@ -187,6 +187,7 @@ state, declared ports; see below).
 | `OPENMAIC_PROXY_URL` | `(unset)` | proxy for pulling source (synced by aibox proxy set; store: /etc/openmaic/openmaic.conf) |
 | `OPENMAIC_BIN_DIR` | `${AIBOX_BIN_DIR:-~/.local/bin}` | install target of the dispatched CLI (knob) |
 | `OPENMAIC_CONF_DIR` | `/etc/openmaic` | conf file location (knob) |
+| `OPENMAIC_TAG` | `(unset)` | pin the deployed version (e.g. v1.1.2); start then passes --tag and needs no release lookup (knob) |
 | `OPENMAIC_BASE_DIR` | `$AIBOX_HOME/apps/openmaic` | deploy root (knob) |
 | `OPENMAIC_HEALTH_URL` | `http://127.0.0.1:31140/api/health` | health probe URL (host port; container stays 3000) (knob) |
 | `OPENMAIC_HEALTH_TIMEOUT` | `300` | health-wait seconds (knob) |
