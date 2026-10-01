@@ -30,6 +30,7 @@ EXIT_ERR=1           # Generic runtime error
 EXIT_USAGE=2         # Usage error
 EXIT_DEP=3           # Missing dependency (docker / curl / git ...)
 EXIT_PRECHECK=4      # Pre-check failed (doctor found a blocking issue)
+EXIT_NOTREADY=30     # The app is not deployed yet (deploy it: aibox openmaic install)
 EXIT_ROLLED_BACK=10  # Upgrade failed but auto-rolled back
 EXIT_MANUAL=20       # Failed and needs manual intervention
 EXIT_NOT_READY=30    # Service not ready (health check timed out)
@@ -295,6 +296,18 @@ compose_env_file() {
 }
 
 compose() {
+  # PRECONDITION: the app source tree must be deployed first. `aibox install openmaic`
+  # installs THIS MODULE (the ops CLI + shared base); the app itself is deployed by
+  # `aibox openmaic install` (clone + build + start). Without this guard a user who only
+  # ran the module install got a bare
+  #   cd: /root/.aibox/apps/openmaic/app: No such file or directory
+  # plus "startup failed", with no hint about the step they were missing (live: 50.55).
+  if [ ! -f "$APP_DIR/docker-compose.yml" ]; then
+    err "OpenMAIC is not deployed on this host yet (missing $APP_DIR/docker-compose.yml)"
+    hint "deploy it: aibox openmaic install   (clone + build + start; needs ~20G free)"
+    hint "reminder: 'aibox install openmaic' installs THE MODULE — 'aibox openmaic install' deploys THE APP"
+    return "$EXIT_NOTREADY"
+  fi
   # docker.io source pool: on `up*` subcommands pre-pull uncached images through
   # the ranked mirror pool when the daemon's direct route is dead (healthy
   # networks: a bounded hello-world probe, then compose pulls directly — zero
@@ -1113,13 +1126,18 @@ cmd_version() {
 #  Commands: service lifecycle
 # =============================================================================
 cmd_up() {
+  local rc=0
   [ "${1:-}" = "--no-render" ] && RENDER_ENABLED=0
   require_cmd docker || return $?
   # The shared PG override may have been enabled by the flag only after install -- ensure it
   # matches the flag before bringing things up.
   ensure_shared_pg_override
   step "Starting containers"
-  run compose up -d --remove-orphans || { err "startup failed"; return "$EXIT_ERR"; }
+  run compose up -d --remove-orphans || {
+    rc=$?
+    [ "$rc" = "$EXIT_NOTREADY" ] || err "startup failed"
+    return "$rc"
+  }
   if [ "$DRY_RUN" = 1 ]; then hint "skipping health check (dry-run)"; return 0; fi
   wait_health
 }

@@ -43,6 +43,9 @@ aibox openmaic backup list
 ```
 
 > ⚠️ Naming collision: `aibox install openmaic` means **install this module**; `aibox openmaic install` means **deploy OpenMAIC itself** (clone from source + build + start containers). One word order apart, completely different semantics.
+>
+> **First run**: `aibox install openmaic` (module) → `aibox openmaic install` (deploy: clone + build + start)
+> → afterwards `aibox openmaic start|stop|restart` are the plain lifecycle verbs.
 
 ## Environment variables
 
@@ -155,13 +158,13 @@ state, declared ports; see below).
 <!-- BEGIN GENERATED: actions (scripts/gen-docs.sh) -->
 | action | what it does |
 | --- | --- |
-| `start` | Alias of up (standard lifecycle) |
+| `start` | Alias of up (deploy first: aibox openmaic install) |
 | `stop` | Alias of down (standard lifecycle) |
 | `status` | Version / health / containers / resources overview |
 | `health` | [--wait N] — health check (exit code is probe-friendly) |
 | `doctor` | Environment self-check |
 | `version` | [--check] — version info / upstream release check |
-| `up` | Start the stack |
+| `up` | Start the stack (requires the app to be deployed: aibox openmaic install) |
 | `down` | Stop the stack |
 | `restart` | Restart the stack |
 | `logs` | Container logs |
@@ -173,7 +176,7 @@ state, declared ports; see below).
 | `db` | Shell into the app database (psql) |
 | `config` | Edit the openmaic.conf (vi/nano) |
 | `models` | Model catalog management (list/enable) |
-| `install` | (Dispatched) Bootstrap components on the deploy host |
+| `install` | Deploy OpenMAIC itself — clone + build + start (≠ aibox install openmaic, which installs this module) |
 | `clean` | Remove stopped containers + dangling images |
 | `powerlog` | Power-log query/analysis tools |
 | `url` | Print the web entry points |

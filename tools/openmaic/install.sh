@@ -13,3 +13,6 @@ echo
 log "dest    : ${CLI_DEST}"
 log "version : $(cli_version)"
 log "check   : openmaic doctor"
+echo
+log "next    : aibox openmaic install   (deploy the app: clone + build + start; ~20G free)"
+log "          aibox install openmaic installs THIS MODULE only — the app is a separate deploy"

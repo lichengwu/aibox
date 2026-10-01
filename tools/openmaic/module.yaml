@@ -1,5 +1,5 @@
 name: openmaic
-version: 1.7.1
+version: 1.7.2
 module_iface: 1
 description: "OpenMAIC ops CLI (install/upgrade/backup/doctor)"
 platform: ""
@@ -93,12 +93,12 @@ residue:
   volumes: "^app_openmaic"
 usage:
   status: "Version / health / containers / resources overview"
-  start: "Alias of up (standard lifecycle)"
+  start: "Alias of up (deploy first: aibox openmaic install)"
   stop: "Alias of down (standard lifecycle)"
   health: "[--wait N] — health check (exit code is probe-friendly)"
   doctor: "Environment self-check"
   version: "[--check] — version info / upstream release check"
-  up: "Start the stack"
+  up: "Start the stack (requires the app to be deployed: aibox openmaic install)"
   down: "Stop the stack"
   restart: "Restart the stack"
   logs: "Container logs"
@@ -110,7 +110,7 @@ usage:
   db: "Shell into the app database (psql)"
   config: "Edit the openmaic.conf (vi/nano)"
   models: "Model catalog management (list/enable)"
-  install: "(Dispatched) Bootstrap components on the deploy host"
+  install: "Deploy OpenMAIC itself — clone + build + start (≠ aibox install openmaic, which installs this module)"
   clean: "Remove stopped containers + dangling images"
   powerlog: "Power-log query/analysis tools"
   url: "Print the web entry points"

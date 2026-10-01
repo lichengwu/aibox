@@ -7,6 +7,25 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.30.1] — 2026-10-01
+
+### Fixed
+
+- **`aibox openmaic start` on a host where the app was never deployed died with a bare
+  `cd: …/apps/openmaic/app: No such file or directory`.** The two installs are one word order
+  apart and completely different: `aibox install openmaic` installs the *module* (ops CLI +
+  shared base), while `aibox openmaic install` deploys the *app* (clone + build + start). The
+  README warned about the collision; the error and `--help` did not — so "install then start"
+  hit a raw `cd` failure with no clue. Now every compose-backed verb checks the precondition
+  and answers with the missing step (`deploy it: aibox openmaic install …`, exit `30` = not
+  ready), the module-install hook prints the next step, and the `up`/`start`/`install` help
+  lines state it. The guard deliberately does NOT auto-deploy: that step is a clone plus a
+  docker build (heavy, ~20G), unlike windmill's cheap re-render self-heal.
+
+### Module versions
+
+openmaic 1.7.2
+
 ## [0.30.0] — 2026-10-01
 
 ### Changed
@@ -2073,6 +2092,7 @@ One icon per module on the dashboard header tells the whole story — installed
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
+[0.30.1]: https://github.com/lichengwu/aibox/compare/v0.30.0...v0.30.1
 [0.30.0]: https://github.com/lichengwu/aibox/compare/v0.29.4...v0.30.0
 [0.29.4]: https://github.com/lichengwu/aibox/compare/v0.29.3...v0.29.4
 [0.29.3]: https://github.com/lichengwu/aibox/compare/v0.29.2...v0.29.3

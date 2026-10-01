@@ -282,3 +282,15 @@ YAML
   run bash -c "cd '$REPO_ROOT' && env $env bash tools/windmill/svc.sh restart --help"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
+
+@test "openmaic: up without a deployed app explains the missing step (exit 30, no raw cd error)" {
+  local d="$BATS_TMPDIR/omc-empty" b="$BATS_TMPDIR/omc-bin"
+  rm -rf "$d" "$b"; mkdir -p "$d" "$b"
+  printf '#!/bin/sh\nexit 0\n' >"$b/docker"; chmod +x "$b/docker"
+  run env PATH="$b:$PATH" OPENMAIC_BASE_DIR="$d" bash "$REPO_ROOT/tools/openmaic/cli/openmaic" up
+  [ "$status" -eq 30 ] || { echo "status=$status"; echo "$output"; false; }
+  [[ "$output" == *"not deployed on this host yet"* ]] || false
+  [[ "$output" == *"aibox openmaic install"* ]] || false
+  [[ "$output" != *"No such file or directory"* ]] || false
+}
+
