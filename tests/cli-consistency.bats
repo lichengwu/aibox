@@ -389,3 +389,12 @@ SH
   rm -f "$frag" "$s"
 }
 
+@test "openmaic: the health probe follows the PUBLISHED port (the 31140 default must not fake 'not ready')" {
+  run grep -q 'deployed_health_url()' "$REPO_ROOT/tools/openmaic/cli/openmaic"
+  [ "$status" -eq 0 ] || false
+  run grep -q 'effective_health_url' "$REPO_ROOT/tools/openmaic/cli/openmaic"
+  [ "$status" -eq 0 ] || false
+  run grep -q 'OPENMAIC_APP_PORT' "$REPO_ROOT/tools/openmaic/module.yaml"
+  [ "$status" -eq 0 ]
+}
+

@@ -544,10 +544,35 @@ log() { [ "$QUIET" = 1 ] || printf '%s[%s]%s %s\n' "$C_DIM" "$(ts)" "$C_RST" "$*
 health_ok()   { curl -fsS --max-time 8 "$HEALTH_URL" >/dev/null 2>&1; }
 health_body() { curl -fsS --max-time 8 "$HEALTH_URL" 2>/dev/null || echo '{}'; }
 
+# The CLI defaults HEALTH_URL to the aibox reserved port (31140), but the app's own compose
+# publishes upstream's 3000 — so a completely healthy deployment was reported "not ready" for
+# 300s while the app answered 200 (live-caught on 50.55). Ask compose where the service is
+# actually published instead of assuming; an explicit OPENMAIC_HEALTH_URL always wins.
+deployed_health_url() {
+  local svc_port="${OPENMAIC_APP_PORT:-3000}" hp=""
+  hp="$(compose port openmaic "${svc_port}" 2>/dev/null | head -1 | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
+  [ -n "${hp}" ] || return 1
+  printf 'http://127.0.0.1:%s/api/health' "${hp}"
+}
+
+effective_health_url() {
+  [ -n "${OPENMAIC_HEALTH_URL:-}" ] && { printf '%s' "${OPENMAIC_HEALTH_URL}"; return 0; }
+  local probe=""
+  probe="$(deployed_health_url 2>/dev/null || true)"
+  [ -n "${probe}" ] && { printf '%s' "${probe}"; return 0; }
+  printf '%s' "${HEALTH_URL}"
+}
+
 wait_health() {
   local limit="${1:-$HEALTH_TIMEOUT}" waited=0
   info "waiting for service to be ready (up to ${limit}s)..."
   while [ "$waited" -lt "$limit" ]; do
+    # re-resolve each pass: the container may only publish its port a moment later
+    local eff; eff="$(effective_health_url)"
+    if [ -n "${eff}" ] && [ "${eff}" != "${HEALTH_URL}" ]; then
+      info "health probe: ${eff} (compose published port; override with OPENMAIC_HEALTH_URL)"
+      HEALTH_URL="${eff}"
+    fi
     if health_ok; then ok "service is ready (${waited}s)"; return 0; fi
     sleep 5; waited=$((waited+5))
     [ $((waited % 30)) -eq 0 ] && dim "  ...waited ${waited}s"
