@@ -359,3 +359,33 @@ SH
   [ "$status" -eq 0 ]
 }
 
+@test "openmaic: first-run config bootstrap creates .env + .env.local and prints the access code" {
+  local frag dir s
+  frag="$(mktemp)"; s="$(mktemp)"; dir="$BATS_TMPDIR/omc-boot"; rm -rf "$dir"; mkdir -p "$dir"
+  sed -n '/^bootstrap_config() {/,/^}/p' "$REPO_ROOT/tools/openmaic/cli/openmaic" >"$frag"
+  [ -s "$frag" ] || false
+  printf 'PERSISTENCE_DEV_TOKEN=\nACCESS_CODE=\nOPENAI_API_KEY=\n' >"$dir/.env.example"
+  cat >"$s" <<'SH'
+C_BLU=""; C_RST=""
+. "$FRAG"
+APP_DIR="$FR_APP" bootstrap_config
+SH
+  # (a) generated: both files exist, the token is non-empty, the code is PRINTED
+  run bash -c "env FRAG='$frag' FR_APP='$dir' bash '$s' 2>&1"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -f "$dir/.env" ] || false
+  [ -f "$dir/.env.local" ] || false
+  grep -qE '^PERSISTENCE_DEV_TOKEN=.{16,}$' "$dir/.env.local" || false
+  grep -qE '^ACCESS_CODE=.{6,}$' "$dir/.env.local" || false
+  case "$output" in *"ACCESS CODE:"*) ;; *) false ;; esac
+  # (b) OPENMAIC_ACCESS_CODE is honoured (and nothing is regenerated)
+  rm -rf "$dir"; mkdir -p "$dir"; printf 'ACCESS_CODE=\n' >"$dir/.env.example"
+  run bash -c "env FRAG='$frag' FR_APP='$dir' OPENMAIC_ACCESS_CODE=my-code bash '$s' 2>&1"
+  grep -q '^ACCESS_CODE=my-code$' "$dir/.env.local" || false
+  # (c) an existing config is left alone (no-op)
+  before="$(cat "$dir/.env.local")"
+  run bash -c "env FRAG='$frag' FR_APP='$dir' bash '$s' 2>&1"
+  [ "$(cat "$dir/.env.local")" = "$before" ] || false
+  rm -f "$frag" "$s"
+}
+

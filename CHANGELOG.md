@@ -7,6 +7,25 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.31.4] — 2026-10-01
+
+### Fixed
+
+- **openmaic could never deploy on a host that had never been configured.** Step 2 of the
+  deploy only RESTORED a previously persisted config, so a fresh machine (or one whose
+  `/etc/openmaic` was lost) always ended with `config files missing; place env.build /
+  env.runtime in /etc/openmaic and rerun` — `aibox openmaic start` could not succeed there no
+  matter how often it was retried (live-caught on 50.55, whose config had been emptied). The
+  deploy now **bootstraps** a working config on first run: `.env` from the upstream
+  `.env.example`, `.env.local` with a generated `PERSISTENCE_DEV_TOKEN` and an access code
+  (override with `OPENMAIC_ACCESS_CODE`; otherwise generated and PRINTED so the operator can
+  log in). Provider keys stay empty — set them in the UI or in that file. A successful deploy
+  persists both files to `/etc/openmaic`, so later runs restore instead of regenerating, and an
+  existing config is never overwritten.
+
+  With this, the promised contract holds end to end on a clean machine:
+  `aibox install openmaic` → `aibox openmaic start` (clone → config → build → start → health).
+
 ## [0.31.3] — 2026-10-01
 
 ### Fixed
@@ -2175,7 +2194,7 @@ One icon per module on the dashboard header tells the whole story — installed
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
-[0.31.3]: https://github.com/lichengwu/aibox/compare/v0.31.2...v0.31.3\n[0.31.2]: https://github.com/lichengwu/aibox/compare/v0.31.1...v0.31.2
+[0.31.4]: https://github.com/lichengwu/aibox/compare/v0.31.3...v0.31.4\n[0.31.3]: https://github.com/lichengwu/aibox/compare/v0.31.2...v0.31.3\n[0.31.2]: https://github.com/lichengwu/aibox/compare/v0.31.1...v0.31.2
 [0.31.1]: https://github.com/lichengwu/aibox/compare/v0.31.0...v0.31.1
 [0.31.0]: https://github.com/lichengwu/aibox/compare/v0.30.1...v0.31.0
 [0.30.1]: https://github.com/lichengwu/aibox/compare/v0.30.0...v0.30.1
