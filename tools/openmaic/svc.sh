@@ -45,8 +45,15 @@ start)
   # `aibox install openmaic` installs the module only. Deploy on demand here, with the
   # declared note printed first; --no-prepare refuses (scripts/CI).
   for _a in "$@"; do [ "${_a}" = "--no-prepare" ] && AIBOX_NO_PREPARE=1; done
+  # Sentinel = the CONFIG artifact (.env.local, rendered by the deploy's step 2), NOT
+  # app/docker-compose.yml: that file ships inside the upstream clone, so a deploy killed
+  # during step 1 (or a plain `git clone`) already has it — the guard then believed the app
+  # was deployed and `up` died on the missing env_file (live: 50.55, after an interrupted
+  # first run). `.env.local` is exactly the piece `docker compose up` cannot produce itself;
+  # a deploy interrupted later (during the build) keeps it, and `up` finishes that job by
+  # building the missing images.
   module_ensure_deployed openmaic "${DIR}/module.yaml" \
-    "$(openmaic_deploy_root)/app/docker-compose.yml" || exit 30
+    "$(openmaic_deploy_root)/app/.env.local" || exit 30
   action="up" ;;
 stop)   action="down" ;;
 status) action="status" ;;

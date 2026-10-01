@@ -7,6 +7,30 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.31.2] — 2026-10-01
+
+### Fixed
+
+- **The openmaic first-run guard used the wrong sentinel.** It checked
+  `app/docker-compose.yml`, but that file ships INSIDE the upstream clone — so a deploy that
+  was interrupted during step 1 (or a bare `git clone`) already satisfied the check. The guard
+  then believed the app was deployed, skipped the prepare, and `up` died on the missing env
+  file: `env file …/app/.env.local not found` (live: 50.55, right after an interrupted first
+  run — the interruption came from a 45-second verification run, so the partial state was ours).
+  The sentinel is now `app/.env.local` — the config artifact the deploy's step 2 renders and
+  that `docker compose up` cannot produce itself. A deploy interrupted *later* (during the
+  build) keeps it, and `up` completes that case by building the missing images, so the check
+  matches what "deployed" actually means. The regression seeds both files' states and asserts
+  the guard still refuses (`--no-prepare`, exit 30) with only the compose file present.
+
+  Note: the CLI's own deploy was already correct — it restores `/etc/openmaic/env.build` +
+  `env.runtime` and fails fast (`EXIT_PRECHECK`) when config is genuinely absent; the bug was
+  purely in aibox's precondition check.
+
+### Module versions
+
+openmaic 1.7.4
+
 ## [0.31.1] — 2026-10-01
 
 ### Fixed
@@ -2135,6 +2159,7 @@ One icon per module on the dashboard header tells the whole story — installed
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
+[0.31.2]: https://github.com/lichengwu/aibox/compare/v0.31.1...v0.31.2
 [0.31.1]: https://github.com/lichengwu/aibox/compare/v0.31.0...v0.31.1
 [0.31.0]: https://github.com/lichengwu/aibox/compare/v0.30.1...v0.31.0
 [0.30.1]: https://github.com/lichengwu/aibox/compare/v0.30.0...v0.30.1

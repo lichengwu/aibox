@@ -334,6 +334,10 @@ SH
   local d="$BATS_TMPDIR/omc-fr" b="$BATS_TMPDIR/omc-fr-bin"
   rm -rf "$d" "$b"; mkdir -p "$d" "$b"
   printf '#!/bin/sh\nexit 0\n' >"$b/docker"; chmod +x "$b/docker"
+  # Pre-seed the trap that fooled the old guard: upstream's docker-compose.yml exists as
+  # soon as the source is cloned, so an interrupted deploy looked "done" while .env.local
+  # (the config artifact `up` cannot create) was missing.
+  mkdir -p "$d/app"; : >"$d/app/docker-compose.yml"
   # the hook requires the ops CLI on PATH first (that is what `aibox install openmaic` does)
   run env PATH="$REPO_ROOT/tools/openmaic/cli:$b:$PATH" OPENMAIC_BASE_DIR="$d" AIBOX_NO_PREPARE=1 \
     bash "$REPO_ROOT/tools/openmaic/svc.sh" start 2>&1

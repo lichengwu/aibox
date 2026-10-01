@@ -1,5 +1,5 @@
 name: openmaic
-version: 1.7.3
+version: 1.7.4
 module_iface: 1
 description: "OpenMAIC ops CLI (install/upgrade/backup/doctor)"
 platform: ""
