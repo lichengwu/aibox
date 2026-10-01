@@ -7,6 +7,17 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.31.1] — 2026-10-01
+
+### Fixed
+
+- **The `Next: aibox <module> start` hint never printed.** `aibox install` checked the module's
+  actions with `grep -qx start`, but the metadata reader flattens YAML lists into one
+  SPACE-JOINED line (`"start stop status …"`), so the pattern never matched — caught by the live
+  verification on 50.55 right after the hint shipped in 0.31.0. It now matches a delimited view
+  (` start `), and the module that motivated the feature (openmaic) proves the whole path:
+  `start` announces the first-run deploy, `--no-prepare` refuses with the exact command (exit 30).
+
 ## [0.31.0] — 2026-10-01
 
 ### Added
@@ -2124,6 +2135,7 @@ One icon per module on the dashboard header tells the whole story — installed
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
+[0.31.1]: https://github.com/lichengwu/aibox/compare/v0.31.0...v0.31.1
 [0.31.0]: https://github.com/lichengwu/aibox/compare/v0.30.1...v0.31.0
 [0.30.1]: https://github.com/lichengwu/aibox/compare/v0.30.0...v0.30.1
 [0.30.0]: https://github.com/lichengwu/aibox/compare/v0.29.4...v0.30.0
