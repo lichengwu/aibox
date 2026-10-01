@@ -224,6 +224,7 @@ aibox <module> status      # same, from the module itself
 | [`clash`](tools/clash/) | Clash subscription proxy pool (mihomo kernel, auto speed-test/failover) | [README](tools/clash/README.md) |
 | [`dify`](tools/dify/) | [Dify](https://github.com/langgenius/dify) LLM app builder (docker compose) | [README](tools/dify/README.md) |
 | [`gitlab`](tools/gitlab/) | [GitLab CE](https://gitlab.com/gitlab-org/gitlab) omnibus (staged upgrades) | [README](tools/gitlab/README.md) |
+| [`jumpserver`](tools/jumpserver/) | [JumpServer](https://github.com/jumpserver/jumpserver) bastion host / PAM (docker compose) | [README](tools/jumpserver/README.md) |
 | [`new-api`](tools/new-api/) | [New API](https://github.com/QuantumNous/new-api) LLM gateway | [README](tools/new-api/README.md) |
 | [`pi-web`](tools/pi-web/) | [@agegr/pi-web](https://github.com/agegr/pi-web) as a launchd/systemd service | [README](tools/pi-web/README.md) |
 | [`openmaic`](tools/openmaic/) | [OpenMAIC](https://github.com/THU-MAIC/OpenMAIC) deploy-host ops CLI | [README](tools/openmaic/README.md) |

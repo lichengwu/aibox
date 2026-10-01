@@ -1,0 +1,260 @@
+# jumpserver deploy compose — placed into $AIBOX_HOME/apps/jumpserver by the
+# install hook. Conventions (docs/module-spec.md §Deploy directory): no
+# hardcoded credentials; ports/image tunables via the deploy .env.
+#
+# The 6-service COMMUNITY stack, ported from upstream installer v4.10.19's
+# compose/{core,celery,web,koko,lion,chen}.yml (jumpserver/installer repo):
+#   - core    (Django web+api, container-internal :8080; also `start task` as
+#              the separate celery service below — upstream ships both from
+#              the same image)
+#   - celery  (Django task workers; upstream runs it privileged)
+#   - web     (nginx frontend :80, published on the host as JUMPSERVER_WEB_PORT)
+#   - koko    (ssh/web terminal; ssh :2222 published as JUMPSERVER_SSH_PORT,
+#              its http :5000 is reached through the web nginx)
+#   - lion    (RDP/guacamole :8081, reached through the web nginx)
+#   - chen    (database audit :8082, reached through the web nginx)
+# PostgreSQL + Redis come from the SHARED aibox base: core/celery join the
+# external aibox-base network and read AIBOX_POSTGRES_*/AIBOX_REDIS_* from
+# base.env (compose --env-file). Upstream bundles postgres:16/redis:7; the
+# shared base provides 18/7 (skew documented in docs/DEVELOPMENT.md, the same
+# tradeoff dify's shared-base mode makes).
+#
+# Upstream-faithful bits kept verbatim: per-service healthchecks (the `check`
+# helper is baked into the images), /var/run/docker.sock mounts on core+celery
+# (upstream ships them; some terminal/asset features exec through the host
+# daemon), the `ulimits: core: 0` softening, and the core/celery data sharing
+# (same volume: celery tasks read what core writes).
+#
+# Upstream deltas (deliberate, per aibox spec): restart policy
+# unless-stopped (upstream `always` would resurrect `aibox jumpserver stop`
+# after a daemon restart — `unless-stopped` keeps the stop durable), bind
+# mounts under VOLUME_DIR → named volumes (spec §Deploy conventions), host
+# ports from the aibox reserved band (upstream 80/2222).
+services:
+  core:
+    image: ${JUMPSERVER_CORE_IMAGE:-jumpserver/core:v4.10.19-ce}
+    container_name: aibox-jumpserver-core
+    hostname: jms_core
+    ulimits:
+      core: 0
+    restart: unless-stopped
+    command: start web
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      # ---- JumpServer config (upstream env_file config.txt, inlined) ----
+      - SECRET_KEY=${JUMPSERVER_SECRET_KEY}
+      - BOOTSTRAP_TOKEN=${JUMPSERVER_BOOTSTRAP_TOKEN}
+      # shared base PG (base.env via compose --env-file; shell env wins)
+      - DB_ENGINE=postgresql
+      - DB_HOST=${AIBOX_POSTGRES_HOST}
+      - DB_PORT=${AIBOX_POSTGRES_PORT}
+      - DB_USER=${AIBOX_POSTGRES_USER}
+      - DB_PASSWORD=${AIBOX_POSTGRES_PASSWORD}
+      - DB_NAME=jumpserver
+      # shared base Redis: auth + this module's 4-wide logical-DB range
+      # (allocated by `aibox base create redis jumpserver 4`; upstream defaults
+      # 3/4/5/6 are per-INSTANCE indices — remapped to our slots in svc start)
+      - REDIS_HOST=${AIBOX_REDIS_HOST}
+      - REDIS_PORT=${AIBOX_REDIS_PORT}
+      - REDIS_PASSWORD=${AIBOX_REDIS_PASSWORD}
+      - REDIS_DB_CELERY=${JUMPSERVER_REDIS_DB_CELERY:-3}
+      - REDIS_DB_CACHE=${JUMPSERVER_REDIS_DB_CACHE:-4}
+      - REDIS_DB_SESSION=${JUMPSERVER_REDIS_DB_SESSION:-5}
+      - REDIS_DB_WS=${JUMPSERVER_REDIS_DB_WS:-6}
+      - DOMAINS=${JUMPSERVER_DOMAINS:-}
+      - LOG_LEVEL=${JUMPSERVER_LOG_LEVEL:-ERROR}
+    volumes:
+      - jms_core_data:/opt/jumpserver/data
+      # operator-provided certs (state_files: certs/) — drop jumpserver-*.pem
+      # here; never overwritten by aibox (see README "TLS")
+      - ./certs:/opt/jumpserver/data/certs
+      - /var/run/docker.sock:/var/run/docker.sock:z
+    healthcheck:
+      test: ["CMD", "check", "http://localhost:8080/api/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    networks:
+      - default
+      - aiboxbasenet
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  celery:
+    image: ${JUMPSERVER_CORE_IMAGE:-jumpserver/core:v4.10.19-ce}
+    container_name: aibox-jumpserver-celery
+    hostname: jms_celery
+    ulimits:
+      core: 0
+    restart: unless-stopped
+    privileged: true
+    command: start task
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - LC_ALL=C.UTF-8
+      - SECRET_KEY=${JUMPSERVER_SECRET_KEY}
+      - BOOTSTRAP_TOKEN=${JUMPSERVER_BOOTSTRAP_TOKEN}
+      - DB_ENGINE=postgresql
+      - DB_HOST=${AIBOX_POSTGRES_HOST}
+      - DB_PORT=${AIBOX_POSTGRES_PORT}
+      - DB_USER=${AIBOX_POSTGRES_USER}
+      - DB_PASSWORD=${AIBOX_POSTGRES_PASSWORD}
+      - DB_NAME=jumpserver
+      - REDIS_HOST=${AIBOX_REDIS_HOST}
+      - REDIS_PORT=${AIBOX_REDIS_PORT}
+      - REDIS_PASSWORD=${AIBOX_REDIS_PASSWORD}
+      - REDIS_DB_CELERY=${JUMPSERVER_REDIS_DB_CELERY:-3}
+      - REDIS_DB_CACHE=${JUMPSERVER_REDIS_DB_CACHE:-4}
+      - REDIS_DB_SESSION=${JUMPSERVER_REDIS_DB_SESSION:-5}
+      - REDIS_DB_WS=${JUMPSERVER_REDIS_DB_WS:-6}
+      - DOMAINS=${JUMPSERVER_DOMAINS:-}
+      - LOG_LEVEL=${JUMPSERVER_LOG_LEVEL:-ERROR}
+    volumes:
+      - jms_core_data:/opt/jumpserver/data
+      - ./certs:/opt/jumpserver/data/certs
+      - /var/run/docker.sock:/var/run/docker.sock:z
+    healthcheck:
+      test: ["CMD", "bash", "/opt/jumpserver/utils/check_celery.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+      - aiboxbasenet
+
+  web:
+    image: ${JUMPSERVER_WEB_IMAGE:-jumpserver/web:v4.10.19-ce}
+    container_name: aibox-jumpserver-web
+    hostname: jms_web
+    ulimits:
+      core: 0
+      memlock:
+        soft: -1
+        hard: -1
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - HTTP_PORT=80
+      - USE_LB=${JUMPSERVER_USE_LB:-1}
+      - USE_IPV6=0
+      - GZIP=on
+      - CLIENT_MAX_BODY_SIZE=${JUMPSERVER_CLIENT_MAX_BODY_SIZE:-4096m}
+      # component routing (upstream defaults; kael/xpack toggles off)
+      - CORE_ENABLED=1
+      - KOKO_ENABLED=1
+      - LION_ENABLED=1
+      - CHEN_ENABLED=1
+      - KAEL_ENABLED=0
+      - RAZOR_ENABLED=0
+    volumes:
+      - jms_core_data:/opt/jumpserver/data
+      - jms_nginx_logs:/var/log/nginx
+    healthcheck:
+      test: ["CMD", "check", "http://localhost/web/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    ports:
+      - "${JUMPSERVER_WEB_PORT:-31200}:80"
+    networks:
+      - default
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  koko:
+    image: ${JUMPSERVER_KOKO_IMAGE:-jumpserver/koko:v4.10.19-ce}
+    container_name: aibox-jumpserver-koko
+    hostname: jms_koko
+    ulimits:
+      core: 0
+    restart: unless-stopped
+    privileged: true
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      # components register with core over the compose network (upstream's
+      # CONFIG_SAFE_FILE inlined: CORE_HOST + BOOTSTRAP_TOKEN only)
+      - CORE_HOST=http://core:8080
+      - BOOTSTRAP_TOKEN=${JUMPSERVER_BOOTSTRAP_TOKEN}
+    volumes:
+      - jms_koko_data:/opt/koko/data
+      - ./certs:/opt/koko/data/certs
+    healthcheck:
+      test: ["CMD", "check", "http://localhost:5000/koko/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    ports:
+      - "${JUMPSERVER_SSH_PORT:-31202}:2222"
+    networks:
+      - default
+
+  lion:
+    image: ${JUMPSERVER_LION_IMAGE:-jumpserver/lion:v4.10.19-ce}
+    container_name: aibox-jumpserver-lion
+    hostname: jms_lion
+    ulimits:
+      core: 0
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - CORE_HOST=http://core:8080
+      - BOOTSTRAP_TOKEN=${JUMPSERVER_BOOTSTRAP_TOKEN}
+    volumes:
+      - jms_lion_data:/opt/lion/data
+      - ./certs:/opt/lion/data/certs
+    healthcheck:
+      test: ["CMD", "check", "http://localhost:8081/lion/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - default
+
+  chen:
+    image: ${JUMPSERVER_CHEN_IMAGE:-jumpserver/chen:v4.10.19-ce}
+    container_name: aibox-jumpserver-chen
+    hostname: jms_chen
+    ulimits:
+      core: 0
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - CORE_HOST=http://core:8080
+      - BOOTSTRAP_TOKEN=${JUMPSERVER_BOOTSTRAP_TOKEN}
+    volumes:
+      - jms_chen_data:/opt/chen/data
+      - ./certs:/opt/chen/data/certs
+    healthcheck:
+      test: ["CMD", "check", "http://localhost:8082/chen/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    networks:
+      - default
+
+networks:
+  aiboxbasenet:
+    # The shared base network (aibox base start creates it) — core/celery
+    # reach the base PG/Redis containers by name. Overridable via base.env.
+    name: ${AIBOX_BASE_NETWORK:-aibox-base}
+    external: true
+
+volumes:
+  # Explicit names: deterministic regardless of deploy dir / compose project;
+  # `aibox uninstall jumpserver --purge` removes exactly these.
+  jms_core_data:
+    name: ${JUMPSERVER_CORE_VOLUME:-aibox_jumpserver_core}
+  jms_koko_data:
+    name: ${JUMPSERVER_KOKO_VOLUME:-aibox_jumpserver_koko}
+  jms_lion_data:
+    name: ${JUMPSERVER_LION_VOLUME:-aibox_jumpserver_lion}
+  jms_chen_data:
+    name: ${JUMPSERVER_CHEN_VOLUME:-aibox_jumpserver_chen}
+  jms_nginx_logs:
+    name: ${JUMPSERVER_NGINX_VOLUME:-aibox_jumpserver_nginx_logs}

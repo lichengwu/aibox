@@ -204,6 +204,7 @@ aibox <module> status      # 同上，来自模块本身
 | [`clash`](tools/clash/) | Clash 订阅代理池（mihomo 内核，自动测速/故障转移） | [README](tools/clash/README.md) |
 | [`dify`](tools/dify/) | [Dify](https://github.com/langgenius/dify) LLM 应用构建器 | [README](tools/dify/README.md) |
 | [`gitlab`](tools/gitlab/) | [GitLab CE](https://gitlab.com/gitlab-org/gitlab) omnibus（阶梯升级） | [README](tools/gitlab/README.md) |
+| [`jumpserver`](tools/jumpserver/) | [JumpServer](https://github.com/jumpserver/jumpserver) 堡垒机 / PAM（docker compose） | [README](tools/jumpserver/README.md) |
 | [`new-api`](tools/new-api/) | [New API](https://github.com/QuantumNous/new-api) LLM 网关 | [README](tools/new-api/README.md) |
 | [`pi-web`](tools/pi-web/) | [@agegr/pi-web](https://github.com/agegr/pi-web) launchd/systemd 服务 | [README](tools/pi-web/README.md) |
 | [`openmaic`](tools/openmaic/) | [OpenMAIC](https://github.com/THU-MAIC/OpenMAIC) 部署主机运维 CLI | [README](tools/openmaic/README.md) |

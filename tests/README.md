@@ -138,6 +138,7 @@ Fast suite (`bats tests/*.bats`, no docker/network, ~seconds) — **38 files**:
 - `history-cases.bats`
 - `install-sh.bats`
 - `installed.bats`
+- `jumpserver.bats`
 - `module-install.bats`
 - `module-tools.bats`
 - `new-api.bats`

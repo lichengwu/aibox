@@ -85,7 +85,7 @@ teardown() { [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX" 2>/dev/null || true; }
   done
   [ -z "${bad}" ] || { echo "still hardcoding base.env:${bad}"; false; }
   # and the consumers that link to base DO use the shared helper
-  for f in dify new-api xiaozhi; do
+  for f in dify new-api xiaozhi jumpserver; do
     grep -q 'base_env_file' "$REPO_ROOT/tools/$f/lib.sh" || { echo "$f does not use base_env_file"; false; }
   done
 }
@@ -439,7 +439,7 @@ _dep_fixture() { # base installed + a consumer that declares base:postgres#app
 }
 
 @test "consumer start: ensures its shared DB + redis slot before the stack comes up" {
-  for m in new-api dify xiaozhi; do
+  for m in new-api dify xiaozhi jumpserver; do
     grep -q 'ensure_shared_db\|ensure_shared_redis_db' "$REPO_ROOT/tools/$m/svc.sh" || { echo "$m/svc.sh has no self-heal ensure"; false; }
   done
   # dify (optional mode) ensures BOTH of its databases and reserves 3 redis slots

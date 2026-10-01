@@ -7,6 +7,41 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.32.0] — 2026-10-02
+
+### Added
+
+- **`jumpserver` module — the open-source bastion host / PAM, as the tenth registry module
+  (v0.1.0, pinned to JumpServer v4.10.19-ce).** Upstream's community 6-service compose
+  (core + celery + web + koko + lion + chen), ported from the official installer's v4.10.19
+  compose files: the web console on the aibox band (`31200`), the koko SSH terminal on
+  `31202`, lion/chen reached through the web nginx. PostgreSQL + Redis come from the shared
+  aibox base instead of upstream's bundled containers (PG 18 vs upstream's 16 — verified live:
+  migrations, boot and login all pass); JumpServer's four Redis logical DBs (celery/cache/
+  session/ws) map onto a 4-wide reserved slot range. `SECRET_KEY`/`BOOTSTRAP_TOKEN` are
+  generated at install and never rotated by aibox (data encrypted with a rotated key is
+  unreadable). `aibox upgrade jumpserver` floats all five docker.io images to a newer stable
+  `v<x.y.z>-ce` tag without waiting for an aibox release (v5 images were not on Docker Hub at
+  onboarding time — verified via the Hub API — so the floor stays on the v4 LTS line).
+  Offline tests: `tests/jumpserver.bats` (14). Live smoke: install → start → admin login
+  (HTTP 201 + Bearer token) → status/logs/credentials/config/doctor → upgrade --check →
+  restart → stop/start → uninstall (data retained) → reinstall (SECRET_KEY preserved) →
+  purge.
+
+### Fixed
+
+- **`aibox <module> doctor` false-alarmed "docker-compose MISSING" on compose-plugin-only
+  hosts.** The preflight's `dep_satisfied` accepts `docker compose version` (the v2 plugin)
+  as satisfying the `docker-compose` dep, but the shared `module_doctor` ran a bare
+  `command -v docker-compose` — so a module that passed install cleanly could still exit `3`
+  from `doctor` on the same host (live-caught on the jumpserver smoke: healthy stack,
+  "not healthy: a dependency is missing"). `module_doctor` now applies the same rule. Also in
+  this release: the jumpserver module's `restart` does a full container cycle — a partial
+  `up -d` recreate (core recreated, web not) leaves the web nginx proxying to core's dead
+  old IP (502 on every `/api/` request until web restarts; nginx resolves upstream DNS once
+  at config load) — `down` WITHOUT `-v` (data volumes survive), then `up`, matching upstream
+  jmsctl semantics.
+
 ## [0.31.6] — 2026-10-01
 
 ### Fixed

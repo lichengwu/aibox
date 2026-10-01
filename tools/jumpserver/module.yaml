@@ -1,0 +1,143 @@
+name: jumpserver
+version: 0.1.0
+# Contract surface this module targets — see docs/module-spec.md §Contract capability version
+module_iface: 1
+description: "JumpServer open-source bastion host (PAM): web console + SSH/web terminal + RDP + audit (docker compose, shared base PG+Redis)"
+platform: ""
+dir: tools/jumpserver
+
+# Runtime deps (cmd / cmd@platform / cmd:majorVersion) — checked strictly by the
+# install/update preflight; missing deps abort unless --skip-checks.
+deps:
+  - docker
+  - docker-compose
+
+# Host ports are in the aibox reserved band (spec §Port allocation): 31200 web /
+# 31202 SSH — upstream's 80/2222 are privileged or collide with the host's own
+# sshd. Both are overridable in the deploy .env; container-internal ports stay
+# 80/2222. lion (RDP), chen (DB audit) are reached THROUGH the web nginx (no
+# extra host ports — upstream only publishes web + koko ssh).
+ports:
+  - 31200/tcp:http
+  - 31202/tcp:ssh
+
+# The curated 6-service community compose (core + celery + web + koko + lion +
+# chen), ported from upstream installer v4.10.19's compose/*.yml. PostgreSQL +
+# Redis come from the shared aibox base (external aibox-base network + base.env
+# via compose --env-file) instead of upstream's bundled postgres:16/redis:7.
+files:
+  - docker-compose.yml
+state_files:
+  - .env
+  - certs/            # operator-provided certs (see README "TLS") — never overwritten
+
+# Shared-base consumers (spec §Dependency contract). PostgreSQL: the full form
+# (aibox ensure_services creates the `jumpserver` database before install.sh
+# runs). Redis is declared BARE deliberately: JumpServer needs FOUR logical DBs
+# (celery/cache/session/ws — upstream defaults 3/4/5/6), and the declarative
+# `base:redis#jumpserver` form would pre-allocate ONE slot (the manager's
+# ensure_services has no slot-count syntax); the hook-side
+# `ensure_shared_redis_db jumpserver 4` (svc start) is the FIRST and
+# only allocator, so the registry reserves the full 4-wide range — the dify
+# 3-slot pattern (dify allocates hook-side too, via services_optional).
+services:
+  - base:postgres#jumpserver
+  - base:redis
+
+# Shared-library include: repo tools/_shared/common.sh ships into the module
+# cache as _common.sh; lib.sh sources it. NEVER copy pool/helper code.
+includes:
+  - common
+
+hooks:
+  install: install.sh
+  uninstall: uninstall.sh
+  update: update.sh
+  svc: svc.sh
+
+# Service-type: actions contains start → the full lifecycle set is mandatory
+# (validator enforces stop/restart/status/logs). `credentials` surfaces the
+# default admin login + where the generated SECRET_KEY/BOOTSTRAP_TOKEN live.
+actions:
+  - start
+  - stop
+  - restart
+  - status
+  - doctor
+  - logs
+  - credentials
+  - config
+
+env:
+  JUMPSERVER_WEB_PORT: "31200 — host web console port (container 80; upstream default 80 is privileged)"
+  JUMPSERVER_SSH_PORT: "31202 — host SSH/SFTP terminal port (container 2222; `ssh -p 31202 admin@<host>`)"
+  JUMPSERVER_CORE_IMAGE: "jumpserver/core:v4.10.19-ce — core image (aibox upgrade floats all five)"
+  JUMPSERVER_WEB_IMAGE: "jumpserver/web:v4.10.19-ce — web (nginx) image"
+  JUMPSERVER_KOKO_IMAGE: "jumpserver/koko:v4.10.19-ce — ssh/web terminal image"
+  JUMPSERVER_LION_IMAGE: "jumpserver/lion:v4.10.19-ce — RDP (guacamole) image"
+  JUMPSERVER_CHEN_IMAGE: "jumpserver/chen:v4.10.19-ce — database audit image"
+  JUMPSERVER_SECRET_KEY: "random — Django SECRET_KEY (generated at install; session/crypto. MUST be kept when migrating data) [secret]"
+  JUMPSERVER_BOOTSTRAP_TOKEN: "random — core↔component registration token (generated at install) [secret]"
+  JUMPSERVER_DOMAINS: "— — trusted DOMAINS (e.g. 'demo.example.com:31200'; empty = no restriction, see JumpServer 安全设置)"
+  JUMPSERVER_START_TIMEOUT: "900 — start health-wait seconds (first boot runs Django migrations; measured ≈ 11 min)"
+  JUMPSERVER_LOG_TAIL: "200 — log tail lines"
+  AIBOX_DOCKER_POOL: "shipped pool — docker.io mirror list override [knob]"
+  AIBOX_DOCKER_MIRROR: "(unset) — user mirror, tried first [knob]"
+  AIBOX_DOCKER_FORCE_POOL: "0 — 1 = skip the direct probe, always engage the pool [knob]"
+
+residue:
+  containers: "^aibox-jumpserver-(core|celery|web|koko|lion|chen)$"
+  volumes: "^aibox_jumpserver_(core|koko|lion|chen|nginx_logs)$"
+usage:
+  start: "Start the 6-service stack (source pool pulls; first boot runs migrations, ≈ 11 min)"
+  stop: "Stop the containers"
+  restart: "Recreate the containers (applies .env changes)"
+  status: "Containers + web health + rich view"
+  doctor: "Deep diagnostics: deps, docker, state, declared ports"
+  logs: "Container logs (per-service: aibox jumpserver logs core)"
+  credentials: "Default admin login + where SECRET_KEY/BOOTSTRAP_TOKEN live"
+  config: "Show/set config keys (store: apps/jumpserver/.env)"
+
+upstream:
+  homepage: https://github.com/jumpserver/jumpserver
+  docs: https://docs.jumpserver.org/
+
+status:
+  endpoints: http://127.0.0.1:31200
+  hint: "Default login admin / ChangeMe (reset inside the console); secrets live in apps/jumpserver/.env"
+
+# MANDATORY preflight contract (docs/module-spec.md §Preflight checks).
+# All five images are docker.io daemon pulls — NO static docker_pull gate (the
+# svc-start hook probes the daemon's direct route itself and, when dead,
+# pre-pulls through the ranked docker.io mirror pool; a static gate would
+# false-fail exactly the mirror-saved networks — same as gitlab/dify).
+# disk floor: images ≈ 1.4G compressed (core 296M + koko 229M + lion 141M +
+# chen ~150M + web ~100M) + recordings/audit data growth.
+checks:
+  disk_gb: 12
+  docker_images:
+    - jumpserver/core:v4.10.19-ce
+    - jumpserver/web:v4.10.19-ce
+    - jumpserver/koko:v4.10.19-ce
+    - jumpserver/lion:v4.10.19-ce
+    - jumpserver/chen:v4.10.19-ce
+
+# Component upgrades WITHOUT an aibox release (docs/module-spec.md §Component
+# upgrades): `aibox upgrade jumpserver` resolves the latest stable
+# jumpserver/core tag from Docker Hub (stable `v<x.y.z>-ce` only — rc/lts
+# variants excluded) and floats the five image keys in the deploy .env. All
+# five images share the same tag scheme (verified on the Docker Hub API), so
+# they always move together. Cross-major (4→5) needs an explicit --to (the
+# engine's migration-risk guardrail). NOTE: JumpServer v5 images were NOT yet
+# on Docker Hub at onboarding time (2026-10-01, verified via the Hub API); the
+# floor stays on the v4 LTS line until they land.
+upgrade:
+  source: dockerhub-tags
+  repo: jumpserver/core
+  tag_pattern: ^v[0-9]+\.[0-9]+\.[0-9]+-ce$
+  images:
+    - JUMPSERVER_CORE_IMAGE=jumpserver/core:v
+    - JUMPSERVER_WEB_IMAGE=jumpserver/web:v
+    - JUMPSERVER_KOKO_IMAGE=jumpserver/koko:v
+    - JUMPSERVER_LION_IMAGE=jumpserver/lion:v
+    - JUMPSERVER_CHEN_IMAGE=jumpserver/chen:v

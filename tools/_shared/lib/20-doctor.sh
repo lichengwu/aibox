@@ -55,7 +55,15 @@ module_doctor() { # $1=module name (defaults to $AIBOX_MODULE)
       case "${dcmd}" in *@*) ptag="${dcmd##*@}"; dcmd="${dcmd%@*}" ;; esac
       [ -n "${ptag}" ] && [ "${ptag}" != "${os}" ] && continue
       case "${dcmd}" in *:*) dcmd="${dcmd%%:*}" ;; esac
-      if command -v "${dcmd}" >/dev/null 2>&1; then
+      # docker-compose: the preflight's dep_satisfied accepts the compose v2
+      # PLUGIN (`docker compose version`) as satisfying the dep — the doctor
+      # used a bare `command -v`, so every plugin-only host (docker-compose-v2
+      # without the standalone symlink — the aibox test image, most minimal
+      # installs) got a FALSE "dependency missing" + exit 3 from a healthy
+      # module (live-caught on the jumpserver smoke). One implementation of
+      # the rule, mirrored from src/aibox/40-preflight.sh dep_satisfied.
+      if command -v "${dcmd}" >/dev/null 2>&1 \
+        || { [ "${dcmd}" = "docker-compose" ] && docker compose version >/dev/null 2>&1; }; then
         case "${dcmd}" in
         docker) if docker info >/dev/null 2>&1; then ok "dep         docker (daemon reachable)"
                 else warn "dep         docker — CLI present but the daemon is UNREACHABLE (start docker)"; miss=1; fi ;;
