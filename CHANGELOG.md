@@ -25,6 +25,17 @@ GitHub release notes are auto-generated from the previous tag; this file is the 
 
 ### Fixed
 
+- **modules.SHA256SUMS now actually covers everything download_module fetches (81
+  entries, was 69).** The generator enumerated the tree with a find pattern (`-name 'cli'`
+  — a BASENAME, while cli/ is a directory; no arm at all for lib-*.sh or vendored
+  templates), so whole classes shipped unverified despite the documented "every file a
+  module cache receives" coverage: both dispatched CLIs (openmaic, windmill),
+  base/lib-upgrade.sh, clash/lib-kernel.sh, pi-web/lib-npm.sh and dify's 8 vendored
+  nginx/ssrf files — `download_module`'s check silently skips entries absent from the
+  manifest. `_files()` now derives the set from module.yaml exactly the way the downloader
+  does (standard-6 + `files:` + `includes:`), and verify.bats locks every entry against
+  that derivation (older branches without the entries still verify leniently, so
+  mixed-version sources keep working).
 - **openmaic: every surface now advertises the port compose actually renders.** `openmaic url`,
   `openmaic status` and the install-complete message hardcoded 31140, the module README still
   documented a `:3000` health URL, and the manager's `status_info` extracted the port from the

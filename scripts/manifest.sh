@@ -33,13 +33,34 @@ case "${1:-}" in
   *) printf '✗  unknown option: %s\n' "$1" >&2; exit 2 ;;
 esac
 
+# module.yaml readers — the same library the manager/validator/gen-docs use (one
+# implementation per helper). Sourced from the SCRIPT's own tree, not the --root
+# fixture (that root is data, this is code).
+# shellcheck source=/dev/null
+. "${_here}/../tools/_shared/lib/45-meta.sh"
+
 _files() { # every file a module cache can receive, repo-relative, sorted
-  local m f
-  find "${_root}/tools" -type f \
-    \( -name 'module.yaml' -o -name 'lib.sh' -o -name 'install.sh' -o -name 'uninstall.sh' \
-    -o -name 'update.sh' -o -name 'svc.sh' -o -name 'cli' -o -name '*.yml' -o -name '*.yaml' \) \
-    -not -path '*/docs/*' -not -name 'README*' 2>/dev/null | sort
-  printf '%s\n' "${_root}/tools/_shared/common.sh"
+  # Derived from module.yaml EXACTLY the way download_module fetches it
+  # (src/aibox/25-registry.sh): the standard set + `files:` entries + `includes:`
+  # sources. The old find-pattern enumeration silently missed whole classes —
+  # cli/** (`-name 'cli'` matched a BASENAME while cli/ is a directory), lib-*.sh,
+  # vendored templates — so files that run on deploy hosts downloaded unverified
+  # despite the documented coverage.
+  local m name f inc
+  for m in "${_root}"/tools/*/module.yaml; do
+    [ -f "${m}" ] || continue
+    name="$(basename "$(dirname "${m}")")"
+    for f in module.yaml lib.sh install.sh uninstall.sh update.sh svc.sh; do
+      [ -f "${_root}/tools/${name}/${f}" ] || continue
+      printf '%s\n' "${_root}/tools/${name}/${f}"
+    done
+    for f in $(meta_field "${m}" files); do
+      printf '%s\n' "${_root}/tools/${name}/${f}"
+    done
+    for inc in $(meta_field "${m}" includes); do
+      printf '%s\n' "${_root}/tools/_shared/${inc}.sh"
+    done
+  done | sort -u
 }
 
 _gen() {

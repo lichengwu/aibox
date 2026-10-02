@@ -105,12 +105,31 @@ YAML
 }
 
 @test "every module file the manager downloads is covered by the manifest" {
-  local f rel missing=""
-  for f in "$REPO_ROOT"/tools/*/lib.sh "$REPO_ROOT"/tools/*/module.yaml "$REPO_ROOT"/tools/*/svc.sh; do
-    rel="${f#"$REPO_ROOT"/}"
-    grep -q "  ${rel}\$" "$REPO_ROOT/modules.SHA256SUMS" || missing="${missing} ${rel}"
+  # The manifest must mirror download_module's set, derived from module.yaml:
+  # standard-6 + `files:` + `includes:`. The generator's old find-pattern
+  # enumeration silently missed whole classes — cli/** (`-name 'cli'` matched a
+  # BASENAME while cli/ is a directory), lib-*.sh, vendored dify templates —
+  # shipping them unverified despite the documented coverage (live-caught).
+  local m d f rel tok missing=""
+  for m in "$REPO_ROOT"/tools/*/module.yaml; do
+    [ -f "$m" ] || continue
+    d="$(dirname "$m")"
+    for f in module.yaml lib.sh install.sh uninstall.sh update.sh svc.sh; do
+      [ -f "$d/$f" ] || continue
+      rel="${d#"$REPO_ROOT"/}/$f"
+      grep -q "  ${rel}\$" "$REPO_ROOT/modules.SHA256SUMS" || missing="${missing} ${rel}"
+    done
+    # files: stanza — one entry per `- ` line (the registry's yaml subset has no spaces in paths)
+    for tok in $(sed -n '/^files:/,/^[a-z_]/p' "$m" | grep -oE '^[ ]+- [^ ]+' | sed 's/^ *- //'); do
+      rel="${d#"$REPO_ROOT"/}/${tok}"
+      grep -q "  ${rel}\$" "$REPO_ROOT/modules.SHA256SUMS" || missing="${missing} ${rel}"
+    done
+    # includes: — cached as _<name>.sh from tools/_shared/<name>.sh
+    for tok in $(sed -n '/^includes:/,/^[a-z_]/p' "$m" | grep -oE '^[ ]+- [^ ]+' | sed 's/^ *- //'); do
+      rel="tools/_shared/${tok}.sh"
+      grep -q "  ${rel}\$" "$REPO_ROOT/modules.SHA256SUMS" || missing="${missing} ${rel}"
+    done
   done
-  grep -q '  tools/_shared/common.sh$' "$REPO_ROOT/modules.SHA256SUMS" || missing="${missing} tools/_shared/common.sh"
   [ -z "${missing}" ] || { echo "not covered:${missing}"; false; }
 }
 
