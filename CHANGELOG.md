@@ -7,6 +7,37 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.32.1] — 2026-10-02
+
+### Fixed
+
+- **openmaic: a healthy deployment is no longer reported as failing.** 0.31.5 fixed the
+  deploy's own wait loop, but `status`/`health`/`doctor` still probed the reserved-port default
+  (31140) while the app's compose publishes upstream's **3000** — so the very commands an
+  operator uses to look at the service said `health failing`, and the manager view advertised
+  `http://127.0.0.1:31140 (unreachable)`, on a stack that was answering `200` with
+  `{"success":true}`. Every consumer now derives the endpoint from the deployed compose (with
+  the old default as the fallback when that file is absent).
+- **openmaic: a throttled link no longer looks like a hang.** Each fetch attempt is capped by
+  `OPENMAIC_FETCH_TIMEOUT` (default 240s, via `timeout(1)` when present), so the retries and the
+  shallow fallback from 0.31.6 reach a verdict in minutes instead of tens of minutes
+  (live-caught: 353MB at ~50KB/s, "1/6 Prepare source" for half an hour, then failure).
+
+### Verified end to end on a cleaned host
+
+`192.168.50.55` was purged (`aibox uninstall --purge` + leftovers — every aibox/OpenMAIC
+container, volume, image and directory removed and checked empty), reinstalled, and then
+**`aibox install openmaic` → `aibox openmaic start` succeeded from scratch**: the source fetch
+resumed and completed (the retry/shallow work finished the partial 353MB → 459MB), the config
+was **bootstrapped on first run** (`ACCESS CODE: 24a74da5`, persisted to `/etc/openmaic`),
+images built, stack up, `✓ service is ready` — the app answering
+`{"success":true,"accessCodeConfigured":true}` on its published port. That closes the original
+report: every module now satisfies "install, then start".
+
+### Module versions
+
+openmaic 1.7.11
+
 ## [0.32.0] — 2026-10-01
 
 ### Added
@@ -2255,6 +2286,7 @@ One icon per module on the dashboard header tells the whole story — installed
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
+[0.32.1]: https://github.com/lichengwu/aibox/compare/v0.32.0...v0.32.1
 [0.32.0]: https://github.com/lichengwu/aibox/compare/v0.31.6...v0.32.0
 [0.31.6]: https://github.com/lichengwu/aibox/compare/v0.31.5...v0.31.6
 [0.31.5]: https://github.com/lichengwu/aibox/compare/v0.31.4...v0.31.5
