@@ -377,6 +377,8 @@ SH
   [ -f "$dir/.env.local" ] || false
   grep -qE '^PERSISTENCE_DEV_TOKEN=.{16,}$' "$dir/.env.local" || false
   grep -qE '^ACCESS_CODE=.{6,}$' "$dir/.env.local" || false
+  grep -qE '^OPENMAIC_PORT=31140$' "$dir/.env" || false
+  grep -qE '^OPENMAIC_PUBLISH_ADDRESS=0\.0\.0\.0$' "$dir/.env" || false
   case "$output" in *"ACCESS CODE:"*) ;; *) false ;; esac
   # (b) OPENMAIC_ACCESS_CODE is honoured (and nothing is regenerated)
   rm -rf "$dir"; mkdir -p "$dir"; printf 'ACCESS_CODE=\n' >"$dir/.env.example"
@@ -387,6 +389,63 @@ SH
   run bash -c "env FRAG='$frag' FR_APP='$dir' bash '$s' 2>&1"
   [ "$(cat "$dir/.env.local")" = "$before" ] || false
   rm -f "$frag" "$s"
+}
+
+@test "openmaic: published binding defaults to 0.0.0.0 at the reserved port (not upstream's 3000)" {
+  # Upstream's compose template binds loopback-only at the common-service port 3000
+  # ('${OPENMAIC_PUBLISH_ADDRESS:-127.0.0.1}:${OPENMAIC_PORT:-3000}:3000') — the CLI must
+  # render 0.0.0.0:<reserved band> instead (env/conf > .env > defaults), and the exports
+  # must actually reach compose (conf values are sourced unexported).
+  local frag dir s
+  frag="$(mktemp)"; s="$(mktemp)"; dir="$BATS_TMPDIR/omc-pub"; rm -rf "$dir"; mkdir -p "$dir"
+  {
+    sed -n '/^published_host_port() {/,/^}/p' "$REPO_ROOT/tools/openmaic/cli/openmaic"
+    sed -n '/^published_address() {/,/^}/p' "$REPO_ROOT/tools/openmaic/cli/openmaic"
+    sed -n '/^publish_env_exports() {/,/^}/p' "$REPO_ROOT/tools/openmaic/cli/openmaic"
+  } >"$frag"
+  [ -s "$frag" ] || false
+  cat >"$s" <<'SH'
+. "$FRAG"
+APP_DIR="$FR_APP"
+echo "port=$(published_host_port) addr=$(published_address)"
+SH
+  # (a) defaults: reserved-band port on all interfaces
+  run bash -c "env FRAG='$frag' FR_APP='$dir' bash '$s' 2>&1"
+  [ "$output" = "port=31140 addr=0.0.0.0" ] || false
+  # (b) the deploy's .env wins when no env/conf value is set
+  printf 'OPENMAIC_PORT=31500\nOPENMAIC_PUBLISH_ADDRESS=192.0.2.10\n' >"$dir/.env"
+  run bash -c "env FRAG='$frag' FR_APP='$dir' bash '$s' 2>&1"
+  [ "$output" = "port=31500 addr=192.0.2.10" ] || false
+  # (c) environment overrides the .env (compose interpolation: env > .env)
+  run bash -c "env FRAG='$frag' FR_APP='$dir' OPENMAIC_PORT=31600 OPENMAIC_PUBLISH_ADDRESS=127.0.0.1 bash '$s' 2>&1"
+  [ "$output" = "port=31600 addr=127.0.0.1" ] || false
+  # (d) publish_env_exports exports both (unexported conf values must reach compose)
+  cat >"$s" <<'SH'
+. "$FRAG"
+APP_DIR="$FR_APP"
+publish_env_exports
+env | grep -E '^OPENMAIC_(PORT|PUBLISH_ADDRESS)=' | sort
+SH
+  rm -f "$dir/.env"
+  run bash -c "env FRAG='$frag' FR_APP='$dir' bash '$s' 2>&1"
+  printf '%s\n' "$output" | grep -q '^OPENMAIC_PORT=31140$' || false
+  printf '%s\n' "$output" | grep -q '^OPENMAIC_PUBLISH_ADDRESS=0\.0\.0\.0$' || false
+  # (e) the compose seam actually invokes the exports
+  run grep -c 'publish_env_exports' "$REPO_ROOT/tools/openmaic/cli/openmaic"
+  [ "$output" -ge 3 ] || false
+  rm -f "$frag" "$s"
+}
+
+@test "openmaic: the access code is re-stated at deploy-complete and hinted in status" {
+  # It was printed once mid-deploy (step 2/6) and drowned in the build output; the
+  # summary now repeats it + the retrieval command, and status points at the command
+  # (the code itself stays out of status — that output gets pasted/screenshotted).
+  run grep -q 'log-in password' "$REPO_ROOT/tools/openmaic/cli/openmaic"
+  [ "$status" -eq 0 ] || false
+  run grep -q 're-display: openmaic config get ACCESS_CODE' "$REPO_ROOT/tools/openmaic/cli/openmaic"
+  [ "$status" -eq 0 ] || false
+  run grep -q "printf '  login" "$REPO_ROOT/tools/openmaic/cli/openmaic"
+  [ "$status" -eq 0 ] || false
 }
 
 @test "openmaic: the health probe follows the PUBLISHED port (the 31140 default must not fake 'not ready')" {

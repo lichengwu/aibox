@@ -295,6 +295,54 @@ compose_env_file() {
   printf -- '--env-file %s' "$BASE_ENV_FILE"
 }
 
+# ---- published binding (compose interpolation) ----
+# Upstream's compose publishes `'${OPENMAIC_PUBLISH_ADDRESS:-127.0.0.1}:${OPENMAIC_PORT:-3000}:3000'`:
+# loopback-only at the common-service port 3000. aibox defaults differ on both axes — the
+# module's reserved-band host port (31140, module.yaml ports:) on all interfaces: a deploy
+# host serves LAN clients, and upstream's loopback default makes `http://<host>:3000`
+# unreachable from every other machine (live on 50.55). The container keeps listening on
+# 3000 (OPENMAIC_APP_PORT; `compose port` and the health probe use the container side).
+# Precedence: environment / openmaic.conf > $APP_DIR/.env (user-owned; bootstrap_config
+# persists the defaults there so even a manual `docker compose` renders the same binding).
+published_host_port() {
+  local v=""
+  v="${OPENMAIC_PORT:-}"
+  if [ -z "$v" ]; then
+    v=$(grep -hE '^OPENMAIC_PORT=' "$APP_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2-)
+  fi
+  [ -n "$v" ] || v=31140
+  printf '%s' "$v"
+}
+
+published_address() {
+  local v=""
+  v="${OPENMAIC_PUBLISH_ADDRESS:-}"
+  if [ -z "$v" ]; then
+    v=$(grep -hE '^OPENMAIC_PUBLISH_ADDRESS=' "$APP_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2-)
+  fi
+  [ -n "$v" ] || v=0.0.0.0
+  printf '%s' "$v"
+}
+
+# Values from openmaic.conf are sourced UNEXPORTED — without this they never reach the
+# docker compose child process, and compose interpolation (env > .env) would silently
+# fall back to upstream's 127.0.0.1:3000.
+publish_env_exports() {
+  export OPENMAIC_PUBLISH_ADDRESS="$(published_address)"
+  export OPENMAIC_PORT="$(published_host_port)"
+}
+
+# Publishing beyond loopback is gated by the app's ACCESS_CODE login (upstream: without it
+# anyone who reaches the port can share, edit and delete the course library). bootstrap_config
+# generates one on first run; warn when the effective binding is beyond loopback but no code
+# is configured (a restored or hand-edited config).
+warn_exposed_without_access_code() {
+  [ -f "$APP_DIR/docker-compose.yml" ] || return 0
+  [ "$(published_address)" = "127.0.0.1" ] && return 0
+  grep -qE '^ACCESS_CODE=..+' "$APP_DIR/.env" "$APP_DIR/.env.local" 2>/dev/null && return 0
+  warn "published on $(published_address) with no ACCESS_CODE in .env/.env.local — anyone reaching the port can edit the course library"
+}
+
 compose() {
   # PRECONDITION: the app source tree must be deployed first. `aibox install openmaic`
   # installs THIS MODULE (the ops CLI + shared base); the app itself is deployed by
@@ -308,6 +356,7 @@ compose() {
     hint "reminder: 'aibox install openmaic' installs THE MODULE — 'aibox openmaic install' deploys THE APP"
     return "$EXIT_NOTREADY"
   fi
+  publish_env_exports
   # docker.io source pool: on `up*` subcommands pre-pull uncached images through
   # the ranked mirror pool when the daemon's direct route is dead (healthy
   # networks: a bounded hello-world probe, then compose pulls directly — zero
@@ -323,6 +372,7 @@ compose() {
 # Timed invocation -- when the network is blocked, docker build hangs silently instead of erroring,
 # so there must be an upper bound.
 compose_timed() {
+  publish_env_exports
   local secs="$1"; shift
   ( cd "$APP_DIR" || exit 1
     # shellcheck disable=SC2046
@@ -544,10 +594,11 @@ log() { [ "$QUIET" = 1 ] || printf '%s[%s]%s %s\n' "$C_DIM" "$(ts)" "$C_RST" "$*
 health_ok()   { local u; u="$(effective_health_url)"; curl -fsS --max-time 8 "$u" >/dev/null 2>&1; }
 health_body() { local u; u="$(effective_health_url)"; curl -fsS --max-time 8 "$u" 2>/dev/null || echo '{}'; }
 
-# The CLI defaults HEALTH_URL to the aibox reserved port (31140), but the app's own compose
-# publishes upstream's 3000 — so a completely healthy deployment was reported "not ready" for
-# 300s while the app answered 200 (live-caught on 50.55). Ask compose where the service is
-# actually published instead of assuming; an explicit OPENMAIC_HEALTH_URL always wins.
+# The binding is rendered from the knobs (publish_env_exports: aibox reserved port 31140 on
+# 0.0.0.0), but the user may have overridden OPENMAIC_PORT / OPENMAIC_PUBLISH_ADDRESS in .env
+# or openmaic.conf — so ask compose where the service is ACTUALLY published instead of assuming
+# (live-caught on 50.55 when upstream's 3000 was the truth). An explicit OPENMAIC_HEALTH_URL
+# always wins.
 deployed_health_url() {
   local svc_port="${OPENMAIC_APP_PORT:-3000}" hp=""
   hp="$(compose port openmaic "${svc_port}" 2>/dev/null | head -1 | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
@@ -566,6 +617,7 @@ effective_health_url() {
 wait_health() {
   local limit="${1:-$HEALTH_TIMEOUT}" waited=0
   info "waiting for service to be ready (up to ${limit}s)..."
+  warn_exposed_without_access_code
   while [ "$waited" -lt "$limit" ]; do
     # re-resolve each pass: the container may only publish its port a moment later
     local eff; eff="$(effective_health_url)"
@@ -808,6 +860,15 @@ bootstrap_config() {
     cp -a "$ex" "$APP_DIR/.env" || return 1
     created=1
   fi
+  # Persist the aibox publishing defaults (reserved-band host port, all interfaces) so a
+  # manual `docker compose` renders the same binding the CLI does — env/conf knobs still
+  # override (publish_env_exports).
+  if ! grep -qE '^OPENMAIC_PORT=' "$APP_DIR/.env" 2>/dev/null; then
+    printf '# aibox: published host port (reserved band; the container stays on 3000)\nOPENMAIC_PORT=31140\n' >>"$APP_DIR/.env" || return 1
+  fi
+  if ! grep -qE '^OPENMAIC_PUBLISH_ADDRESS=' "$APP_DIR/.env" 2>/dev/null; then
+    printf '# aibox: bind the published port on all interfaces (upstream default: 127.0.0.1 loopback-only)\nOPENMAIC_PUBLISH_ADDRESS=0.0.0.0\n' >>"$APP_DIR/.env" || return 1
+  fi
   if [ ! -f "$APP_DIR/.env.local" ]; then
     code="${OPENMAIC_ACCESS_CODE:-}"
     [ -n "$code" ] || code="$(openssl rand -hex 4 2>/dev/null || od -An -tx1 -N4 /dev/urandom 2>/dev/null | tr -d ' \n')"
@@ -929,7 +990,9 @@ cmd_status() {
 
   info "OpenMAIC status"
   printf '  version %s  (%s)\n' "$tag" "$commit"
-  printf '  url     http://%s:%s\n' "$(hostname -I 2>/dev/null | awk '{print $1}')" "${OPENMAIC_PORT:-31140}"
+  printf '  url     http://%s:%s\n' "$(hostname -I 2>/dev/null | awk '{print $1}')" "$(published_host_port)"
+  # login hint only — status output gets pasted/screenshotted, the code stays in .env.local
+  printf '  login   openmaic config get ACCESS_CODE\n'
   printf '  health  '
   if health_ok; then printf '%sok%s      %s\n' "$C_GRN" "$C_RST" "$body"; else printf '%sfailing%s\n' "$C_RED" "$C_RST"; fi
   printf '  render  '
@@ -1748,7 +1811,13 @@ cmd_install() {
   step "6/6 Health check"
   if wait_health; then
     sync_config_to_persist
-    ok "deploy complete → http://$(hostname -I | awk '{print $1}'):31140"
+    ok "deploy complete → http://$(hostname -I | awk '{print $1}'):$(published_host_port)"
+    # The access code is printed once mid-deploy (step 2/6) and drowns in the build
+    # output — re-state it in the completion summary with the retrieval command
+    # (read-only from .env.local; never regenerated here).
+    local _code=""
+    _code="$(grep -hE '^ACCESS_CODE=..+' "$APP_DIR/.env.local" 2>/dev/null | tail -1 | cut -d= -f2-)"
+    [ -n "$_code" ] && say "  log-in password: ${_code}   (re-display: openmaic config get ACCESS_CODE)"
     return 0
   fi
   err "deploy complete but the health check did not pass; see openmaic logs"
@@ -1786,7 +1855,7 @@ cmd_url() {
     [ -n "$ip" ] || ip="127.0.0.1"
     hint "could not detect this host's external IP (hostname -I unavailable); using ${ip} below"
   fi
-  say "http://${ip}:31140"
+  say "http://${ip}:$(published_host_port)"
   hint "access password: openmaic config get ACCESS_CODE"
   return 0
 }

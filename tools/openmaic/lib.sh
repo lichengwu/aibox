@@ -164,13 +164,17 @@ status_info() {
   local v
   v="$(installed_version 2>/dev/null || true)"
   [ -n "${v}" ] && echo "version=${v}"
-  # The deployed app publishes upstream's port (its compose hardcodes it), which is NOT the
-  # reserved port the module used to assume — read it from the deployed compose instead of
-  # advertising a wrong URL (live-caught on 50.55: the app answered on 3000 while status said
-  # 31140 "unreachable").
+  # The published host port is compose-interpolated from ${OPENMAIC_PORT}: the CLI defaults it
+  # to the aibox reserved band (31140 — publish_env_exports) and bootstrap_config persists it
+  # into the deploy's .env, while openmaic.conf / env override. Read those keys instead of the
+  # compose FILE: it only carries the un-rendered `'${OPENMAIC_PUBLISH_ADDRESS:-…}:${OPENMAIC_PORT:-3000}:3000'`
+  # template, which a literal-port regex can never match (the old sed always fell through to
+  # its fallback; live-caught on 50.55: the app answered on 3000 while status said 31140
+  # "unreachable").
   local _p=""
-  _p="$(sed -n "s/.*- '\([0-9][0-9]*\):[0-9][0-9]*'.*/\1/p" "$(openmaic_deploy_root)/app/docker-compose.yml" 2>/dev/null | head -1)"
-  echo "endpoint=http://127.0.0.1:${_p:-31140}"
+  _p="$(grep -hE '^OPENMAIC_PORT=' "$(openmaic_deploy_root)/app/.env" "${OPENMAIC_CONF_DIR:-/etc/openmaic}/openmaic.conf" 2>/dev/null | tail -1 | cut -d= -f2-)"
+  [ -n "${_p}" ] || _p=31140
+  echo "endpoint=http://127.0.0.1:${_p}"
   echo "credential=.env.local (API Key, access password)"
   # Not deployed yet? Say so (and what fixes it) instead of pretending to be a live deploy.
   if [ ! -f "$(openmaic_deploy_root)/app/docker-compose.yml" ]; then
@@ -181,5 +185,5 @@ status_info() {
   # na: CLI-type module — its "state" is a remote deploy's state, not a local
   # service's; `aibox openmaic status` (dispatched to the CLI) is the real view.
   echo "state=na"
-  echo "health=curl -s http://127.0.0.1:31140/api/health"
+  echo "health=curl -s http://127.0.0.1:${_p}/api/health"
 }

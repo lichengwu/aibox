@@ -20,8 +20,13 @@
 
 ## Module Configuration
 
-- Port: 3000/tcp:app (OpenMAIC http) — the postgres service has NO host port
-  (internal to the compose network; shared mode uses the base PG), so it is not declared
+- Port: published `0.0.0.0:31140` → container 3000/tcp:app (OpenMAIC http) — upstream's compose
+  template is `'${OPENMAIC_PUBLISH_ADDRESS:-127.0.0.1}:${OPENMAIC_PORT:-3000}:3000'` (loopback-only
+  at the common-service port 3000); the CLI exports/`bootstrap` persists the aibox defaults
+  (reserved-band host port on all interfaces) and `openmaic url`/`status` derive the endpoint from
+  the effective `OPENMAIC_PORT` (env/openmaic.conf > `.env` > 31140). Beyond loopback the app's
+  ACCESS_CODE gates access (generated at first run; `up` warns when missing). The postgres service
+  has NO host port (internal to the compose network; shared mode uses the base PG), so it is not declared
 - Credentials: `.env.local` (API Key, access password)
 - Deployment target: app root `$AIBOX_HOME/apps/openmaic`; config `/etc/openmaic/openmaic.conf` (delivers `OPENMAIC_PROXY_URL` via proxy)
 - Autostart: none resident (svc passes through to the CLI)

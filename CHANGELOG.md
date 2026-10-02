@@ -7,6 +7,35 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING: openmaic publishes on `0.0.0.0:31140` by default (was loopback-only `127.0.0.1:3000`).**
+  Upstream's compose template is `'${OPENMAIC_PUBLISH_ADDRESS:-127.0.0.1}:${OPENMAIC_PORT:-3000}:3000'`
+  — loopback at the common-service port 3000 — so `http://<deploy-host>:3000` was unreachable
+  from every other machine while the local health probe passed (live on 50.55). The CLI now
+  exports `OPENMAIC_PUBLISH_ADDRESS=0.0.0.0` + `OPENMAIC_PORT=31140` (the module's reserved-band
+  port; the container stays on 3000) for every compose call, and first-run bootstrap persists
+  both into the deploy's `.env` so even a manual `docker compose` renders the same binding;
+  environment / `openmaic.conf` still override. Existing deployments pick the new binding up on
+  the next `openmaic up` (container recreate) — update any `:3000` bookmarks. Access beyond
+  loopback is gated by the app's ACCESS_CODE (generated at first run); `up` now warns when a
+  binding beyond loopback has no ACCESS_CODE configured. (openmaic 1.8.0)
+
+### Fixed
+
+- **openmaic: every surface now advertises the port compose actually renders.** `openmaic url`,
+  `openmaic status` and the install-complete message hardcoded 31140, the module README still
+  documented a `:3000` health URL, and the manager's `status_info` extracted the port from the
+  compose template with a literal-port regex that could never match an interpolation expression
+  (it always fell through to the fallback). All now derive the endpoint from the effective
+  `OPENMAIC_PORT` (env / `openmaic.conf` > deploy `.env` > 31140).
+- **openmaic: the access code is re-stated where you look for it.** It was printed once
+  mid-deploy (step 2/6) and drowned in the build output; the deploy-complete summary now
+  repeats it with the retrieval command, and `openmaic status` gains a `login` hint line
+  (the code itself stays out of status — that output gets pasted/screenshotted).
+
 ## [0.32.1] — 2026-10-02
 
 ### Fixed

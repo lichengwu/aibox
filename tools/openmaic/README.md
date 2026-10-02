@@ -63,7 +63,7 @@ CLI runtime (also writable into `/etc/openmaic/openmaic.conf`; environment varia
 | `OPENMAIC_BASE_DIR` | `$AIBOX_HOME/apps/openmaic` | deployment root directory (see "Layout" below) |
 | `OPENMAIC_PROXY_URL` | empty | proxy for pulling source code; accepts a full URL (`http://host:port` / `socks5://host:port`). **Takes precedence over the legacy key below** |
 | `OPENMAIC_PROXY_HOST` | empty | same as above (legacy key, kept for compatibility). The value may be a bare `host:port`; `http://` is auto-prepended |
-| `OPENMAIC_HEALTH_URL` | `http://127.0.0.1:3000/api/health` | health check URL |
+| `OPENMAIC_HEALTH_URL` | `http://127.0.0.1:31140/api/health` | health check URL (auto-detected from the compose published port when unset) |
 | `OPENMAIC_HEALTH_TIMEOUT` | `300` | health check wait limit (seconds) |
 | `OPENMAIC_BACKUP_KEEP` | `14` | number of backups to retain |
 | `OPENMAIC_RENDER_ENABLED` | `1` | whether to enable the video rendering container profile |
@@ -191,6 +191,8 @@ state, declared ports; see below).
 | `OPENMAIC_FETCH_TIMEOUT` | `240` | seconds cap per fetch attempt (a throttled link must not burn the whole window on one try) (knob) |
 | `OPENMAIC_FETCH_ATTEMPTS` | `4` | source fetch attempts per channel; later ones shallow (resumable on throttled links) (knob) |
 | `OPENMAIC_APP_PORT` | `3000` | container-internal app port; the CLI probes the PUBLISHED host port automatically (knob) |
+| `OPENMAIC_PORT` | `31140` | published host port (aibox reserved band; container stays 3000; upstream default: common port 3000) (knob) |
+| `OPENMAIC_PUBLISH_ADDRESS` | `0.0.0.0` | bind interface for the published port (upstream default 127.0.0.1 loopback-only; gated by ACCESS_CODE) (knob) |
 | `OPENMAIC_ACCESS_CODE` | `(unset)` | access code for a FIRST-RUN bootstrap (else generated and printed); set it in /etc/openmaic/openmaic.conf (secret) |
 | `OPENMAIC_BASE_DIR` | `$AIBOX_HOME/apps/openmaic` | deploy root (knob) |
 | `OPENMAIC_HEALTH_URL` | `http://127.0.0.1:31140/api/health` | health probe URL (host port; container stays 3000) (knob) |
