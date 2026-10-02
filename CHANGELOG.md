@@ -61,6 +61,13 @@ GitHub release notes are auto-generated from the previous tag; this file is the 
   mid-deploy (step 2/6) and drowned in the build output; the deploy-complete summary now
   repeats it with the retrieval command, and `openmaic status` gains a `login` hint line
   (the code itself stays out of status — that output gets pasted/screenshotted).
+- **openmaic: the publish knobs now also work on upstream v1.1.2.** The deployed compose
+  hardcodes `- '3000:3000'` — the `${OPENMAIC_PUBLISH_ADDRESS}/${OPENMAIC_PORT}`
+  interpolation exists only in unreleased upstream main (live-caught on 50.55: the exported
+  knobs landed in a template with nothing to interpolate, so the binding stayed
+  `0.0.0.0:3000`). `apply_local_patches` and `up` now inject the interpolation into the
+  deployed compose — idempotent, main-style files untouched, unexpected formats warn
+  instead of blocking. (openmaic 1.8.1)
 
 ## [0.32.1] — 2026-10-02
 

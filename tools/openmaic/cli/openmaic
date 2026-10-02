@@ -296,8 +296,10 @@ compose_env_file() {
 }
 
 # ---- published binding (compose interpolation) ----
-# Upstream's compose publishes `'${OPENMAIC_PUBLISH_ADDRESS:-127.0.0.1}:${OPENMAIC_PORT:-3000}:3000'`:
-# loopback-only at the common-service port 3000. aibox defaults differ on both axes — the
+# Upstream's compose publishes `'${OPENMAIC_PUBLISH_ADDRESS:-127.0.0.1}:${OPENMAIC_PORT:-3000}:3000'`
+# (upstream MAIN — v1.1.2, the current release, hardcodes `- '3000:3000'` outright;
+# patch_publish_ports injects the interpolation into the deployed compose). Loopback-only
+# at the common-service port 3000; aibox defaults differ on both axes — the
 # module's reserved-band host port (31140, module.yaml ports:) on all interfaces: a deploy
 # host serves LAN clients, and upstream's loopback default makes `http://<host>:3000`
 # unreachable from every other machine (live on 50.55). The container keeps listening on
@@ -341,6 +343,37 @@ warn_exposed_without_access_code() {
   [ "$(published_address)" = "127.0.0.1" ] && return 0
   grep -qE '^ACCESS_CODE=..+' "$APP_DIR/.env" "$APP_DIR/.env.local" 2>/dev/null && return 0
   warn "published on $(published_address) with no ACCESS_CODE in .env/.env.local — anyone reaching the port can edit the course library"
+}
+
+# Upstream v1.1.2 HARDCODES the app publish as `- '3000:3000'` (all interfaces at the
+# common-service port 3000); the ${OPENMAIC_PUBLISH_ADDRESS}/${OPENMAIC_PORT} interpolation
+# exists only in unreleased upstream main. Inject it into the DEPLOYED compose so the aibox
+# binding knobs render on ANY upstream version (live-caught on 50.55: publish_env_exports
+# landed in a template with nothing to interpolate, so the binding stayed 0.0.0.0:3000).
+# Idempotent — main-style lines are left untouched; unexpected formats warn (the health
+# probe follows the actual published port) instead of blocking the deploy.
+patch_publish_ports() {
+  local f="$APP_DIR/docker-compose.yml"
+  [ -f "$f" ] || return 0
+  grep -q 'OPENMAIC_PORT' "$f" && return 0
+  if ! grep -qE '^[[:space:]]*-.*3000:3000' "$f"; then
+    warn "unexpected ports format in $f (no hardcoded 3000:3000, no OPENMAIC_PORT) — publish knobs not injected"
+    return 0
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    dim "  [dry-run] would inject the publish-port interpolation into $f"
+    return 0
+  fi
+  cp -a "$f" "$f.bak"
+  sed -i -E 's#^([[:space:]]*-[[:space:]]*).*3000:3000.*$#\1${OPENMAIC_PUBLISH_ADDRESS:-0.0.0.0}:${OPENMAIC_PORT:-31140}:3000#' "$f"
+  if grep -q 'OPENMAIC_PORT' "$f"; then
+    ok "injected publish-port interpolation (OPENMAIC_PUBLISH_ADDRESS / OPENMAIC_PORT)"
+    rm -f "$f.bak"
+    return 0
+  fi
+  err "publish-port patch failed, restored"
+  mv -f "$f.bak" "$f"
+  return 1
 }
 
 compose() {
@@ -797,6 +830,9 @@ ensure_shared_db() {
 apply_local_patches() {
   # Shared PG override (controlled by OPENMAIC_SHARED_PG; idempotent; runs before other patches; non-blocking)
   ensure_shared_pg_override
+  # Inject the publish-port interpolation BEFORE the render-patch early-returns below
+  # (v1.1.2 hardcodes '3000:3000'; see patch_publish_ports).
+  patch_publish_ports || return 1
 
   local f="$APP_DIR/render-service/Dockerfile"
   [ -f "$f" ] || { warn "${f} not found, skipping patches"; return 0; }
@@ -1273,6 +1309,9 @@ cmd_up() {
   # The shared PG override may have been enabled by the flag only after install -- ensure it
   # matches the flag before bringing things up.
   ensure_shared_pg_override
+  # An EXISTING deploy (cloned by an older CLI) still carries upstream v1.1.2's hardcoded
+  # '3000:3000' — make the binding knobs effective before rendering.
+  patch_publish_ports || return "$EXIT_ERR"
   step "Starting containers"
   run compose up -d --remove-orphans || {
     rc=$?

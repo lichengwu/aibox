@@ -448,6 +448,58 @@ SH
   [ "$status" -eq 0 ] || false
 }
 
+@test "openmaic: the publish knobs are injected into upstream v1.1.2's hardcoded ports" {
+  # v1.1.2 ships `- '3000:3000'` (all-interfaces common port); the ${OPENMAIC_PORT}
+  # interpolation exists only in unreleased upstream main. The CLI must inject it so the
+  # knobs render on any version — live-caught on 50.55: the exports landed in a template
+  # with nothing to interpolate, so the binding stayed 0.0.0.0:3000.
+  local frag dir s
+  frag="$(mktemp)"; s="$(mktemp)"; dir="$BATS_TMPDIR/omc-ports"; rm -rf "$dir"; mkdir -p "$dir"
+  sed -n '/^patch_publish_ports() {/,/^}/p' "$REPO_ROOT/tools/openmaic/cli/openmaic" >"$frag"
+  [ -s "$frag" ] || false
+  cat >"$s" <<'SH'
+C_YEL=""; C_RST=""; C_GRN=""; C_RED=""
+warn() { printf 'warn %s\n' "$*"; }
+dim()  { printf 'dim %s\n'  "$*"; }
+ok()   { printf 'ok %s\n'   "$*"; }
+err()  { printf 'err %s\n'  "$*"; }
+DRY_RUN=0
+. "$FRAG"
+APP_DIR="$FR_APP"
+patch_publish_ports
+SH
+  # (a) v1.1.2 shape -> interpolated, idempotent on the second run
+  cat >"$dir/docker-compose.yml" <<'YML'
+services:
+  openmaic:
+    ports:
+      - '3000:3000'
+    env_file:
+      - .env.local
+YML
+  run bash -c "env FRAG='$frag' FR_APP='$dir' bash '$s' 2>&1"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q 'OPENMAIC_PUBLISH_ADDRESS:-0.0.0.0}:\${OPENMAIC_PORT:-31140}:3000' "$dir/docker-compose.yml" || false
+  after="$(cat "$dir/docker-compose.yml")"
+  run bash -c "env FRAG='$frag' FR_APP='$dir' bash '$s' 2>&1"
+  [ "$(cat "$dir/docker-compose.yml")" = "$after" ] || false
+  # (b) upstream-main shape -> untouched
+  cat >"$dir/docker-compose.yml" <<'YML'
+    ports:
+      - '${OPENMAIC_PUBLISH_ADDRESS:-127.0.0.1}:${OPENMAIC_PORT:-3000}:3000'
+YML
+  before="$(cat "$dir/docker-compose.yml")"
+  run bash -c "env FRAG='$frag' FR_APP='$dir' bash '$s' 2>&1"
+  [ "$(cat "$dir/docker-compose.yml")" = "$before" ] || false
+  # (c) unexpected format -> warns, exits 0, file untouched
+  printf "    ports:\n      - '9999:9999'\n" >"$dir/docker-compose.yml"
+  run bash -c "env FRAG='$frag' FR_APP='$dir' bash '$s' 2>&1"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  case "$output" in *warn*) ;; *) false ;; esac
+  grep -q "9999:9999" "$dir/docker-compose.yml" || false
+  rm -f "$frag" "$s"
+}
+
 @test "openmaic: the health probe follows the PUBLISHED port (the 31140 default must not fake 'not ready')" {
   run grep -q 'deployed_health_url()' "$REPO_ROOT/tools/openmaic/cli/openmaic"
   [ "$status" -eq 0 ] || false
