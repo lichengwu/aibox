@@ -188,6 +188,7 @@ state, declared ports; see below).
 | `OPENMAIC_BIN_DIR` | `${AIBOX_BIN_DIR:-~/.local/bin}` | install target of the dispatched CLI (knob) |
 | `OPENMAIC_CONF_DIR` | `/etc/openmaic` | conf file location (knob) |
 | `OPENMAIC_TAG` | `(unset)` | pin the deployed version (e.g. v1.1.2); start then passes --tag and needs no release lookup (knob) |
+| `OPENMAIC_FETCH_TIMEOUT` | `240` | seconds cap per fetch attempt (a throttled link must not burn the whole window on one try) (knob) |
 | `OPENMAIC_FETCH_ATTEMPTS` | `4` | source fetch attempts per channel; later ones shallow (resumable on throttled links) (knob) |
 | `OPENMAIC_APP_PORT` | `3000` | container-internal app port; the CLI probes the PUBLISHED host port automatically (knob) |
 | `OPENMAIC_ACCESS_CODE` | `(unset)` | access code for a FIRST-RUN bootstrap (else generated and printed); set it in /etc/openmaic/openmaic.conf (secret) |

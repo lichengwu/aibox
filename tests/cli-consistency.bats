@@ -407,3 +407,12 @@ SH
   [ "$status" -eq 0 ]
 }
 
+@test "openmaic: each fetch attempt is time-bounded (a throttled link must not burn the window)" {
+  run grep -q 'OPENMAIC_FETCH_TIMEOUT' "$REPO_ROOT/tools/openmaic/cli/openmaic"
+  [ "$status" -eq 0 ] || false
+  run grep -q 'TO="timeout ' "$REPO_ROOT/tools/openmaic/cli/openmaic"
+  [ "$status" -eq 0 ] || false
+  run grep -q 'OPENMAIC_FETCH_TIMEOUT' "$REPO_ROOT/tools/openmaic/module.yaml"
+  [ "$status" -eq 0 ]
+}
+

@@ -541,8 +541,8 @@ run_logged() {
 
 log() { [ "$QUIET" = 1 ] || printf '%s[%s]%s %s\n' "$C_DIM" "$(ts)" "$C_RST" "$*"; }
 
-health_ok()   { curl -fsS --max-time 8 "$HEALTH_URL" >/dev/null 2>&1; }
-health_body() { curl -fsS --max-time 8 "$HEALTH_URL" 2>/dev/null || echo '{}'; }
+health_ok()   { local u; u="$(effective_health_url)"; curl -fsS --max-time 8 "$u" >/dev/null 2>&1; }
+health_body() { local u; u="$(effective_health_url)"; curl -fsS --max-time 8 "$u" 2>/dev/null || echo '{}'; }
 
 # The CLI defaults HEALTH_URL to the aibox reserved port (31140), but the app's own compose
 # publishes upstream's 3000 — so a completely healthy deployment was reported "not ready" for
@@ -615,7 +615,12 @@ latest_tag() {
 
 # Multi-channel fallback for pulling source. The proxy channel is tried only when PROXY_URL is non-empty.
 git_fetch_tag() {
-  local tag="$1" url attempt=1 max="${OPENMAIC_FETCH_ATTEMPTS:-4}" shallow=""
+  local tag="$1" url attempt=1 max="${OPENMAIC_FETCH_ATTEMPTS:-4}" shallow="" TO=""
+  # Per-attempt timeout: a THROTTLED link (small requests pass, bulk transfers crawl) would
+  # otherwise burn tens of minutes on one attempt before the retry/shallow logic ever ran —
+  # live-caught on 50.55: 353MB transferred at ~50KB/s and the deploy looked "stuck" for
+  # half an hour, then failed anyway.
+  if command -v timeout >/dev/null 2>&1; then TO="timeout ${OPENMAIC_FETCH_TIMEOUT:-240}"; fi
   while [ "$attempt" -le "$max" ]; do
     # Attempt 1 is a full fetch (keeps history for describe/rollback); later attempts go
     # SHALLOW — on throttled links (small requests pass, bulk transfers get reset) a
@@ -625,13 +630,13 @@ git_fetch_tag() {
     [ "$attempt" -le 1 ] || shallow="--depth 1"
     if [ -n "$PROXY_URL" ]; then
       url="https://github.com/$REPO.git"
-      log "channel: direct (via proxy ${PROXY_DISPLAY}) attempt ${attempt}/${max}${shallow:+ (shallow)}"
+      log "channel: direct (via proxy ${PROXY_DISPLAY}) attempt ${attempt}/${max}${shallow:+ (shallow)}${TO:+ [${OPENMAIC_FETCH_TIMEOUT:-240}s cap]}"
       if ( cd "$APP_DIR" && env "https_proxy=$PROXY_URL" "http_proxy=$PROXY_URL" \
-             GIT_TERMINAL_PROMPT=0 git fetch $shallow --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
+             GIT_TERMINAL_PROMPT=0 ${TO} git fetch $shallow --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
     fi
-    log "channel: direct (no proxy) attempt ${attempt}/${max}${shallow:+ (shallow)}"
+    log "channel: direct (no proxy) attempt ${attempt}/${max}${shallow:+ (shallow)}${TO:+ [${OPENMAIC_FETCH_TIMEOUT:-240}s cap]}"
     url="https://github.com/$REPO.git"
-    if ( cd "$APP_DIR" && GIT_TERMINAL_PROMPT=0 git fetch $shallow --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
+    if ( cd "$APP_DIR" && GIT_TERMINAL_PROMPT=0 ${TO} git fetch $shallow --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
     attempt=$((attempt + 1))
     [ "$attempt" -le "$max" ] && { dim "  fetch did not complete — retrying"; sleep 10; }
   done
@@ -1071,7 +1076,7 @@ cmd_doctor() {
     compose ps --status running --services 2>/dev/null | grep -qx postgres \
       && chk_ok "PostgreSQL" "running" || chk_bad "PostgreSQL" "not running"
   fi
-  health_ok && chk_ok "health check" "$HEALTH_URL" || chk_bad "health check" "no response"
+  health_ok && chk_ok "health check" "$(effective_health_url)" || chk_bad "health check" "no response on $(effective_health_url)"
 
   echo; info "Backups"
   # This host deliberately does not run scheduled backups (covered by VM-level backups). This

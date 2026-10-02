@@ -164,7 +164,13 @@ status_info() {
   local v
   v="$(installed_version 2>/dev/null || true)"
   [ -n "${v}" ] && echo "version=${v}"
-  echo "endpoint=http://127.0.0.1:31140"
+  # The deployed app publishes upstream's port (its compose hardcodes it), which is NOT the
+  # reserved port the module used to assume — read it from the deployed compose instead of
+  # advertising a wrong URL (live-caught on 50.55: the app answered on 3000 while status said
+  # 31140 "unreachable").
+  local _p=""
+  _p="$(sed -n "s/.*- '\([0-9][0-9]*\):[0-9][0-9]*'.*/\1/p" "$(openmaic_deploy_root)/app/docker-compose.yml" 2>/dev/null | head -1)"
+  echo "endpoint=http://127.0.0.1:${_p:-31140}"
   echo "credential=.env.local (API Key, access password)"
   # Not deployed yet? Say so (and what fixes it) instead of pretending to be a live deploy.
   if [ ! -f "$(openmaic_deploy_root)/app/docker-compose.yml" ]; then
