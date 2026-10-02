@@ -127,6 +127,20 @@ with `scripts/manifest.sh` in the same commit. CI runs `scripts/manifest.sh --ch
 and fails on drift; `download_module` verifies every fetched file against it
 (`AIBOX_VERIFY=0` is the explicit bypass).
 
+### Pushing is not a formality (learned the hard way)
+
+**Verify the remote before trusting a push.** A working copy was found with
+`origin` re-pointed at `.` (the repository itself): `git push origin main` then reports
+`Everything up-to-date`, exits 0, and pushes **nothing** — the commit and its release tag
+never reach GitHub, and the release workflow never runs. Two commits were silently swallowed
+that way.
+
+- Before a release push: `git remote get-url origin` must print the GitHub URL (not `.`).
+- Confirm what the remote ACTUALLY has: `git ls-remote origin refs/heads/main` (a local-looking
+  answer — a bare SHA with no network — is a sign the "remote" is the working copy).
+- When in doubt, push by URL: `git push https://github.com/lichengwu/aibox.git HEAD:main`
+  (requires credentials; `gh auth setup-git` configures git for them).
+
 ### commit style
 
 Conventional Commits: `fix:` / `feat:` / `docs:` / `style:` / `chore:`.
