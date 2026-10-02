@@ -45,8 +45,10 @@ dify v1.17.1's `docker/` tree — their entrypoint scripts run `envsubst`/`awk`
 (`dify_storage`, `dify_db`, `dify_redis`, `dify_sandbox_deps`,
 `dify_sandbox_conf`, `dify_plugin_daemon`, `dify_weaviate`).
 
-**Default port**: `8088` (dify upstream defaults to `80`, which collides with
-the `windmill` module in this repo). Override with `DIFY_WEB_PORT` (NOT `DIFY_PORT` — upstream's DIFY_PORT is the api listen port).
+**Default port**: `31101` (dify upstream defaults to `80` — privileged, outside the
+aibox reserved band). HTTPS publishes `31102` (`EXPOSE_NGINX_SSL_PORT`) and the plugin
+debugger `31503`. Override the web port with `DIFY_WEB_PORT` (NOT `DIFY_PORT` — upstream's
+DIFY_PORT is the api listen port). Live values: `aibox status dify`.
 
 ## Upgrades (version floats, independent of aibox releases)
 
@@ -78,7 +80,7 @@ then `aibox dify restart`. Highlights:
 
 | var | default | meaning |
 | --- | --- | --- |
-| `DIFY_PORT` / `EXPOSE_NGINX_PORT` | 8088 | host web port |
+| `DIFY_WEB_PORT` / `EXPOSE_NGINX_PORT` | 31101 | host web port (aibox reserved band) |
 | `SECRET_KEY` | auto-generated (hex 32) | session-cookie signing |
 | `INIT_PASSWORD` | auto-generated (24 chars) | admin first-visit password (see `aibox dify credentials`) |
 | `DIFY_API_IMAGE` (and `_WEB`/`_SANDBOX`/`_PLUGIN_DAEMON`/`_AGENT_BACKEND`/`DB_IMAGE`/`REDIS_IMAGE`/`WEAVIATE_IMAGE`) | pinned 1.17.1 tags | image tags (bump on update) |
@@ -189,8 +191,8 @@ exit `0` healthy · `3` a dependency is missing · `30` the service is not ready
 <!-- BEGIN GENERATED: config (scripts/gen-docs.sh) -->
 | key | default | notes |
 | --- | --- | --- |
-| `DIFY_PORT` | `31101` | host port (EXPOSE_NGINX_PORT; upstream default 80 is privileged) |
-| `EXPOSE_NGINX_SSL_PORT` | `31443` | host HTTPS port (container stays 443; set 443 only with a public domain) |
+| `DIFY_WEB_PORT` | `31101` | host web port (writes EXPOSE_NGINX_PORT in .env; upstream's DIFY_PORT is the api gunicorn port — do not reuse) |
+| `EXPOSE_NGINX_SSL_PORT` | `31102` | host HTTPS port (container stays 443; set 443 only with a public domain) |
 | `EXPOSE_PLUGIN_DEBUGGING_PORT` | `31503` | host port for the plugin debugger (container stays 5003) |
 | `SECRET_KEY` | `auto-generated (hex 32)` | session signing (secret) |
 | `INIT_PASSWORD` | `auto-generated (24 chars)` | admin initial password (secret) |

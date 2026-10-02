@@ -47,12 +47,17 @@ and giving clean, deterministic names for the residue map. The deploy root
 Desktop's default share list, so the `nginx/`+`ssrf_proxy/` config-template
 **binds** work fine; only data uses named volumes.
 
-### Port 8088
+### Ports (31101 / 31102 / 31503)
 
-dify upstream defaults to `:80`; the `windmill` module already owns `:80` in
-this repo (CI detects cross-module port conflicts). Default to **8088**,
-overridable via `DIFY_PORT` (writes both `EXPOSE_NGINX_PORT` and `DIFY_PORT`
-in the deploy `.env`; nginx still listens internally on `NGINX_PORT=80`).
+dify upstream defaults to `:80` — privileged and outside the aibox reserved band
+(spec §Port allocation) — so the module publishes the band instead: HTTP **31101**,
+HTTPS **31102** (`EXPOSE_NGINX_SSL_PORT`; was 31443, which silently collided with
+windmill's HTTPS publish — NEITHER was declared in `ports:`, so the port-conflict
+gate never saw it), plugin debugger **31503**. All three are declared in
+`ports:` so the conflict gate reserves them. The web port is overridable via
+`DIFY_WEB_PORT` (the install hook writes `EXPOSE_NGINX_PORT` + upstream's
+`DIFY_PORT=5001` — the api gunicorn listen port — into the deploy `.env`; nginx
+still listens internally on `NGINX_PORT=80`).
 
 ### Shared-base mode (opt-in)
 

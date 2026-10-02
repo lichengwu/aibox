@@ -17,8 +17,12 @@
 #   - no hardcoded credentials — everything tunable via the deploy .env
 #     (written once by `aibox install dify`, never clobbered).
 #
-# Default port: ${EXPOSE_NGINX_PORT:-8088} (dify upstream defaults to 80, which
-# collides with the windmill module in this repo). Override with DIFY_WEB_PORT.
+# Ports (aibox reserved band, spec §Port allocation; upstream defaults to :80,
+# which is privileged): HTTP ${EXPOSE_NGINX_PORT:-31101} (override with
+# DIFY_WEB_PORT, written to .env by the install hook), HTTPS
+# ${EXPOSE_NGINX_SSL_PORT:-31102} (was 31443: it collided with windmill's HTTPS
+# publish, and NEITHER port was declared in ports: so the conflict gate never
+# saw it), plugin debugger ${EXPOSE_PLUGIN_DEBUGGING_PORT:-31503}.
 #
 # Shared base (optional): drop-in docker-compose.shared.yml switches db/redis
 # to the aibox base instance (replicas: 0 + aiboxbasenet) — see that file.
@@ -349,7 +353,7 @@ services:
       - web
     ports:
       - "${EXPOSE_NGINX_PORT:-31101}:${NGINX_PORT:-80}"
-      - "${EXPOSE_NGINX_SSL_PORT:-31443}:${NGINX_SSL_PORT:-443}"
+      - "${EXPOSE_NGINX_SSL_PORT:-31102}:${NGINX_SSL_PORT:-443}"
     networks:
       - default
 

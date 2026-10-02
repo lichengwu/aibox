@@ -1,5 +1,5 @@
 name: dify
-version: 1.24.3
+version: 1.25.0
 module_iface: 1
 description: "Dify self-hosted (docker compose): LLM app builder (api/worker/web/nginx + weaviate)"
 platform: ""
@@ -10,14 +10,21 @@ deps:
   - docker
   - docker-compose
 
-# dify's official default is :80; windmill already owns 80 in this repo (CI
-# detects port conflicts), so this module uses the aibox reserved band (spec §Port
-# allocation); 31101 is the host entry (overridable via
-# DIFY_WEB_PORT in the deploy .env). All images are pulled by the docker DAEMON
-# (whose egress differs from the host's), so connectivity is probed daemon-routed
-# via docker_pull — no host-domain probes here.
+# dify's official default is :80 (privileged, outside the aibox reserved
+# band — spec §Port allocation), so this module publishes the band instead:
+# HTTP 31101 (overridable via DIFY_WEB_PORT in the deploy .env), HTTPS 31102,
+# plugin debugger 31503. The SSL port used to default to 31443, which silently
+# collided with windmill's HTTPS publish: NEITHER was declared in ports:, so
+# the port-conflict gate never saw it. Images are pulled by the docker DAEMON
+# (whose egress differs from the host's), so connectivity is probed
+# daemon-routed via docker_pull — no host-domain probes here.
 ports:
   - 31101/tcp:http
+  # nginx always publishes the SSL listener and the plugin daemon the debugger —
+  # declare every host port the compose publishes (spec §Port allocation: the
+  # port-conflict check reserves what is declared)
+  - 31102/tcp:https
+  - 31503/tcp:debug
 
 # Standard 5 hooks (lib.sh/install.sh/uninstall.sh/update.sh/svc.sh) are implicit;
 # these are the extras aibox must download alongside them. docker-compose.yml is
@@ -64,8 +71,8 @@ actions:
   - config
 
 env:
-  DIFY_PORT: "31101 — host port (EXPOSE_NGINX_PORT; upstream default 80 is privileged)"
-  EXPOSE_NGINX_SSL_PORT: "31443 — host HTTPS port (container stays 443; set 443 only with a public domain)"
+  DIFY_WEB_PORT: "31101 — host web port (writes EXPOSE_NGINX_PORT in .env; upstream's DIFY_PORT is the api gunicorn port — do not reuse)"
+  EXPOSE_NGINX_SSL_PORT: "31102 — host HTTPS port (container stays 443; set 443 only with a public domain)"
   EXPOSE_PLUGIN_DEBUGGING_PORT: "31503 — host port for the plugin debugger (container stays 5003)"
   SECRET_KEY: "auto-generated (hex 32) — session signing [secret]"
   INIT_PASSWORD: "auto-generated (24 chars) — admin initial password [secret]"

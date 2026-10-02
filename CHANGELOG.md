@@ -22,9 +22,24 @@ GitHub release notes are auto-generated from the previous tag; this file is the 
   the next `openmaic up` (container recreate) — update any `:3000` bookmarks. Access beyond
   loopback is gated by the app's ACCESS_CODE (generated at first run); `up` now warns when a
   binding beyond loopback has no ACCESS_CODE configured. (openmaic 1.8.0)
+- **dify: the SSL publish moves 31443 → 31102, and every published host port is declared.**
+  The compose always published `EXPOSE_NGINX_SSL_PORT` (default 31443) and the plugin
+  debugger (31503), but `ports:` declared only 31101 — so the port-conflict gate reserved
+  nothing, and dify's 31443 silently collided with windmill's HTTPS publish (windmill's was
+  undeclared too; found while sweeping published ports). windmill now declares
+  `31443/tcp:https` (bound only when BASE_URL is https — the render-time TLS publish) and
+  dify declares 31101/31102/31503. A dify deployment relying on `https://<host>:31443`
+  must set `EXPOSE_NGINX_SSL_PORT` in its deploy .env or move to 31102; windmill's port is
+  unchanged. The stale compose header (claimed default 8088) is corrected too. (dify 1.25.0,
+  windmill 1.9.4 — windmill's change is the declaration alone)
 
 ### Fixed
 
+- **dify: the module env doc advertised the host port under the wrong knob name.** It said
+  `DIFY_PORT` — but upstream's DIFY_PORT is the api gunicorn listen port (install.sh's own
+  comment documents the trap: reusing it made gunicorn bind 8088 and nginx 502 on api:5001).
+  The knob is documented as `DIFY_WEB_PORT` now, and the README/DEVELOPMENT.md port sections
+  (still claiming 8088) were rewritten to the real set: 31101 / 31102 / 31503.
 - **modules.SHA256SUMS now actually covers everything download_module fetches (81
   entries, was 69).** The generator enumerated the tree with a find pattern (`-name 'cli'`
   — a BASENAME, while cli/ is a directory; no arm at all for lib-*.sh or vendored

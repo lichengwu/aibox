@@ -1,5 +1,5 @@
 name: windmill
-version: 1.9.3
+version: 1.9.4
 module_iface: 1
 description: "Windmill self-host ops CLI (init/upgrade/backup/drill/doctor)"
 platform: ""
@@ -14,6 +14,11 @@ ports:
   # entry port, default 31100 (aibox reserved band, spec §Port allocation; host conf
   # HTTP_PORT overrides at init/up). The HTTPS publish uses HTTPS_PORT (default 31443).
   - 31100/tcp:http
+  # 31443 is bound only when BASE_URL is https (render-time TLS publish:
+  # render_compose keeps or drops the placeholder line). Declared so the
+  # port-conflict gate reserves it — dify's SSL publish once defaulted to the
+  # same 31443 and neither side declared it, so the gate never saw it
+  - 31443/tcp:https
 
 files:
   - cli/windmill
