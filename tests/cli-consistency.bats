@@ -376,7 +376,7 @@ SH
   [ -f "$dir/.env" ] || false
   [ -f "$dir/.env.local" ] || false
   grep -qE '^PERSISTENCE_DEV_TOKEN=.{16,}$' "$dir/.env.local" || false
-  grep -qE '^ACCESS_CODE=.{6,}$' "$dir/.env.local" || false
+  grep -qE '^ACCESS_CODE=.{16,}$' "$dir/.env.local" || false
   grep -qE '^OPENMAIC_PORT=31140$' "$dir/.env" || false
   grep -qE '^OPENMAIC_PUBLISH_ADDRESS=0\.0\.0\.0$' "$dir/.env" || false
   case "$output" in *"ACCESS CODE:"*) ;; *) false ;; esac

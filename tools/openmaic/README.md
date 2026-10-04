@@ -193,7 +193,7 @@ state, declared ports; see below).
 | `OPENMAIC_APP_PORT` | `3000` | container-internal app port; the CLI probes the PUBLISHED host port automatically (knob) |
 | `OPENMAIC_PORT` | `31140` | published host port (aibox reserved band; the container stays on 3000) (knob) |
 | `OPENMAIC_PUBLISH_ADDRESS` | `0.0.0.0` | interface the published port binds (upstream default 127.0.0.1; gated by ACCESS_CODE) (knob) |
-| `OPENMAIC_ACCESS_CODE` | `(unset)` | access code for a FIRST-RUN bootstrap (else generated and printed); set it in /etc/openmaic/openmaic.conf (secret) |
+| `OPENMAIC_ACCESS_CODE` | `(unset)` | access code for a FIRST-RUN bootstrap (else generated: 16 hex chars, printed); set it in /etc/openmaic/openmaic.conf (secret) |
 | `OPENMAIC_BASE_DIR` | `$AIBOX_HOME/apps/openmaic` | deploy root (knob) |
 | `OPENMAIC_HEALTH_URL` | `http://127.0.0.1:31140/api/health` | health probe URL (host port; container stays 3000) (knob) |
 | `OPENMAIC_HEALTH_TIMEOUT` | `300` | health-wait seconds (knob) |

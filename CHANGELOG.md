@@ -57,6 +57,12 @@ GitHub release notes are auto-generated from the previous tag; this file is the 
   compose template with a literal-port regex that could never match an interpolation expression
   (it always fell through to the fallback). All now derive the endpoint from the effective
   `OPENMAIC_PORT` (env / `openmaic.conf` > deploy `.env` > 31140).
+- **openmaic: first-run access codes are now 16 hex chars (upstream warns under 16).** The app
+  logs `ACCESS_CODE is shorter than 16 characters` on every login attempt (live on 50.55),
+  and for direct deployments the app's attempt limiter does not engage (it needs a trusted
+  proxy identity) — so the code length is the only brute-force cost. Existing deployments keep
+  their code (regenerating would log the operator out); the change affects the next first-run
+  bootstrap only. (openmaic 1.8.2)
 - **openmaic: the access code is re-stated where you look for it.** It was printed once
   mid-deploy (step 2/6) and drowned in the build output; the deploy-complete summary now
   repeats it with the retrieval command, and `openmaic status` gains a `login` hint line
