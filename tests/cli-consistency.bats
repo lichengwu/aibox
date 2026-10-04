@@ -500,6 +500,46 @@ YML
   rm -f "$frag" "$s"
 }
 
+@test "openmaic: the access cookie honors COOKIE_SECURE (plain-HTTP login persists)" {
+  # Upstream sets `secure: NODE_ENV==='production'` unconditionally; browsers then DROP the
+  # cookie over plain HTTP on a LAN IP (RFC 6265bis; localhost excepted) → every refresh
+  # re-asks for the code (live on 50.55; curl reproduces: empty cookie jar). The CLI aligns
+  # the route with upstream's own COOKIE_SECURE convention and sets it 0 in the compose env.
+  local frag dir s r1
+  frag="$(mktemp)"; s="$(mktemp)"; dir="$BATS_TMPDIR/omc-cookie"; rm -rf "$dir"; mkdir -p "$dir/app/api/access-code/verify"
+  sed -n '/^patch_http_auth_cookie() {/,/^}/p' "$REPO_ROOT/tools/openmaic/cli/openmaic" >"$frag"
+  [ -s "$frag" ] || false
+  cat >"$s" <<'SH'
+C_YEL=""; C_RST=""; C_GRN=""; C_RED=""
+warn() { printf 'warn %s\n' "$*"; }
+dim()  { printf 'dim %s\n'  "$*"; }
+ok()   { printf 'ok %s\n'   "$*"; }
+err()  { printf 'err %s\n'  "$*"; }
+DRY_RUN=0
+. "$FRAG"
+APP_DIR="$FR_APP"
+patch_http_auth_cookie
+SH
+  printf "    secure: process.env.NODE_ENV === 'production',\n" >"$dir/app/api/access-code/verify/route.ts"
+  printf '    environment:\n      - RENDER_SERVICE_URL=http://render-service:9000\n    networks:\n' >"$dir/docker-compose.yml"
+  run bash -c "env FRAG='$frag' FR_APP='$dir' bash '$s' 2>&1"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q "process.env.COOKIE_SECURE !== '0'" "$dir/app/api/access-code/verify/route.ts" || false
+  grep -q 'COOKIE_SECURE=\${COOKIE_SECURE:-0}' "$dir/docker-compose.yml" || false
+  # idempotent second run
+  r1="$(cat "$dir/app/api/access-code/verify/route.ts")"
+  run bash -c "env FRAG='$frag' FR_APP='$dir' bash '$s' 2>&1"
+  [ "$(cat "$dir/app/api/access-code/verify/route.ts")" = "$r1" ] || false
+  # unexpected format -> warns, exits 0, file untouched
+  printf '    secure: somethingElse(),\n' >"$dir/app/api/access-code/verify/route.ts"
+  before="$(cat "$dir/app/api/access-code/verify/route.ts")"
+  run bash -c "env FRAG='$frag' FR_APP='$dir' bash '$s' 2>&1"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  case "$output" in *warn*) ;; *) false ;; esac
+  [ "$(cat "$dir/app/api/access-code/verify/route.ts")" = "$before" ] || false
+  rm -f "$frag" "$s"
+}
+
 @test "openmaic: the health probe follows the PUBLISHED port (the 31140 default must not fake 'not ready')" {
   run grep -q 'deployed_health_url()' "$REPO_ROOT/tools/openmaic/cli/openmaic"
   [ "$status" -eq 0 ] || false

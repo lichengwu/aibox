@@ -57,6 +57,15 @@ GitHub release notes are auto-generated from the previous tag; this file is the 
   compose template with a literal-port regex that could never match an interpolation expression
   (it always fell through to the fallback). All now derive the endpoint from the effective
   `OPENMAIC_PORT` (env / `openmaic.conf` > deploy `.env` > 31140).
+- **openmaic: login now persists over plain HTTP.** The app sets the access cookie with
+  `secure: NODE_ENV === 'production'`, so on `http://<lan-ip>:31140` the browser DROPPED it
+  (RFC 6265bis — localhost is the only HTTP exception) and every refresh asked for the code
+  again (live on 50.55; curl reproduces it: the cookie jar stays empty). The CLI now aligns
+  the route with upstream's own `COOKIE_SECURE` convention (documented in `.env.example`,
+  already honored by the workbench cookie) and sets `COOKIE_SECURE=0` in the compose
+  environment — override to `1` when fronting the app with your own TLS. Requires a rebuild
+  (`aibox openmaic install` / `openmaic upgrade` re-apply patches before the build); a bare
+  `up` cannot change it. (openmaic 1.8.3)
 - **openmaic: first-run access codes are now 16 hex chars (upstream warns under 16).** The app
   logs `ACCESS_CODE is shorter than 16 characters` on every login attempt (live on 50.55),
   and for direct deployments the app's attempt limiter does not engage (it needs a trusted

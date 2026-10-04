@@ -376,6 +376,60 @@ patch_publish_ports() {
   return 1
 }
 
+# Upstream's access cookie sets `secure: NODE_ENV === 'production'` unconditionally — over
+# plain HTTP on a LAN IP the browser refuses to STORE a Secure cookie (RFC 6265bis;
+# localhost is the only HTTP exception), so every refresh asks for the access code again
+# (live on 50.55; curl reproduces it — the cookie jar stays empty). Upstream already has
+# the knob for this: COOKIE_SECURE=0 (documented in .env.example; the workbench cookie
+# honors it via anonymousCookieSecure()) — the access-code cookie just never got wired to
+# it. Align them: patch the route to honor COOKIE_SECURE and set COOKIE_SECURE=0 in the
+# compose environment for the plain-HTTP publish (fronting the app with your own TLS: set
+# COOKIE_SECURE=1). Needs a REBUILD (install/upgrade re-apply patches then build) — a bare
+# `up` only restarts the existing image.
+patch_http_auth_cookie() {
+  local route="$APP_DIR/app/api/access-code/verify/route.ts"
+  local compose="$APP_DIR/docker-compose.yml"
+  if [ -f "$route" ] && ! grep -q 'COOKIE_SECURE' "$route"; then
+    if ! grep -qF "secure: process.env.NODE_ENV === 'production'," "$route"; then
+      warn "unexpected access-cookie format in $route — COOKIE_SECURE not honored (login will not persist over plain HTTP)"
+    elif [ "$DRY_RUN" = 1 ]; then
+      dim "  [dry-run] would patch the access-cookie Secure flag in $route"
+    else
+      cp -a "$route" "$route.bak"
+      sed -i "s#secure: process.env.NODE_ENV === 'production',#secure: process.env.NODE_ENV === 'production' \&\& process.env.COOKIE_SECURE !== '0',#" "$route"
+      if grep -q 'COOKIE_SECURE' "$route"; then
+        ok "patched access-cookie Secure to honor COOKIE_SECURE"
+        rm -f "$route.bak"
+      else
+        err "access-cookie patch failed, restored"
+        mv -f "$route.bak" "$route"
+        return 1
+      fi
+    fi
+  fi
+  if [ -f "$compose" ] && ! grep -q 'COOKIE_SECURE' "$compose"; then
+    if ! grep -qF -- '- RENDER_SERVICE_URL=http://render-service:9000' "$compose"; then
+      warn "unexpected compose environment format in $compose — COOKIE_SECURE not added"
+      return 0
+    fi
+    if [ "$DRY_RUN" = 1 ]; then
+      dim "  [dry-run] would add COOKIE_SECURE=\${COOKIE_SECURE:-0} to $compose"
+      return 0
+    fi
+    cp -a "$compose" "$compose.bak"
+    sed -i 's#^\(      - RENDER_SERVICE_URL=http://render-service:9000\)$#\1\n      - COOKIE_SECURE=${COOKIE_SECURE:-0}#' "$compose"
+    if grep -q 'COOKIE_SECURE' "$compose"; then
+      ok "added COOKIE_SECURE to the compose environment (plain-HTTP deployments keep login sessions)"
+      rm -f "$compose.bak"
+      return 0
+    fi
+    err "compose COOKIE_SECURE patch failed, restored"
+    mv -f "$compose.bak" "$compose"
+    return 1
+  fi
+  return 0
+}
+
 compose() {
   # PRECONDITION: the app source tree must be deployed first. `aibox install openmaic`
   # installs THIS MODULE (the ops CLI + shared base); the app itself is deployed by
@@ -831,8 +885,10 @@ apply_local_patches() {
   # Shared PG override (controlled by OPENMAIC_SHARED_PG; idempotent; runs before other patches; non-blocking)
   ensure_shared_pg_override
   # Inject the publish-port interpolation BEFORE the render-patch early-returns below
-  # (v1.1.2 hardcodes '3000:3000'; see patch_publish_ports).
+  # (v1.1.2 hardcodes '3000:3000'; see patch_publish_ports), and align the access cookie
+  # with upstream's COOKIE_SECURE convention (see patch_http_auth_cookie).
   patch_publish_ports || return 1
+  patch_http_auth_cookie || return 1
 
   local f="$APP_DIR/render-service/Dockerfile"
   [ -f "$f" ] || { warn "${f} not found, skipping patches"; return 0; }
