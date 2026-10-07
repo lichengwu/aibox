@@ -568,7 +568,7 @@ eval "$(grep -m1 '^GH_POOL_MIRRORS=' "$CLI")"; _GH_MIRROR_FAILED=""
 for fn in gh_mirror_list gh_mirror_url _git_probe _gh_mirror_pick git_fetch_tag; do
   eval "$(sed -n "/^${fn}() {/,/^}/p" "$CLI")"
 done
-git_fetch_tag v1.1.2; echo "exit=$?"
+git_fetch_tag v1.1.2; echo "exit=$?"; echo "route=$GIT_FETCH_ROUTE"
 SH
   # (a) direct dead -> the probe fails, the mirror answers, only the mirror is fetched
   cat > "$dir/bin/git" <<'GIT'
@@ -586,6 +586,7 @@ GIT
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   printf '%s\n' "$output" | grep -q 'channel: github.com direct did not answer the probe' || { echo "$output"; false; }
   printf '%s\n' "$output" | grep -q 'channel: mirror https://gh-proxy.com' || { echo "$output"; false; }
+  printf '%s\n' "$output" | grep -qx 'route=mirror https://gh-proxy.com' || { echo "$output"; false; }
   grep -qx 'https://gh-proxy.com/https://github.com/THU-MAIC/OpenMAIC.git' "$dir/fetch.log" || { cat "$dir/fetch.log"; false; }
   ! grep -q '^https://github.com/THU-MAIC' "$dir/fetch.log" || { cat "$dir/fetch.log"; false; }
   # (b) direct healthy -> today's ladder, no mirror anywhere
@@ -602,10 +603,50 @@ GIT
   run bash -c "T='$dir' CLI='$REPO_ROOT/tools/openmaic/cli/openmaic' bash '$s' 2>&1"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
   ! printf '%s\n' "$output" | grep -q 'channel: mirror' || { echo "$output"; false; }
+  printf '%s\n' "$output" | grep -qx 'route=direct' || { echo "$output"; false; }
   grep -qx 'https://github.com/THU-MAIC/OpenMAIC.git' "$dir/fetch.log" || { cat "$dir/fetch.log"; false; }
   # knobs documented for the operator (override list / disable / probe budget)
   grep -q 'OPENMAIC_GH_MIRRORS' "$REPO_ROOT/tools/openmaic/module.yaml" || false
   grep -q 'OPENMAIC_GH_PROBE_TIMEOUT' "$REPO_ROOT/tools/openmaic/module.yaml" || false
+}
+
+@test "openmaic: the tarball channel ships the tag tree when the git protocol crawls" {
+  # git can be unreachable OR crawl while plain HTTPS flows (live-caught through ONE
+  # mirror: git bulk 65KB/s and 0KB/30s on the other, vs the codeload tarball at
+  # 11MB/s). tarball_fetch downloads <mirror>/codeload.../tar.gz/refs/tags/<tag>,
+  # strips the top dir, and bootstraps a minimal git repo (one commit + origin) so
+  # upgrades/status keep working.
+  local dir
+  dir="$BATS_TMPDIR/omc-tarball"; rm -rf "$dir"; mkdir -p "$dir/bin" "$dir/app" "$dir/fx/OpenMAIC-1.1.2"
+  echo tree > "$dir/fx/OpenMAIC-1.1.2/hello.txt"
+  tar -czf "$dir/fx/src.tar.gz" -C "$dir/fx" OpenMAIC-1.1.2
+  cat > "$dir/bin/curl" <<'CURL'
+#!/usr/bin/env bash
+out=""; url=""
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac; done
+echo "$url" >> "$T/curl.log"; cp "$T/fx/src.tar.gz" "$out"
+CURL
+  cat > "$dir/bin/git" <<'GIT'
+#!/usr/bin/env bash
+echo "$1" >> "$T/git.log"; exit 0
+GIT
+  chmod +x "$dir/bin/curl" "$dir/bin/git"
+  cat > "$dir/h.sh" <<'SH'
+export PATH="$T/bin:$PATH"
+REPO="THU-MAIC/OpenMAIC"; APP_DIR="$T/app"; OPENMAIC_TARBALL_TIMEOUT=30
+log() { printf 'log: %s\n' "$*"; }; warn() { printf 'warn: %s\n' "$*"; }; dim() { :; }; err() { :; }
+eval "$(grep -m1 '^GH_POOL_MIRRORS=' "$CLI")"
+for fn in gh_mirror_list gh_mirror_url tarball_fetch _bootstrap_git; do eval "$(sed -n "/^${fn}() {/,/^}/p" "$CLI")"; done
+tarball_fetch v1.1.2 && echo "ok route=$GIT_FETCH_ROUTE"
+SH
+  run bash -c "T='$dir' CLI='$REPO_ROOT/tools/openmaic/cli/openmaic' bash '$dir/h.sh' 2>&1"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  printf '%s\n' "$output" | grep -qx 'ok route=tarball https://gh-proxy.com' || { echo "$output"; false; }
+  grep -qx 'https://gh-proxy.com/https://codeload.github.com/THU-MAIC/OpenMAIC/tar.gz/refs/tags/v1.1.2' "$dir/curl.log" || { cat "$dir/curl.log"; false; }
+  [ "$(cat "$dir/app/hello.txt" 2>/dev/null)" = "tree" ] || { ls "$dir/app"; false; }
+  grep -q '^init$' "$dir/git.log" || { cat "$dir/git.log"; false; }
+  # and the deploy path calls it when the git ladder fails
+  grep -q 'tarball_fetch "$tag"' "$REPO_ROOT/tools/openmaic/cli/openmaic" || false
 }
 
 @test "openmaic: the source fetch retries and gets progressively shallower (throttled links)" {

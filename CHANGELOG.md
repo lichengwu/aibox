@@ -7,6 +7,22 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.35.0] — 2026-10-07
+
+### Added
+
+- **openmaic: a tarball channel for the source fetch — the fix for the "reachable but
+  crawling" link.** Live-caught through one mirror: the git protocol crawled at 65KB/s (the
+  other mirror stalled at 0KB/30s) while the SAME mirror served the tag tarball at 11MB/s
+  (93MB in ~8s). When every git channel fails, the deploy now downloads
+  `<mirror>/codeload…/tar.gz/refs/tags/<tag>` over plain HTTPS, unpacks the tag tree, and
+  bootstraps a minimal git repo (one commit + origin) so upgrades/status keep working.
+  Knob: `OPENMAIC_TARBALL_TIMEOUT` (900s). (openmaic 1.10.0)
+- **openmaic: the source fetch says which route served it.** On success it prints
+  `source route: direct | mirror <host> | tarball <host>`; on failure the hints name the
+  last route tried — the difference between "worked" and "worked because a mirror saved
+  it" is visible without guessing.
+
 ## [0.34.0] — 2026-10-07
 
 ### Added
@@ -2444,6 +2460,7 @@ One icon per module on the dashboard header tells the whole story — installed
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
+[0.35.0]: https://github.com/lichengwu/aibox/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/lichengwu/aibox/compare/v0.33.3...v0.34.0
 [0.33.3]: https://github.com/lichengwu/aibox/compare/v0.33.2...v0.33.3
 [0.33.2]: https://github.com/lichengwu/aibox/compare/v0.33.1...v0.33.2

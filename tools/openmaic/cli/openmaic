@@ -803,8 +803,57 @@ latest_tag() {
 # that cannot complete the handshake — or whose first fetch dies/times out (the
 # THROTTLED case: handshake passes, bulk crawls) — switches to the mirror pool,
 # dropping a dead mirror for the next candidate on successive attempts.
+# Tarball channel: the fallback for a link where the git protocol is unreachable
+# OR crawls while plain HTTPS flows — live-caught through the SAME mirror: git bulk
+# 65KB/s (and one mirror stalled at 0KB/30s) vs the codeload tarball at 11MB/s,
+# 93MB in ~8s. Downloads <mirror>/https://codeload.github.com/<repo>/tar.gz/refs/tags/<tag>,
+# unpacks the tag tree into APP_DIR (top dir stripped), and bootstraps a minimal git
+# repo so `git fetch`/checkout/describe keep working for upgrades and status. The
+# TREE is identical to the tag; the history is not (that is what the git channel is
+# for — this exists so a throttled link can still deploy).
+tarball_fetch() { # $1=tag → 0 on a validated, extracted tree
+  local tag="$1" url base tmp=""
+  command -v tar >/dev/null 2>&1 || return 1
+  url="https://codeload.github.com/$REPO/tar.gz/refs/tags/$tag"
+  tmp="$(mktemp -d)" || return 1
+  for base in $(gh_mirror_list); do
+    GIT_FETCH_ROUTE="tarball ${base}"
+    log "channel: tarball ${base} (tag tree via plain HTTPS) ..."
+    if curl -fsSL --max-time "${OPENMAIC_TARBALL_TIMEOUT:-900}" -o "$tmp/src.tar.gz" "${base%/}/${url}" 2>/dev/null \
+      && tar -tzf "$tmp/src.tar.gz" >/dev/null 2>&1 \
+      && tar -xzf "$tmp/src.tar.gz" -C "$APP_DIR" --strip-components=1 2>/dev/null \
+      && _bootstrap_git "$tag"; then
+      rm -rf "$tmp"
+      return 0
+    fi
+    warn "  tarball via ${base} failed validation — trying next"
+  done
+  rm -rf "$tmp"
+  return 1
+}
+
+# After a tarball install APP_DIR is a real repo at the tag's tree (no history):
+# one synthetic commit so rev-parse/describe/status answer, origin set, and later
+# `git fetch --tags <url>` + `git checkout --force <tag>` (upgrade/rollback) work.
+_bootstrap_git() { # $1=tag (label only)
+  ( cd "$APP_DIR" || return 1
+    [ -d .git ] || git init -q || return 1
+    git config user.email "aibox@localhost" >/dev/null 2>&1 || true
+    git config user.name "aibox deploy" >/dev/null 2>&1 || true
+    git remote get-url origin >/dev/null 2>&1 \
+      || { git remote add origin "https://github.com/$REPO.git" >/dev/null 2>&1 || true; }
+    git add -A >/dev/null 2>&1 || true
+    git commit -q -m "aibox: tarball bootstrap (${1:-tag tree})" >/dev/null 2>&1 || true
+  )
+  return 0
+}
+
 git_fetch_tag() {
   local tag="$1" url attempt=1 max="${OPENMAIC_FETCH_ATTEMPTS:-4}" shallow="" TO="" m="" pref="direct" next_m=""
+  # The caller redirects this function's output (quiet console) but reads this
+  # global to say WHICH route the source came from — the difference between
+  # "worked" and "worked because the mirror saved it" (live-caught: 50.55).
+  GIT_FETCH_ROUTE=""
   # Per-attempt timeout: a THROTTLED link (small requests pass, bulk transfers crawl) would
   # otherwise burn tens of minutes on one attempt before the retry/shallow logic ever ran —
   # live-caught on 50.55: 353MB transferred at ~50KB/s and the deploy looked "stuck" for
@@ -816,6 +865,7 @@ git_fetch_tag() {
     m="$(_gh_mirror_pick)"
     if [ -n "$m" ]; then
       pref="mirror"
+      GIT_FETCH_ROUTE="mirror ${m}"
       log "channel: github.com direct did not answer the probe — using the mirror pool (${m})"
     else
       dim "  github.com direct not answering and no mirror answered — trying the direct ladder"
@@ -848,10 +898,12 @@ git_fetch_tag() {
     fi
     if [ -n "$PROXY_URL" ]; then
       url="https://github.com/$REPO.git"
+      [ -n "$GIT_FETCH_ROUTE" ] || GIT_FETCH_ROUTE="direct (via proxy)"
       log "channel: direct (via proxy ${PROXY_DISPLAY}) attempt ${attempt}/${max}${shallow:+ (shallow)}${TO:+ [${OPENMAIC_FETCH_TIMEOUT:-240}s cap]}"
       if ( cd "$APP_DIR" && env "https_proxy=$PROXY_URL" "http_proxy=$PROXY_URL" \
              GIT_TERMINAL_PROMPT=0 ${TO} git fetch $shallow --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
     fi
+    [ -n "$GIT_FETCH_ROUTE" ] || GIT_FETCH_ROUTE="direct"
     log "channel: direct (no proxy) attempt ${attempt}/${max}${shallow:+ (shallow)}${TO:+ [${OPENMAIC_FETCH_TIMEOUT:-240}s cap]}"
     url="https://github.com/$REPO.git"
     if ( cd "$APP_DIR" && GIT_TERMINAL_PROMPT=0 ${TO} git fetch $shallow --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
@@ -861,6 +913,7 @@ git_fetch_tag() {
       m="$(_gh_mirror_pick)"
       if [ -n "$m" ]; then
         pref="mirror"
+        GIT_FETCH_ROUTE="mirror ${m}"
         dim "  direct fetch did not complete — switching to mirror ${m}"
       fi
     fi
@@ -1949,16 +2002,21 @@ cmd_install() {
       ( cd "$APP_DIR" && git init -q && git remote add origin "https://github.com/$REPO.git" ) \
         || { err "repo init failed"; return "$EXIT_ERR"; }
     fi
-    git_fetch_tag "$tag" >/dev/null 2>&1 \
-      || { err "source fetch failed (all channels unavailable)"; \
+    if git_fetch_tag "$tag" >/dev/null 2>&1; then
+      ( cd "$APP_DIR" && git checkout --force "$tag" >/dev/null 2>&1 ) \
+        || { err "checkout of $tag failed"; return "$EXIT_ERR"; }
+    else
+      warn "git source channels failed — falling back to the tarball channel (tag tree via plain HTTPS; upgrades keep using git)"
+      tarball_fetch "$tag" || { err "source fetch failed (all channels unavailable)"; \
            hint "mirror pool tried: $(gh_mirror_list | tr '\n' ' ')  (override: OPENMAIC_GH_MIRRORS, disable: OPENMAIC_GH_MIRRORS=direct)"; \
+           hint "last route: ${GIT_FETCH_ROUTE:-direct}"; \
            [ -n "$PROXY_URL" ] && hint "a proxy is configured (${PROXY_DISPLAY}); confirm it is reachable" \
              || hint "if the deploy host cannot reach GitHub directly, set OPENMAIC_PROXY_URL=<url> and retry"; \
            return "$EXIT_ERR"; }
-    ( cd "$APP_DIR" && git checkout --force "$tag" >/dev/null 2>&1 ) \
-      || { err "checkout of $tag failed"; return "$EXIT_ERR"; }
+    fi
     echo "$tag" >"$C_TAG"
     ok "source ready: $tag"
+    dim "  source route: ${GIT_FETCH_ROUTE:-direct}"
   fi
 
   # 2) Config
