@@ -7,6 +7,16 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.33.3] — 2026-10-07
+
+### Added
+
+- **`self --purge`'s reclamation now says what it kept and how to take the rest.** The 24h
+  build-cache filter is deliberately conservative (a layer reused by a rebuild gets a fresh
+  last-use stamp — live-caught: a full teardown shrank the cache only 16.2G → 16.1G), so the
+  apply path closes with `build cache: entries used within 24h kept — full clean: docker
+  builder prune -f`.
+
 ## [0.33.2] — 2026-10-07
 
 ### Fixed
@@ -2419,6 +2429,7 @@ One icon per module on the dashboard header tells the whole story — installed
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
+[0.33.3]: https://github.com/lichengwu/aibox/compare/v0.33.2...v0.33.3
 [0.33.2]: https://github.com/lichengwu/aibox/compare/v0.33.1...v0.33.2
 [0.33.1]: https://github.com/lichengwu/aibox/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/lichengwu/aibox/compare/v0.32.1...v0.33.0

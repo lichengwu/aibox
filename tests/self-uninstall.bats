@@ -244,4 +244,7 @@ FAKE
   printf '%s\n' "$output" | grep -q 'build cache' || { echo "$output"; false; }
   printf '%s\n' "$output" | grep -q 'docker-level debris reclaimed' || { echo "$output"; false; }
   grep -q 'builder prune' "$SANDBOX/docker.log" || { echo "reclaim was not applied: $output"; false; }
+  # the conservative 24h filter keeps recently-used entries — the closing line must
+  # name what remains and the full-clean command (full teardown hosts want that)
+  printf '%s\n' "$output" | grep -q 'full clean: docker builder prune -f' || { echo "$output"; false; }
 }

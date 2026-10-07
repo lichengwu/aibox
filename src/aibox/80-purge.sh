@@ -467,7 +467,13 @@ _autoclean_reclaim_apply() {
   [ -n "${vols}" ] && { reclaim_apply_volumes ${vols}; PURGE_DELETED=$((PURGE_DELETED + $(printf '%s\n' ${vols} | grep -c .) )); }
   # shellcheck disable=SC2086
   [ -n "${paths}" ] && { reclaim_apply_paths ${paths}; PURGE_DELETED=$((PURGE_DELETED + $(printf '%s\n' ${paths} | grep -c .) )); }
-  [ -n "${RECLAIM_CACHE}" ] && reclaim_apply_build_cache
+  if [ -n "${RECLAIM_CACHE}" ]; then
+    reclaim_apply_build_cache
+    # the 24h filter is deliberately conservative (a today-rebuilt layer's last-use
+    # stamp is fresh) — say what remains and the one command that takes it all, so a
+    # full teardown host does not have to wonder where 16G went
+    printf '  %sbuild cache: entries used within 24h kept — full clean: docker builder prune -f%s\n' "${C_DIM}" "${C_RST}"
+  fi
   return 0
 }
 
