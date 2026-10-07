@@ -371,13 +371,28 @@ aibox uninstall self [--purge] [--yes] remove the manager; --purge = cascade ful
 - Missing binaries must not short-circuit the hook (purge/retention of the deploy root
   still runs): no early `exit 0` before the data branch.
 
+After the hook, `--purge` runs two manager-side sweeps the hook contract never covered:
+
+- declared docker `networks:` — the project bridges a crashed `compose down` can lose a
+  race over (live-caught: a crash-looping container left `app_default` behind), and
+- declared docker `images:` — built/pulled *program* artifacts, not data (a built image
+  has no hook owner; live-caught: a purged stack left ~2G of images plus its build cache)
+
+Both apply the reclamation proofs: declared pattern + no container references (+ an image
+another installed module claims is kept). `--purge` then VERIFIES instead of trusting the
+flag: the module is rescanned and any remaining item is reported with
+`aibox autoclean <module> --apply`.
+
 ### Residue cleanup (`aibox autoclean`)
 
 `aibox autoclean` must remove what modules (or aibox itself) left behind **after** they are
 uninstalled and **offline**. The knowledge therefore belongs to the module:
 
-1. `module.yaml` `residue:` stanza (declarative: `paths`/`containers`/`volumes`/`units`/`bin`/`npm`/`process`),
-   or a `residue_paths()` override in `lib.sh` for dynamic cases (base: per-profile env files)
+1. `module.yaml` `residue:` stanza (declarative: `paths`/`containers`/`volumes`/`networks`/`images`/`units`/`bin`/`npm`/`process`),
+   or a `residue_paths()` override in `lib.sh` for dynamic cases (base: per-profile env files).
+   Pattern semantics: `containers`/`volumes`/`networks` match the docker object NAME,
+   `images` matches the `repo:tag` REF (so `^app-openmaic:` is an image, `:16$` pins a tag);
+   all are EREs, matched with `grep -E`
 2. captured into `$AIBOX_HOME/residue.conf` at install/update time (plain KEY=VALUE, never sourced)
    — this is what survives `aibox uninstall <module>` and a stale registry cache
 3. the manager derives the rest generically: `$AIBOX_HOME/apps/<name>` + every named profile's
@@ -388,6 +403,17 @@ knowledge living in the manager — every new path needed a manager edit). The l
 modules the "scan everything" path visits is DERIVED as well (module cache dirs +
 installed markers + the registry cache + `residue.conf` keys), so a newly added module
 is scanned without touching the manager.
+
+Two invariants guard the scan:
+
+- **Installed modules are never touched** (any profile): their deploy roots, module
+  cache, `/etc/<name>`, containers, volumes, networks and images ARE their live
+  deployment — skipping them is what keeps `autoclean --apply` from demolishing a
+  running stack. They are listed as skipped with a pointer to
+  `aibox uninstall <module> --purge`.
+- **`aibox uninstall self --purge` ends with the reclamation half** (before the manager
+  itself goes away): docker-level debris loses its owner with the cascade, and after
+  the next step nobody is left to prove and reclaim it.
 
 aibox autoclean                          # dry-run scan: categorized residue report (default)
 aibox autoclean <module>... --apply      # clean specific modules' residue

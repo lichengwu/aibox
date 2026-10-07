@@ -334,10 +334,10 @@ scripts/validate-module.sh <name> | --all                                  # con
 11. **Consuming the shared `base`? Follow the dependency contract** (spec §Dependency contract): link through the shared helpers (`base_env_file`/`ensure_shared_base`/`ensure_shared_db`/`ensure_shared_redis_db`) — NEVER hardcode `base.env` (it points at the DEFAULT profile and silently attaches a named-profile module to the wrong instance), end `deploy_root()` with `$(profile_suffix)`, declare the resource you consume (`base:redis#<module>` — a bare `base:redis` allocates no logical DB), and keep the `base.env` contract ADDITIVE (bump `AIBOX_BASE_ENV_VERSION` on both sides for any rename/removal). The validator enforces all four.
 12. **No hardcoded credentials** in compose files; shared-PG consumers read `${AIBOX_POSTGRES_*}` from the injected `base.env` (validator scans; base is the only exception by design).
 13. **Residue is DECLARED by the module**: a `residue:` stanza in `module.yaml`
-    (`paths`/`containers`/`volumes`/`units`/`bin`/`npm`/`process`) — captured into
+    (`paths`/`containers`/`volumes`/`networks`/`images`/`units`/`bin`/`npm`/`process`) — captured into
     `$AIBOX_HOME/residue.conf` at install time, so `aibox autoclean` can clean leftovers even
     after the module (or aibox itself) is uninstalled and offline (rescue: curl the
-    single-file `bin/aibox` to /tmp and run `purge --apply`). A module whose residue is
+    single-file `bin/aibox` to /tmp and run `autoclean --apply`). A module whose residue is
     dynamic overrides `residue_paths()` in `lib.sh` (base does, for its per-profile env
     files). The manager carries NO per-module residue map — validator WARNs when a module
     declares neither; spec: `docs/module-spec.md` §Residue cleanup.

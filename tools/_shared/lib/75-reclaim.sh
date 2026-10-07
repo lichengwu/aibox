@@ -37,6 +37,7 @@ _reclaim_tagged_ids() {
 
 # dangling (untagged, unreferenced) images → "<id> <size>"
 reclaim_dangling_images() {
+  [ "${PURGE_NO_DOCKER:-0}" = "1" ] && return 0
   command -v docker >/dev/null 2>&1 || return 0
   local id size
   for id in $(docker image ls --filter dangling=true -q 2>/dev/null | sort -u); do
@@ -48,6 +49,7 @@ reclaim_dangling_images() {
 
 # Build cache: nothing references it and no data lives there.
 reclaim_build_cache() {
+  [ "${PURGE_NO_DOCKER:-0}" = "1" ] && return 0
   command -v docker >/dev/null 2>&1 || return 0
   local n
   n="$(docker builder du 2>/dev/null | tail -1 | awk '{print $NF}')"
@@ -63,6 +65,7 @@ reclaim_apply_build_cache() {
 # module's pin (.env/conf), not an upgrade/rollback point (upgrades/*.state,
 # .env.bak.*). The newest <keep> tags per repository stay as a buffer.
 reclaim_stale_tags() { # $1=keep per repo (default 2)
+  [ "${PURGE_NO_DOCKER:-0}" = "1" ] && return 0
   command -v docker >/dev/null 2>&1 || return 0
   local keep="${1:-2}"
   local protected ref repo tag size
@@ -114,6 +117,7 @@ TAGS
 # the owning module is NOT installed any more. A stopped-but-installed module's
 # volumes are DATA and stay.
 reclaim_orphan_volumes() {
+  [ "${PURGE_NO_DOCKER:-0}" = "1" ] && return 0
   command -v docker >/dev/null 2>&1 || return 0
   local v owner size
   for v in $(docker volume ls -q 2>/dev/null | sort -u); do
@@ -178,6 +182,7 @@ reclaim_stale_env_backups() { # $1=keep (default 2)
 
 # ---- apply helpers (only ever called with a list that passed the proofs) ----
 reclaim_apply_images() { # args: image refs/ids
+  [ "${PURGE_NO_DOCKER:-0}" = "1" ] && return 0
   local r
   for r in "$@"; do
     [ -n "${r}" ] || continue
@@ -186,6 +191,7 @@ reclaim_apply_images() { # args: image refs/ids
   return 0
 }
 reclaim_apply_volumes() { # args: volume names
+  [ "${PURGE_NO_DOCKER:-0}" = "1" ] && return 0
   local v
   for v in "$@"; do
     [ -n "${v}" ] || continue

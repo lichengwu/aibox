@@ -1,5 +1,5 @@
 name: dify
-version: 1.25.0
+version: 1.25.1
 module_iface: 1
 description: "Dify self-hosted (docker compose): LLM app builder (api/worker/web/nginx + weaviate)"
 platform: ""
@@ -89,6 +89,11 @@ env:
 residue:
   containers: "^dify-"
   volumes: "^dify_(storage|db|redis|sandbox_deps|sandbox_conf|plugin_daemon|weaviate)$"
+  # project networks (default + the internal ssrf bridge; profile-aware prefix)
+  # and the stack's images (upstream dify-*, weaviate, squid, nginx, busybox,
+  # bundled PG/Redis) — matched against `repo:tag`
+  networks: "^dify(-[A-Za-z0-9]+)?_(default|ssrf_proxy_network)$"
+  images: "^(langgenius/dify-|semitechnologies/weaviate|ubuntu/squid|nginx:latest|busybox:latest|postgres:15-alpine|redis:6-alpine)"
 usage:
   start: "Start the stack (source pool pulls images; 1-2 min first boot)"
   stop: "Stop containers"

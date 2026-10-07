@@ -1,5 +1,5 @@
 name: openmaic
-version: 1.8.3
+version: 1.8.4
 module_iface: 1
 description: "OpenMAIC ops CLI (install/upgrade/backup/doctor)"
 platform: ""
@@ -103,6 +103,10 @@ residue:
     - "$ETC_DIR/openmaic"
   containers: "^app-(openmaic|postgres|render-service)-[0-9]+$"
   volumes: "^app_openmaic"
+  # the compose project is named after the clone dir ("app"); the built images
+  # carry that prefix, the bundled PG is postgres:16, the build bases node:22*
+  networks: "^app_(default|render)$"
+  images: "^app-(openmaic|render-service)|^postgres:16$|node:22"
 usage:
   status: "Version / health / containers / resources overview"
   start: "Alias of up (deploy first: aibox openmaic install)"

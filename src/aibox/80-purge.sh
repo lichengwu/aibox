@@ -51,7 +51,7 @@ _residue_record() { # $1=module → capture its residue declaration (idempotent)
   [ -f "${f}" ] || return 0
   tmp="$(mktemp)"
   [ -f "${store}" ] && grep -v "^${m}_residue_" "${store}" >"${tmp}" 2>/dev/null || true
-  for field in paths containers volumes units bin npm process; do
+  for field in paths containers volumes networks images units bin npm process; do
     v="$(meta_sub_field "$f" residue "${field}")"
     [ -n "${v}" ] && printf '%s_residue_%s=%s\n' "${m}" "${field}" "${v}" >>"${tmp}"
   done
@@ -132,6 +132,12 @@ residue_volume_patterns() { # $1=module → docker volume name ERE (empty = none
 }
 residue_container_patterns() { # $1=module → container-name ERE
   _residue_decl "$1" containers
+}
+residue_network_patterns() { # $1=module → docker network name ERE
+  _residue_decl "$1" networks
+}
+residue_image_patterns() { # $1=module → docker image ref (repo[:tag]) ERE
+  _residue_decl "$1" images
 }
 residue_systemd_units() { # $1=module → system-level unit file paths
   local m="$1" u sd
@@ -214,8 +220,38 @@ _purge_add() { # scope kind target note  (tab-separated findings list)
   PURGE_COUNT=$((PURGE_COUNT + 1))
 }
 
+# ---- docker proofs for the network/image kinds (shared by scan + apply) ----
+_purge_network_attached() { # $1=network → attached container count ("" when unknown)
+  docker network inspect --format '{{len .Containers}}' "$1" 2>/dev/null | head -1
+}
+_purge_image_refs_by() { # $1=image ref → ids of containers (running OR stopped) using it
+  docker ps -aq --filter "ancestor=$1" 2>/dev/null
+}
+_purge_image_note() { # $1=image ref → "1.2G, 2 container(s)" (size always; in-use when >0)
+  local sz n
+  sz="$(reclaim_human_size "$(docker image inspect --format '{{.Size}}' "$1" 2>/dev/null | head -1)")"
+  n="$(_reclaim_count "$(_purge_image_refs_by "$1")")"
+  if [ "${n:-0}" -gt 0 ]; then printf '%s, %s container(s)' "$sz" "$n"; else printf '%s' "$sz"; fi
+}
+_purge_installed_module_names() { # module names from installed.sh, hyphens restored
+  [ -f "$AIBOX_INSTALLED" ] || return 0
+  sed -nE 's/^AIBOX_INSTALLED_([a-z0-9_]+)(__[A-Za-z0-9_]+)?=.*/\1/p' "$AIBOX_INSTALLED" 2>/dev/null |
+    tr '_' '-' | sort -u
+}
+_purge_image_claimed_installed() { # $1=image ref $2=owner module → installed module claiming it
+  local ref="$1" owner="$2" m pat
+  for m in $(_purge_installed_module_names); do
+    [ "$m" = "$owner" ] && continue
+    _installed_any_profile "$m" || continue
+    pat="$(residue_image_patterns "$m")"
+    [ -n "$pat" ] || continue
+    printf '%s' "$ref" | grep -qE "$pat" && { printf '%s' "$m"; return 0; }
+  done
+  return 0
+}
+
 _purge_scan_module() {
-  local m="$1" p v c n pids vpat cpat
+  local m="$1" p v c n pids vpat cpat npat ipat
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     if [ -d "$p" ]; then
@@ -237,6 +273,20 @@ RP
     if [ -n "$cpat" ]; then
       for c in $(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E "$cpat" || true); do
         _purge_add "$m" container "$c" "$(_purge_container_state "$c")"
+      done
+    fi
+    npat="$(residue_network_patterns "$m")"
+    if [ -n "$npat" ]; then
+      for n in $(docker network ls --format '{{.Name}}' 2>/dev/null | grep -E "$npat" || true); do
+        _purge_add "$m" network "$n" "$(_purge_network_attached "$n") attached"
+      done
+    fi
+    ipat="$(residue_image_patterns "$m")"
+    if [ -n "$ipat" ]; then
+      for n in $(docker image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E "$ipat" || true); do
+        # an installed module's claim protects the image (it still needs it)
+        [ -n "$(_purge_image_claimed_installed "$n" "$m")" ] && continue
+        _purge_add "$m" image "$n" "$(_purge_image_note "$n")"
       done
     fi
   fi
@@ -314,6 +364,25 @@ _purge_apply_item() { # $1=kind $2=target $3=stop(0|1)
         PURGE_DELETED=$((PURGE_DELETED + 1)); info "removed volume: $t"
       else
         PURGE_SKIPPED=$((PURGE_SKIPPED + 1)); warn "  volume busy or gone: $t"
+      fi ;;
+    network)
+      # proof: no container may be attached (inspect failure ⇒ unknown ⇒ keep)
+      if [ "$(_purge_network_attached "$t")" != "0" ]; then
+        PURGE_SKIPPED=$((PURGE_SKIPPED + 1)); warn "  network still attached: $t"
+      elif docker network rm "$t" >/dev/null 2>&1; then
+        PURGE_DELETED=$((PURGE_DELETED + 1)); info "removed network: $t"
+      else
+        PURGE_SKIPPED=$((PURGE_SKIPPED + 1)); warn "  network busy or gone: $t"
+      fi ;;
+    image)
+      # proof: no container may reference it (re-checked at apply time; containers
+      # are applied first, so one pass can sweep a container + its image together)
+      if [ -n "$(_purge_image_refs_by "$t" | head -1)" ]; then
+        PURGE_SKIPPED=$((PURGE_SKIPPED + 1)); warn "  image in use by a container: $t"
+      elif docker image rm "$t" >/dev/null 2>&1; then
+        PURGE_DELETED=$((PURGE_DELETED + 1)); info "removed image: $t"
+      else
+        PURGE_SKIPPED=$((PURGE_SKIPPED + 1)); warn "  image busy or shared tag: $t (manual: docker image rm $t)"
       fi ;;
     systemd)
       unit="$(basename "$t")"
@@ -393,6 +462,61 @@ _autoclean_reclaim_apply() {
   return 0
 }
 
+# A module that is still INSTALLED has no residue to reclaim here: its deploy
+# roots, containers, volumes, units, images… ARE its live deployment. Scanning
+# them as residue once listed — and a no-args --apply DELETED — an installed
+# module's apps/<m>, module cache, /etc/<m> and even state (live-caught: an
+# `autoclean --apply` wiped an installed module's deployment, contradicting the
+# spec's "remove what modules left behind AFTER they are uninstalled" and the
+# reclamation half's "data of an installed module" rule). Installed modules are
+# skipped with a hint; removal is `aibox uninstall <m> --purge`.
+_purge_scan_or_skip() { # $1=module
+  if _installed_any_profile "$1"; then
+    PURGE_INSTALLED_SKIPPED="${PURGE_INSTALLED_SKIPPED} $1"
+    return 0
+  fi
+  _purge_scan_module "$1"
+}
+
+# purge-time sweep: the classes a hook was never asked to own — a module's docker
+# NETWORKS (a crashed `compose down` loses that race; live-caught with a
+# crash-looping container) and its declared IMAGES (built/pulled program
+# artifacts, not data). Declared pattern + non-reference (+ not claimed by
+# another installed module) are the same two proofs the reclamation half uses.
+_purge_sweep_declared() { # $1=module → best-effort sweep, never fails the caller
+  local m="$1" npat ipat n i claimed
+  _purge_docker_up || return 0
+  npat="$(residue_network_patterns "$m")"
+  if [ -n "$npat" ]; then
+    for n in $(docker network ls --format '{{.Name}}' 2>/dev/null | grep -E "$npat" || true); do
+      if [ "$(_purge_network_attached "$n")" = "0" ]; then
+        docker network rm "$n" >/dev/null 2>&1 && info "removed network: $n" || warn "  network busy: $n"
+      fi
+    done
+  fi
+  ipat="$(residue_image_patterns "$m")"
+  if [ -n "$ipat" ]; then
+    for i in $(docker image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E "$ipat" || true); do
+      [ -n "$(_purge_image_refs_by "$i" | head -1)" ] && continue
+      claimed="$(_purge_image_claimed_installed "$i" "$m")"
+      [ -n "$claimed" ] && { info "kept image (installed ${claimed} still claims it): $i"; continue; }
+      docker image rm "$i" >/dev/null 2>&1 && info "removed image: $i" || warn "  image busy or shared tag: $i (manual: docker image rm $i)"
+    done
+  fi
+  return 0
+}
+
+# post-purge verification: count what a scan would still find (state swapped in
+# and out so the caller's findings list is untouched)
+_purge_count_module_residue() { # $1=module → finding count
+  local f="${PURGE_FINDINGS}" c="${PURGE_COUNT}" n
+  PURGE_FINDINGS=""; PURGE_COUNT=0
+  _purge_scan_module "$1"
+  n="${PURGE_COUNT}"
+  PURGE_FINDINGS="${f}"; PURGE_COUNT="${c}"
+  printf '%s' "${n:-0}"
+}
+
 cmd_autoclean() {
   local apply=0 stop=0 scope="" a m s k t n scope_seen=""
   while [ $# -gt 0 ]; do
@@ -407,12 +531,13 @@ cmd_autoclean() {
     shift
   done
   PURGE_FINDINGS=""; PURGE_COUNT=0; PURGE_DELETED=0; PURGE_SKIPPED=0
+  PURGE_INSTALLED_SKIPPED=""
   if [ -z "$scope" ]; then
-    for m in $(_purge_candidate_modules); do _purge_scan_module "$m"; done
+    for m in $(_purge_candidate_modules); do _purge_scan_or_skip "$m"; done
     _purge_scan_self
   else
     for m in $scope; do
-      if [ "$m" = self ]; then _purge_scan_self; else _purge_scan_module "$m"; fi
+      if [ "$m" = self ]; then _purge_scan_self; else _purge_scan_or_skip "$m"; fi
     done
   fi
 
@@ -430,6 +555,10 @@ cmd_autoclean() {
       *)         printf '  %-10s %s %s%s%s\n'   "$k"    "$t" "${C_DIM:-}" "${n:+ [$n]}" "$C_RST" ;;
     esac
   done
+  if [ -n "${PURGE_INSTALLED_SKIPPED:-}" ]; then
+    printf '\n%s  installed (live deployments protected): %s%s\n' "${C_DIM:-}" "$(printf '%s' "${PURGE_INSTALLED_SKIPPED}" | sed 's/^ //;s/ /, /g')" "${C_RST:-}"
+    printf '%s  to remove one: aibox uninstall <module> --purge%s\n' "${C_DIM:-}" "${C_RST:-}"
+  fi
   if [ "$PURGE_COUNT" = 0 ]; then
     printf '\n  (no residue found — clean)\n\n'
     return 0
@@ -717,6 +846,20 @@ cmd_self_uninstall() {
 $entries
 ENTRIES
     rm -rf "$AIBOX_HOME/apps"
+
+    # Docker-level debris loses its owner with the cascade: reclaim what the proofs
+    # allow (dangling/stale images, orphan volumes, stale env backups, build cache
+    # >24h) while the manager is still here to prove ownership — after the next
+    # step nobody can (live-caught: a full purge left the built images + build
+    # cache behind and never mentioned them). --purge is explicit intent.
+    _autoclean_reclaim_scan
+    if [ -n "${RECLAIM_IMAGES}${RECLAIM_TAGS}${RECLAIM_VOLS}${RECLAIM_BAKS}${RECLAIM_CACHE}" ]; then
+      _autoclean_reclaim_report
+      _autoclean_reclaim_apply
+      ok "docker-level debris reclaimed"
+    else
+      info "no docker-level debris to reclaim"
+    fi
   fi
 
   # ---- manager artifacts ----

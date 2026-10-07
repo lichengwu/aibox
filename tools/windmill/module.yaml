@@ -1,5 +1,5 @@
 name: windmill
-version: 1.9.4
+version: 1.9.5
 module_iface: 1
 description: "Windmill self-host ops CLI (init/upgrade/backup/drill/doctor)"
 platform: ""
@@ -97,6 +97,10 @@ residue:
     - "$ETC_DIR/windmill"
   containers: "^windmill-"
   volumes: "^windmill_"
+  networks: "^windmill(-[A-Za-z0-9]+)?_default$"
+  # ghcr windmill-labs images (windmill + lsp + caddy-l4), the caddy front and
+  # the bundled postgres (shared with base — whichever stays installed wins)
+  images: "^ghcr[.]io/windmill-labs/|(^|/)caddy:2-alpine$|^postgres:18$"
   units:
     - windmill-backup.service
     - windmill-backup.timer

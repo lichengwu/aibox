@@ -121,6 +121,12 @@ cmd_uninstall() {
   if [ "$purge" = 1 ]; then
     rm -rf "$AIBOX_HOME/apps/$name"
     log "purged: hook data contract + $AIBOX_HOME/apps/$name"
+    # Manager-side sweep for the classes a hook was never asked to own: the module's
+    # docker NETWORKS (a crashed `compose down` loses that race — live-caught with a
+    # crash-looping container) and its declared IMAGES (built/pulled program
+    # artifacts, not data). Same two proofs as the reclamation half: declared
+    # pattern + no container references (+ not claimed by another installed module).
+    _purge_sweep_declared "$name"
   fi
   unmark_installed "$name"
   # data verdict rides the final line regardless of the profile/cache branch
@@ -137,6 +143,16 @@ cmd_uninstall() {
   else
     rm -rf "$dest"
     log "Uninstalled $name${verdict}"
+    # --purge: verify instead of trusting the flag — hooks can miss (the leftover
+    # network was invisible until an independent sweep found it). Only when no
+    # other profile remains (the hint's verb skips live deployments by design).
+    if [ "$purge" = 1 ]; then
+      local _left
+      _left="$(_purge_count_module_residue "$name")"
+      if [ "${_left:-0}" -gt 0 ]; then
+        warn "  ${_left} leftover item(s) remain — clean: aibox autoclean ${name} --apply"
+      fi
+    fi
   fi
 }
 

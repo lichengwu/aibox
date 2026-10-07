@@ -53,10 +53,11 @@ dependencies, no package manager, works on the bash 3.2 that ships with macOS.
 - **Per-module help, offline** — `aibox <module> --help` renders an action table from
   the module's own `usage:` map; `aibox <module> <action> --help` renders the single action.
 - **Safe by default** — every destructive verb confirms interactively (uninstall asks,
-  then asks about data; purge asks, then asks about running containers); scripts decline
+  then asks about data; autoclean asks, then asks about running containers); scripts decline
   with exit 2 unless `--yes`.
 - **Residue cleanup** — `aibox autoclean` scans and removes what uninstall hooks leave behind
-  (volumes, `/etc` dirs, units, binaries), even after aibox itself is uninstalled.
+  (volumes, networks, images, `/etc` dirs, units, binaries), even after aibox itself is
+  uninstalled; installed modules' live deployments are never touched.
 
 ## Requirements
 

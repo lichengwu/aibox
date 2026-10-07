@@ -9,6 +9,29 @@ GitHub release notes are auto-generated from the previous tag; this file is the 
 
 ## [Unreleased]
 
+### Added
+
+- **Residue vocabulary: `networks:` and `images:`** — every docker-based module can now declare
+  the networks it creates and the images it runs/pulls; both are scanned and swept with the
+  same two proofs as every other kind (declared pattern + no container references; an image
+  another installed module claims is kept). Patterns match `docker network ls` names and
+  `repo:tag` refs, are captured into `residue.conf` like the rest, and are declared today by
+  base, dify, gitlab, jumpserver, new-api, openmaic, windmill and xiaozhi. (module bumps:
+  base 1.10.4, dify 1.25.1, gitlab 1.12.3, jumpserver 0.1.1, new-api 1.6.3, openmaic 1.8.4,
+  windmill 1.9.5, xiaozhi 1.7.4)
+- **`uninstall <module> --purge` sweeps the two classes a hook was never asked to own**: the
+  module's docker networks (a crashed `compose down` loses that race — live-caught: a
+  crash-looping container left `app_default` behind) and its declared images (built/pulled
+  *program* artifacts, not data — live-caught: a purged stack left ~2G of built images). Both
+  apply the reclamation proofs; anything left is reported by the next point.
+- **Post-purge verification** — `--purge` no longer trusts the flag: the module is rescanned
+  and any leftover item is named with the exact cleanup command
+  (`aibox autoclean <module> --apply`).
+- **`uninstall self --purge` ends with the reclamation half** (dangling/stale images, orphan
+  volumes, stale env backups, build cache >24h) while the manager can still prove ownership —
+  it used to drop the biggest disk items silently (~17G of images + build cache on the live
+  host) with nobody left able to reclaim them.
+
 ### Changed
 
 - **BREAKING: openmaic publishes on `0.0.0.0:31140` by default (was loopback-only `127.0.0.1:3000`).**
@@ -83,6 +106,15 @@ GitHub release notes are auto-generated from the previous tag; this file is the 
   `0.0.0.0:3000`). `apply_local_patches` and `up` now inject the interpolation into the
   deployed compose — idempotent, main-style files untouched, unexpected formats warn
   instead of blocking. (openmaic 1.8.1)
+- **autoclean no longer touches INSTALLED modules.** The residue scan listed an installed
+  module's live deployment — `apps/<m>`, the module cache and `/etc/<m>` — as residue, and a
+  no-args `autoclean --apply` DELETED them (live-caught; contradicts the spec's "after they
+  are uninstalled" and the reclamation half's "data of an installed module" rule). Installed
+  modules are now skipped with a hint naming the removal verb (`aibox uninstall <m> --purge`).
+- **Docs drift fixed**: AGENTS.md still said `purge --apply` (the verb was renamed
+  `autoclean` in 0.23.0) and README's safety note said "purge asks"; the spec's
+  §Data-purge-contract / §Residue-cleanup sections now document the sweeps, the vocabulary
+  and the installed-module invariant.
 
 ## [0.32.1] — 2026-10-02
 

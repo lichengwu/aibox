@@ -216,8 +216,11 @@ SH
     grep -c '^new-api_residue_' '$AIBOX_HOME/residue.conf'
   "
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [ "${output##*$'\n'}" = "2" ] || { echo "expected 2 declared fields, got: $output"; false; }
+  [ "${output##*$'\n'}" = "4" ] || { echo "expected 4 declared fields, got: $output"; false; }
   grep -q '^new-api_residue_containers=\^aibox-new-api\$' "$AIBOX_HOME/residue.conf" || { cat "$AIBOX_HOME/residue.conf"; false; }
+  # the extended vocabulary (networks/images) is captured too
+  grep -q '^new-api_residue_networks=' "$AIBOX_HOME/residue.conf" || { cat "$AIBOX_HOME/residue.conf"; false; }
+  grep -q '^new-api_residue_images=' "$AIBOX_HOME/residue.conf" || { cat "$AIBOX_HOME/residue.conf"; false; }
 }
 
 @test "rescue: declared residue is found with NO module cache (store survives uninstall)" {
@@ -300,4 +303,98 @@ orphanmod_residue_paths=$HOME/orphan-data
   # the derivation itself must exist and be used on both paths
   grep -q '^_purge_candidate_modules()' "$AIBOX" || false
   [ "$(grep -c '_purge_candidate_modules' "$AIBOX")" -ge 3 ] || { echo "helper defined but not used on both paths"; false; }
+}
+
+@test "autoclean: an INSTALLED module's deployment is never scanned or touched (live-caught)" {
+  # The residue half once listed an installed module's live state — and a no-args
+  # --apply DELETED its apps/<m>, module cache and /etc/<m> (live-caught: an
+  # `autoclean --apply` wiped an installed deployment). Installed modules are now
+  # skipped with a hint; removal is `aibox uninstall <m> --purge`.
+  printf 'AIBOX_INSTALLED_gitlab=1.0.0\n' > "$AIBOX_HOME/installed.sh"
+  mkdir -p "$PURGE_ETC/gitlab"
+  run bash "$AIBOX" autoclean
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  printf '%s\n' "$output" | grep -q 'installed (live deployments protected): gitlab' || { echo "$output"; false; }
+  ! printf '%s\n' "$output" | grep -q '^\[gitlab\]' || { echo "installed module scanned as residue: $output"; false; }
+  # explicit scope is protected the same way
+  run bash "$AIBOX" autoclean gitlab --apply --yes
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  printf '%s\n' "$output" | grep -q 'installed (live deployments protected): gitlab' || { echo "$output"; false; }
+  [ -d "$AIBOX_HOME/apps/gitlab" ] || { echo "installed deployment was deleted: $output"; false; }
+  [ -d "$PURGE_ETC/gitlab" ] || { echo "installed /etc dir was deleted"; false; }
+  # and the no-args sweep still protects it AT SCAN TIME (the [self] scope then
+  # removes the manager's own state by design — installed.sh included, which is
+  # exactly why the hint tells operators to uninstall modules explicitly first)
+  run bash "$AIBOX" autoclean --apply --yes
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -d "$AIBOX_HOME/apps/gitlab" ] || { echo "installed deployment was deleted: $output"; false; }
+  [ -d "$PURGE_ETC/gitlab" ] || { echo "installed /etc dir was deleted"; false; }
+}
+
+@test "autoclean: declared networks/images are scanned; attached/in-use objects are kept" {
+  # The two new residue kinds, with the docker proofs: a network with containers
+  # attached and an image a container references must survive the sweep.
+  unset PURGE_NO_DOCKER
+  export SANDBOX                      # the stub is a child process
+  mkdir -p "$SANDBOX/fakebin"
+  cat > "$SANDBOX/fakebin/docker" <<'FAKE'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "info ") exit 0 ;;
+  "network ls") printf 'app_default\napp_render\nother_net\n' ;;
+  "network inspect") case "$5" in app_default) printf '0\n' ;; app_render) printf '2\n' ;; *) exit 1 ;; esac ;;
+  "image ls") case "$*" in *dangling=true*) exit 0 ;; esac; printf 'app-openmaic:latest\napp-render-service:latest\nkeepme:1\n' ;;
+  "image inspect") printf '12345\n' ;;
+  "ps -aq") case "$*" in *"ancestor=app-render-service:latest"*) printf 'beef99\n' ;; *) exit 0 ;; esac ;;
+  "ps -a") exit 0 ;;
+  "volume ls") exit 0 ;;
+  "builder du") exit 0 ;;
+  "network rm"|"image rm") echo "$2 $3" >> "$SANDBOX/docker.log"; exit 0 ;;
+  *) exit 1 ;;
+esac
+FAKE
+  chmod +x "$SANDBOX/fakebin/docker"
+  export PATH="$SANDBOX/fakebin:$PATH"
+  printf 'windmill_residue_networks=^app_(default|render)$\nwindmill_residue_images=^app-(openmaic|render-service):\n' >> "$AIBOX_HOME/residue.conf"
+  run bash "$AIBOX" autoclean
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  printf '%s\n' "$output" | grep -q 'network.*app_default.*\[0 attached\]' || { echo "$output"; false; }
+  printf '%s\n' "$output" | grep -q 'network.*app_render.*\[2 attached\]' || { echo "$output"; false; }
+  printf '%s\n' "$output" | grep -q 'image.*app-openmaic:latest.*\[12K\]' || { echo "$output"; false; }
+  printf '%s\n' "$output" | grep -q 'image.*app-render-service:latest.*\[12K, 1 container(s)\]' || { echo "$output"; false; }
+  : > "$SANDBOX/docker.log"
+  run bash "$AIBOX" autoclean --apply --yes
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q '^rm app_default$' "$SANDBOX/docker.log" || { echo "$output"; false; }
+  grep -q '^rm app-openmaic:latest$' "$SANDBOX/docker.log" || { echo "$output"; false; }
+  ! grep -q 'app_render' "$SANDBOX/docker.log" || { echo "attached network was removed: $(cat "$SANDBOX/docker.log")"; false; }
+  ! grep -q 'app-render-service:latest' "$SANDBOX/docker.log" || { echo "in-use image was removed"; false; }
+}
+
+@test "autoclean: an installed module's image claim protects the image" {
+  unset PURGE_NO_DOCKER
+  export SANDBOX                      # the stub is a child process
+  mkdir -p "$SANDBOX/fakebin"
+  cat > "$SANDBOX/fakebin/docker" <<'FAKE'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "info ") exit 0 ;;
+  "network ls") exit 0 ;;
+  "image ls") printf 'app-openmaic:latest\n' ;;
+  "image inspect") printf '12345\n' ;;
+  "ps -aq"|"ps -a") exit 0 ;;
+  "volume ls") exit 0 ;;
+  "builder du") exit 0 ;;
+  *) exit 1 ;;
+esac
+FAKE
+  chmod +x "$SANDBOX/fakebin/docker"
+  export PATH="$SANDBOX/fakebin:$PATH"
+  printf 'windmill_residue_images=^app-openmaic:\n' >> "$AIBOX_HOME/residue.conf"
+  # base is INSTALLED and claims the same repo → windmill's scan must skip it
+  printf 'AIBOX_INSTALLED_base=1.0.0\n' > "$AIBOX_HOME/installed.sh"
+  printf 'base_residue_images=^app-\n' >> "$AIBOX_HOME/residue.conf"
+  run bash "$AIBOX" autoclean windmill
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  ! printf '%s\n' "$output" | grep -q 'app-openmaic:latest' || { echo "claimed image was listed: $output"; false; }
 }

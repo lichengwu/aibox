@@ -1,5 +1,5 @@
 name: base
-version: 1.10.3
+version: 1.10.4
 module_iface: 1
 description: "Shared base components (PostgreSQL 18 + Redis 7); each module gets its own DB"
 platform: ""
@@ -80,6 +80,9 @@ env:
 residue:
   containers: "^aibox-base(-[A-Za-z0-9]+)?-(postgres|redis)$"
   volumes: "^aibox_(pg|redis)_data"
+  # docker NETWORKS it creates (profile-aware name) + the images it runs
+  networks: "^aibox-base(-[A-Za-z0-9]+)?$"
+  images: "^(postgres:18|redis:7)$"
 usage:
   start: "Start shared PG + Redis"
   stop: "Stop containers (data preserved)"
