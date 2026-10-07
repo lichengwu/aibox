@@ -549,6 +549,65 @@ SH
   [ "$status" -eq 0 ]
 }
 
+@test "openmaic: the source fetch falls back to the GitHub mirror pool (probe -> mirror)" {
+  # Direct github.com that cannot complete a smart-HTTP handshake — or dies mid-fetch
+  # (the throttled case) — must route the fetch through the curated mirror pool (the
+  # same hosts the manager's download pool uses), one mirror picked by a bounded
+  # probe and dropped to the next candidate on failure. A healthy direct changes
+  # nothing (no mirror in the ladder).
+  local dir s
+  dir="$BATS_TMPDIR/omc-ghpool"; rm -rf "$dir"; mkdir -p "$dir/bin" "$dir/app"
+  s="$BATS_TMPDIR/omc-ghpool.sh"
+  cat > "$s" <<'SH'
+export PATH="$T/bin:$PATH"
+REPO="THU-MAIC/OpenMAIC"; APP_DIR="$T/app"; PROXY_URL=""; PROXY_DISPLAY=""
+OPENMAIC_FETCH_ATTEMPTS=4; OPENMAIC_FETCH_TIMEOUT=60; OPENMAIC_GH_PROBE_TIMEOUT=10
+log() { printf 'log: %s\n' "$*"; }; dim() { :; }; err() { :; }
+CLI="$CLI"
+eval "$(grep -m1 '^GH_POOL_MIRRORS=' "$CLI")"; _GH_MIRROR_FAILED=""
+for fn in gh_mirror_list gh_mirror_url _git_probe _gh_mirror_pick git_fetch_tag; do
+  eval "$(sed -n "/^${fn}() {/,/^}/p" "$CLI")"
+done
+git_fetch_tag v1.1.2; echo "exit=$?"
+SH
+  # (a) direct dead -> the probe fails, the mirror answers, only the mirror is fetched
+  cat > "$dir/bin/git" <<'GIT'
+#!/usr/bin/env bash
+case "$1" in
+  ls-remote) case "$*" in *gh-proxy.com*) exit 0 ;; *) exit 1 ;; esac ;;
+  fetch) for a in "$@"; do case "$a" in https://*) echo "$a" >> "$T/fetch.log" ;; esac; done
+         for a in "$@"; do case "$a" in *gh-proxy.com*) exit 0 ;; esac; done
+         exit 1 ;;
+esac
+exit 0
+GIT
+  chmod +x "$dir/bin/git"
+  run bash -c "T='$dir' CLI='$REPO_ROOT/tools/openmaic/cli/openmaic' bash '$s' 2>&1"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  printf '%s\n' "$output" | grep -q 'channel: github.com direct did not answer the probe' || { echo "$output"; false; }
+  printf '%s\n' "$output" | grep -q 'channel: mirror https://gh-proxy.com' || { echo "$output"; false; }
+  grep -qx 'https://gh-proxy.com/https://github.com/THU-MAIC/OpenMAIC.git' "$dir/fetch.log" || { cat "$dir/fetch.log"; false; }
+  ! grep -q '^https://github.com/THU-MAIC' "$dir/fetch.log" || { cat "$dir/fetch.log"; false; }
+  # (b) direct healthy -> today's ladder, no mirror anywhere
+  rm -f "$dir/fetch.log"
+  cat > "$dir/bin/git" <<'GIT'
+#!/usr/bin/env bash
+case "$1" in
+  ls-remote) exit 0 ;;
+  fetch) for a in "$@"; do case "$a" in https://*) echo "$a" >> "$T/fetch.log" ;; esac; done; exit 0 ;;
+esac
+exit 0
+GIT
+  chmod +x "$dir/bin/git"
+  run bash -c "T='$dir' CLI='$REPO_ROOT/tools/openmaic/cli/openmaic' bash '$s' 2>&1"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  ! printf '%s\n' "$output" | grep -q 'channel: mirror' || { echo "$output"; false; }
+  grep -qx 'https://github.com/THU-MAIC/OpenMAIC.git' "$dir/fetch.log" || { cat "$dir/fetch.log"; false; }
+  # knobs documented for the operator (override list / disable / probe budget)
+  grep -q 'OPENMAIC_GH_MIRRORS' "$REPO_ROOT/tools/openmaic/module.yaml" || false
+  grep -q 'OPENMAIC_GH_PROBE_TIMEOUT' "$REPO_ROOT/tools/openmaic/module.yaml" || false
+}
+
 @test "openmaic: the source fetch retries and gets progressively shallower (throttled links)" {
   run grep -q 'OPENMAIC_FETCH_ATTEMPTS' "$REPO_ROOT/tools/openmaic/cli/openmaic"
   [ "$status" -eq 0 ] || false

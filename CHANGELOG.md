@@ -7,6 +7,21 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [Unreleased]
+
+### Added
+
+- **GitHub source fetches can use a mirror pool (openmaic), and the preflight's mirror route
+  works out of the box.** When github.com cannot complete a smart-HTTP handshake — or dies
+  mid-transfer (the throttled case) — the openmaic source fetch now routes through the same
+  curated prefix mirrors the download pool uses (`OPENMAIC_GH_MIRRORS`, default gh-proxy.com +
+  ghproxy.net; `direct` disables), probing each route with a bounded `ls-remote` before paying
+  for a fetch and dropping a dead mirror for the next candidate. The preflight's `mirror`
+  alternative falls back to the built-in pool (no `CLASH_MIRROR` needed) and exports the
+  winning mirror as `AIBOX_GH_MIRROR`, so probe, fetch and any other GitHub-fetching module
+  agree on one route. Live-caught: a host whose direct github.com hung at connect (30s+) while
+  a mirror answered in ~1s could not install at all before. (openmaic 1.9.0)
+
 ## [0.33.3] — 2026-10-07
 
 ### Added

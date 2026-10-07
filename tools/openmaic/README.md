@@ -190,6 +190,8 @@ state, declared ports; see below).
 | `OPENMAIC_TAG` | `(unset)` | pin the deployed version (e.g. v1.1.2); start then passes --tag and needs no release lookup (knob) |
 | `OPENMAIC_FETCH_TIMEOUT` | `240` | seconds cap per fetch attempt (a throttled link must not burn the whole window on one try) (knob) |
 | `OPENMAIC_FETCH_ATTEMPTS` | `4` | source fetch attempts per channel; later ones shallow (resumable on throttled links) (knob) |
+| `OPENMAIC_GH_MIRRORS` | `(unset)` | GitHub mirror pool for the source fetch (URL-prefix bases; default = the manager's curated gh-proxy.com + ghproxy.net; set it to the word direct to disable the channel) (knob) |
+| `OPENMAIC_GH_PROBE_TIMEOUT` | `20` | seconds per route handshake probe (direct + each mirror) before a fetch is attempted (knob) |
 | `OPENMAIC_APP_PORT` | `3000` | container-internal app port; the CLI probes the PUBLISHED host port automatically (knob) |
 | `OPENMAIC_PORT` | `31140` | published host port (aibox reserved band; the container stays on 3000) (knob) |
 | `OPENMAIC_PUBLISH_ADDRESS` | `0.0.0.0` | interface the published port binds (upstream default 127.0.0.1; gated by ACCESS_CODE) (knob) |

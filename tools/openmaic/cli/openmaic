@@ -481,6 +481,49 @@ compose_timed() {
 # (15), AIBOX_DOCKER_MIRROR_PROBE_TIMEOUT (30), AIBOX_DOCKER_PULL_TIMEOUT (1800).
 DOCKER_POOL_MIRRORS="docker.1ms.run docker.m.daocloud.io dockerproxy.net hub.rat.dev"
 
+# ---- github.com source pool (git fetch through URL-prefix mirrors) ----
+# A prefix mirror fetches any github URL as <mirror>/<url> — the git smart-HTTP
+# endpoints included, so a `git fetch` works through it. Same curated hosts as the
+# manager's download pool (its notes: gh-proxy.com proxies raw+api; ghproxy.net raw
+# ok; ghproxy.link/cn served CORRUPT content — excluded on purpose). The manager's
+# adopted mirror (CLASH_MIRROR / AIBOX_GH_MIRROR — e.g. the preflight's mirror
+# route) joins as a high-priority candidate, so one deploy picks ONE mirror end to
+# end. Knobs: OPENMAIC_GH_MIRRORS (override the list; "direct" disables the
+# channel), OPENMAIC_GH_PROBE_TIMEOUT (20s per handshake probe).
+GH_POOL_MIRRORS="https://gh-proxy.com https://ghproxy.net"
+
+gh_mirror_list() { # the candidate bases, user/adopted mirror first
+  local u="${CLASH_MIRROR:-${AIBOX_GH_MIRROR:-}}" out=""
+  case "${OPENMAIC_GH_MIRRORS:-}" in
+  direct) return 0 ;;
+  "") [ -n "$u" ] && out="${u%/}"
+      out="${out}${out:+ }${GH_POOL_MIRRORS}" ;;
+  *) out="${OPENMAIC_GH_MIRRORS}" ;;
+  esac
+  printf '%s\n' ${out}
+}
+
+gh_mirror_url() { printf '%s/https://github.com/%s.git' "${1%/}" "$REPO"; }
+
+# A bounded smart-HTTP handshake (`ls-remote` transfers ~nothing): answers "is this
+# route usable at all" in seconds, without paying for a clone.
+_git_probe() { # $1=url → 0 when the handshake answers
+  local to=""
+  command -v timeout >/dev/null 2>&1 && to="timeout ${OPENMAIC_GH_PROBE_TIMEOUT:-20}"
+  ${to} env GIT_TERMINAL_PROMPT=0 git ls-remote --heads "$1" >/dev/null 2>&1
+}
+
+_GH_MIRROR_FAILED=""
+_gh_mirror_pick() { # → first mirror answering the probe ("" = none left)
+  local m
+  for m in $(gh_mirror_list); do
+    case " ${_GH_MIRROR_FAILED} " in *" ${m%/} "*) continue ;; esac
+    if _git_probe "$(gh_mirror_url "$m")"; then printf '%s' "${m%/}"; return 0; fi
+    _GH_MIRROR_FAILED="${_GH_MIRROR_FAILED} ${m%/}"
+  done
+  return 0
+}
+
 # Image list the (profile/file/env-aware) compose would pull.
 compose_images() {
   ( cd "$APP_DIR" 2>/dev/null || return 0
@@ -752,14 +795,32 @@ latest_tag() {
   printf '%s' "$out"
 }
 
-# Multi-channel fallback for pulling source. The proxy channel is tried only when PROXY_URL is non-empty.
+# Multi-channel fallback for pulling source: [proxy →] mirror → direct.
+# Route selection up front: a bounded ls-remote PROBE separates "reachable" from
+# "not" in seconds — a full fetch attempt costs up to 240s against a dead link,
+# so probe before paying (the shape the docker pool already uses). A healthy
+# direct route keeps today's ladder (proxy → direct, full then shallow). A direct
+# that cannot complete the handshake — or whose first fetch dies/times out (the
+# THROTTLED case: handshake passes, bulk crawls) — switches to the mirror pool,
+# dropping a dead mirror for the next candidate on successive attempts.
 git_fetch_tag() {
-  local tag="$1" url attempt=1 max="${OPENMAIC_FETCH_ATTEMPTS:-4}" shallow="" TO=""
+  local tag="$1" url attempt=1 max="${OPENMAIC_FETCH_ATTEMPTS:-4}" shallow="" TO="" m="" pref="direct" next_m=""
   # Per-attempt timeout: a THROTTLED link (small requests pass, bulk transfers crawl) would
   # otherwise burn tens of minutes on one attempt before the retry/shallow logic ever ran —
   # live-caught on 50.55: 353MB transferred at ~50KB/s and the deploy looked "stuck" for
   # half an hour, then failed anyway.
   if command -v timeout >/dev/null 2>&1; then TO="timeout ${OPENMAIC_FETCH_TIMEOUT:-240}"; fi
+  if _git_probe "https://github.com/$REPO.git"; then
+    pref="direct"
+  else
+    m="$(_gh_mirror_pick)"
+    if [ -n "$m" ]; then
+      pref="mirror"
+      log "channel: github.com direct did not answer the probe — using the mirror pool (${m})"
+    else
+      dim "  github.com direct not answering and no mirror answered — trying the direct ladder"
+    fi
+  fi
   while [ "$attempt" -le "$max" ]; do
     # Attempt 1 is a full fetch (keeps history for describe/rollback); later attempts go
     # SHALLOW — on throttled links (small requests pass, bulk transfers get reset) a
@@ -767,6 +828,24 @@ git_fetch_tag() {
     # already received, so each retry effectively resumes. Live-caught on 50.55: the probe
     # answered while every bulk fetch died.
     [ "$attempt" -le 1 ] || shallow="--depth 1"
+    if [ "$pref" = "mirror" ] && [ -n "$m" ]; then
+      url="$(gh_mirror_url "$m")"
+      log "channel: mirror ${m} attempt ${attempt}/${max}${shallow:+ (shallow)}${TO:+ [${OPENMAIC_FETCH_TIMEOUT:-240}s cap]}"
+      if ( cd "$APP_DIR" && GIT_TERMINAL_PROMPT=0 ${TO} git fetch $shallow --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
+      _GH_MIRROR_FAILED="${_GH_MIRROR_FAILED} ${m}"
+      next_m="$(_gh_mirror_pick)"
+      if [ -n "$next_m" ]; then
+        m="$next_m"
+        dim "  mirror ${_GH_MIRROR_FAILED##* } did not complete — trying ${m}"
+      else
+        m=""
+        pref="direct"
+        dim "  no mirror left — falling back to direct"
+      fi
+      attempt=$((attempt + 1))
+      [ "$attempt" -le "$max" ] && sleep 5
+      continue
+    fi
     if [ -n "$PROXY_URL" ]; then
       url="https://github.com/$REPO.git"
       log "channel: direct (via proxy ${PROXY_DISPLAY}) attempt ${attempt}/${max}${shallow:+ (shallow)}${TO:+ [${OPENMAIC_FETCH_TIMEOUT:-240}s cap]}"
@@ -776,6 +855,15 @@ git_fetch_tag() {
     log "channel: direct (no proxy) attempt ${attempt}/${max}${shallow:+ (shallow)}${TO:+ [${OPENMAIC_FETCH_TIMEOUT:-240}s cap]}"
     url="https://github.com/$REPO.git"
     if ( cd "$APP_DIR" && GIT_TERMINAL_PROMPT=0 ${TO} git fetch $shallow --tags --force "$url" >/dev/null 2>&1 ); then return 0; fi
+    # a direct attempt that died (unreachable, reset, or too slow to finish) → give
+    # the mirror pool the next attempt instead of repeating the same dead route
+    if [ "$pref" = "direct" ]; then
+      m="$(_gh_mirror_pick)"
+      if [ -n "$m" ]; then
+        pref="mirror"
+        dim "  direct fetch did not complete — switching to mirror ${m}"
+      fi
+    fi
     attempt=$((attempt + 1))
     [ "$attempt" -le "$max" ] && { dim "  fetch did not complete — retrying"; sleep 10; }
   done
@@ -1863,6 +1951,7 @@ cmd_install() {
     fi
     git_fetch_tag "$tag" >/dev/null 2>&1 \
       || { err "source fetch failed (all channels unavailable)"; \
+           hint "mirror pool tried: $(gh_mirror_list | tr '\n' ' ')  (override: OPENMAIC_GH_MIRRORS, disable: OPENMAIC_GH_MIRRORS=direct)"; \
            [ -n "$PROXY_URL" ] && hint "a proxy is configured (${PROXY_DISPLAY}); confirm it is reachable" \
              || hint "if the deploy host cannot reach GitHub directly, set OPENMAIC_PROXY_URL=<url> and retry"; \
            return "$EXIT_ERR"; }

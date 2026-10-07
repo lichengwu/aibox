@@ -15,6 +15,11 @@
 
 _preflight_url() { case "$1" in http://*|https://*|file://*) printf '%s' "$1" ;; *) printf 'https://%s/' "$1" ;; esac; }
 
+# The mirror route's winner for this run (exported by _preflight_adopt so the
+# GitHub-fetching modules honor the SAME mirror — openmaic's source fetch takes
+# AIBOX_GH_MIRROR as its first pool candidate; clash's downloader honors it too).
+_PREFLIGHT_MIRROR_WINNER=""
+
 # Probe one URL via a named route. Any HTTP response (even 401/404) = reachable;
 # only connection-level failure (000/empty) = unreachable (same philosophy as proxy check).
 _preflight_probe_route() {
@@ -34,17 +39,23 @@ _preflight_probe_route() {
       [ -n "${AIBOX_PROXY_URL:-}" ] || return 1
       code="$(curl -s -x "$AIBOX_PROXY_URL" -o /dev/null --max-time "$t" -w '%{http_code}' "$url" 2>/dev/null)" ;;
     mirror)
-      # GitHub-family domains via a gh-proxy-style URL-prefix mirror (CLASH_MIRROR /
-      # AIBOX_GH_MIRROR). Bootstrap paradox solver: on CN networks github.com may be
-      # unreachable while the mirror is fine — and clash (the network fixer) itself
-      # downloads from GitHub. Prefix mirrors fetch ANY https URL as <mirror>/<url>.
-      local mp="${CLASH_MIRROR:-${AIBOX_GH_MIRROR:-}}"
-      [ -n "$mp" ] || return 1
+      # GitHub-family domains via a gh-proxy-style URL-prefix mirror. Candidates: the
+      # user's CLASH_MIRROR / AIBOX_GH_MIRROR first, then the BUILT-IN curated pool
+      # (the same hosts the download pool uses — gh-proxy.com, ghproxy.net). Bootstrap
+      # paradox solver: on CN networks github.com may be unreachable while the mirror
+      # is fine — and the GitHub-fetching modules honor AIBOX_GH_MIRROR, which
+      # _preflight_adopt exports from the winner below.
       case "$url" in
         https://github.com/*|https://raw.githubusercontent.com/*|https://objects.githubusercontent.com/*|https://release-assets.githubusercontent.com/*) ;;
         *) return 1 ;;
       esac
-      code="$(curl -s -o /dev/null --max-time "$t" -w '%{http_code}' "${mp%/}/${url}" 2>/dev/null)" ;;
+      local mm
+      for mm in ${CLASH_MIRROR:-${AIBOX_GH_MIRROR:-}} ${AIBOX_GH_POOL_DEFAULT:-https://gh-proxy.com https://ghproxy.net}; do
+        [ -n "$mm" ] || continue
+        code="$(curl -s -o /dev/null --max-time "$t" -w '%{http_code}' "${mm%/}/${url}" 2>/dev/null)"
+        [ -n "$code" ] && [ "$code" != "000" ] && { _PREFLIGHT_MIRROR_WINNER="${mm%/}"; return 0; }
+      done
+      return 1 ;;
     *) return 1 ;;
   esac
   [ -n "$code" ] && [ "$code" != "000" ]
@@ -70,9 +81,11 @@ _preflight_adopt() {
              HTTP_PROXY="$AIBOX_PROXY_URL" HTTPS_PROXY="$AIBOX_PROXY_URL"
       warn "adopting static proxy $(mask_url "$AIBOX_PROXY_URL") for this run; persist: aibox proxy on" ;;
     mirror)
-      # Nothing to export: a prefix mirror is not a proxy. Modules must honor
-      # CLASH_MIRROR themselves (the clash module's downloader does).
-      warn "GitHub-family domains reachable only via mirror ${CLASH_MIRROR:-${AIBOX_GH_MIRROR:-}} — module downloads must honor CLASH_MIRROR/AIBOX_GH_MIRROR (clash does)" ;;
+      # A prefix mirror is not a proxy — but it IS config: export the winning candidate
+      # so the GitHub-fetching modules honor the SAME mirror this run held for the probe
+      # (openmaic's source fetch; clash's downloader).
+      [ -n "${_PREFLIGHT_MIRROR_WINNER:-}" ] && export AIBOX_GH_MIRROR="${_PREFLIGHT_MIRROR_WINNER}"
+      warn "GitHub-family domains reachable only via mirror ${AIBOX_GH_MIRROR:-${CLASH_MIRROR:-}} — GitHub-fetching modules (openmaic source fetch, clash downloads) use it" ;;
   esac
   AIBOX_PROXY_SOURCE="preflight-${route}"
 }
