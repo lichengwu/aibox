@@ -223,6 +223,32 @@ SH
   grep -q '^new-api_residue_images=' "$AIBOX_HOME/residue.conf" || { cat "$AIBOX_HOME/residue.conf"; false; }
 }
 
+@test "residue patterns from the registry cache unescape \$ anchors (rescue path)" {
+  # parse_yaml_module_stdin writes eval-ready escapes (`\$`); cfg_kv_get reads the
+  # raw text. Without undoing the escape every `$` anchor from this path is a
+  # literal dollar and silently matches nothing (live-caught: `^postgres:16$`
+  # missed the image — a rescue sweep left it behind; containers/volumes too).
+  cat > "$AIBOX_HOME/registry.cache" <<'CACHE'
+AIBOX_MODULE_regmod_residue_containers="^regmod-\$"
+AIBOX_MODULE_regmod_residue_images="^reg-\$|^postgres:16\$"
+CACHE
+  run bash -c "
+    export AIBOX_HOME='$AIBOX_HOME'
+    source '$AIBOX'
+    c=\"\$(residue_container_patterns regmod)\"; i=\"\$(residue_image_patterns regmod)\"
+    printf 'C:%s\\nI:%s\\n' \"\$c\" \"\$i\"
+    # a BARE call must survive too: the residue.conf read is a key-miss (grep exits 1)
+    # and pipefail+errexit would abort without the `|| true` hardening
+    residue_container_patterns regmod >/dev/null || echo BARE-FAILED
+    printf 'postgres:16' | grep -Eq \"\$i\" && echo ANCHOR-OK
+  "
+  [ "$status" -eq 0 ] || { echo "status=$status: $output"; false; }
+  printf '%s\n' "$output" | grep -Fqx 'C:^regmod-$' || { echo "container pattern kept escapes: $output"; false; }
+  printf '%s\n' "$output" | grep -Fqx 'I:^reg-$|^postgres:16$' || { echo "image pattern kept escapes: $output"; false; }
+  printf '%s\n' "$output" | grep -qx 'ANCHOR-OK' || { echo "anchor did not match: $output"; false; }
+  ! printf '%s\n' "$output" | grep -q 'BARE-FAILED' || { echo "bare call aborted: $output"; false; }
+}
+
 @test "rescue: declared residue is found with NO module cache (store survives uninstall)" {
   [ ! -d "$AIBOX_HOME/modules/windmill" ] || false    # fixture has no cache for it
   run bash -c "
