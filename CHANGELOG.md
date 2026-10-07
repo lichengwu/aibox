@@ -7,6 +7,18 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.33.2] — 2026-10-07
+
+### Fixed
+
+- **Image residue patterns now also match the pools' mirror-prefixed tags.** The docker.io /
+  ghcr pools pull `<mirror>/<image>` and tag the official name, leaving the mirror tag behind;
+  `^`-anchored patterns missed it (live-caught: `docker.m.daocloud.io/library/postgres:16`
+  survived a rescue sweep right after the official tag was reclaimed). Patterns are now
+  suffix/substring-shaped for the repo part (`(^|/)postgres:16$`, `gitlab/gitlab-ce`, …) —
+  verified on the live host. (module bumps: base 1.10.5, dify 1.25.2, gitlab 1.12.4,
+  jumpserver 0.1.2, new-api 1.6.4, openmaic 1.8.5, windmill 1.9.6, xiaozhi 1.7.5)
+
 ## [0.33.1] — 2026-10-07
 
 ### Fixed
@@ -2407,6 +2419,7 @@ One icon per module on the dashboard header tells the whole story — installed
 Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resolve here):
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
+[0.33.2]: https://github.com/lichengwu/aibox/compare/v0.33.1...v0.33.2
 [0.33.1]: https://github.com/lichengwu/aibox/compare/v0.33.0...v0.33.1
 [0.33.0]: https://github.com/lichengwu/aibox/compare/v0.32.1...v0.33.0
 [0.32.1]: https://github.com/lichengwu/aibox/compare/v0.32.0...v0.32.1

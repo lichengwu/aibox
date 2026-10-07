@@ -1,5 +1,5 @@
 name: base
-version: 1.10.4
+version: 1.10.5
 module_iface: 1
 description: "Shared base components (PostgreSQL 18 + Redis 7); each module gets its own DB"
 platform: ""
@@ -82,7 +82,9 @@ residue:
   volumes: "^aibox_(pg|redis)_data"
   # docker NETWORKS it creates (profile-aware name) + the images it runs
   networks: "^aibox-base(-[A-Za-z0-9]+)?$"
-  images: "^(postgres:18|redis:7)$"
+  # `(^|/)` lets the pattern also catch the docker.io pool's mirror-prefixed tag
+  # (docker.m.daocloud.io/library/<image>) — the pool leaves that duplicate behind
+  images: "(^|/)(postgres:18|redis:7)$"
 usage:
   start: "Start shared PG + Redis"
   stop: "Stop containers (data preserved)"

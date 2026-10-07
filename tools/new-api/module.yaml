@@ -1,5 +1,5 @@
 name: new-api
-version: 1.6.3
+version: 1.6.4
 module_iface: 1
 description: "New API self-hosted (docker compose): LLM API gateway (OpenAI-compatible relay, key/quota management, usage analytics)"
 platform: ""
@@ -68,7 +68,7 @@ residue:
   containers: "^aibox-new-api$"
   volumes: "^aibox_new_api_(data|logs)$"
   networks: "^new-api(-[A-Za-z0-9]+)?_default$"
-  images: "^calciumion/new-api:"
+  images: "calciumion/new-api"
 usage:
   start: "Start the container (source pool pulls; health-wait)"
   stop: "Stop the container"

@@ -1,5 +1,5 @@
 name: xiaozhi
-version: 1.7.4
+version: 1.7.5
 module_iface: 1
 description: "Xiaozhi ESP32 server (docker compose): backend for xiaozhi-esp32 AI voice devices (manager console + websocket relay + bundled MySQL)"
 platform: ""
@@ -76,7 +76,7 @@ residue:
   containers: "^aibox-xiaozhi-(server|web|mysql)$"
   volumes: "^aibox_xiaozhi_(models|uploadfile|mysql)$"
   networks: "^xiaozhi(-[A-Za-z0-9]+)?_default$"
-  images: "^ghcr[.]io/xinnan-tech/xiaozhi-esp32-server|^mysql:8[.]0$"
+  images: "xinnan-tech/xiaozhi-esp32-server|(^|/)mysql:8[.]0$"
 usage:
   start: "Staged start: MySQL + console → secret → ws server (health-wait)"
   stop: "Stop containers"

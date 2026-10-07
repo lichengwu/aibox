@@ -1,5 +1,5 @@
 name: jumpserver
-version: 0.1.1
+version: 0.1.2
 # Contract surface this module targets — see docs/module-spec.md §Contract capability version
 module_iface: 1
 description: "JumpServer open-source bastion host (PAM): web console + SSH/web terminal + RDP + audit (docker compose, shared base PG+Redis)"
@@ -89,7 +89,7 @@ residue:
   containers: "^aibox-jumpserver-(core|celery|web|koko|lion|chen)$"
   volumes: "^aibox_jumpserver_(core|koko|lion|chen|nginx_logs)$"
   networks: "^jumpserver(-[A-Za-z0-9]+)?_default$"
-  images: "^jumpserver/"
+  images: "jumpserver/"
 usage:
   start: "Start the 6-service stack (source pool pulls; first boot runs migrations, ≈ 11 min)"
   stop: "Stop the containers"

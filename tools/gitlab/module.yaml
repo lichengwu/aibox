@@ -1,5 +1,5 @@
 name: gitlab
-version: 1.12.3
+version: 1.12.4
 module_iface: 1
 description: "GitLab CE self-hosted (omnibus docker): web UI + git over SSH, embedded PG/Redis"
 platform: ""
@@ -67,7 +67,7 @@ residue:
   containers: "^aibox-gitlab$"
   volumes: "^gitlab_gitlab_(config|logs|data)$"
   networks: "^gitlab(-[A-Za-z0-9]+)?_default$"
-  images: "^gitlab/gitlab-ce:"
+  images: "gitlab/gitlab-ce"
 usage:
   start: "Start the container (source pool pulls; 3-5 min first boot)"
   stop: "Stop the container"
