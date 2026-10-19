@@ -297,3 +297,56 @@ exit 0'
   [[ "$output" == *"module"*"·"*"modules/clash/"* ]] || false
   rm -rf "$sb"
 }
+
+
+# ---- update-hook version gate (live-caught on the operator's host:
+# "Upgrading mihomo v1.19.32 -> v1.19.32" — the SAME version re-downloaded on
+# every `aibox update clash`: installed_kernel_version returned a v-PREFIXED
+# tag while latest_mihomo_tag returns the bare form, so the "v${old}" =
+# "v${latest}" guard compared vv1.19.32 against v1.19.32 and never matched) ----
+
+_place_kernel() { # $1=version the fake kernel reports (bare, e.g. 9.9.9)
+  printf '#!/bin/sh\necho v%s\n' "$1" >"$KERNEL_DEST"
+  chmod +x "$KERNEL_DEST"
+}
+
+_tag_everywhere() { # $1=tag json body file — serve it on every API route candidate
+  export FAKE_API_BODYFILE="$1" FAKE_GH_PROXY_BODYFILE="$1" FAKE_GHPROXY_NET_BODYFILE="$1"
+}
+
+@test "installed_kernel_version: bare form (no v prefix) — the update-hook comparison contract" {
+  _place_kernel "9.9.9"
+  [ "$(installed_kernel_version)" = "9.9.9" ] || { echo "got: [$(installed_kernel_version)]"; false; }
+}
+
+@test "update hook: version unchanged → 'already latest', ZERO release-asset traffic" {
+  _place_kernel "9.9.9"
+  printf '{"tag_name":"v9.9.9"}' >"$BODIES/same.json"
+  _tag_everywhere "$BODIES/same.json"
+  : >"$FAKE_CURL_LOG"
+  run bash "$REPO_ROOT/tools/clash/update.sh"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"already latest (v9.9.9)"* ]] || false
+  # THE regression: no probe, no download, no resume of the release asset
+  [ "$(_log "releases/download")" -eq 0 ] || { echo "release asset was touched:"; cat "$FAKE_CURL_LOG"; false; }
+  # and the binary was not replaced
+  [ "$("$KERNEL_DEST" -v)" = "v9.9.9" ]
+}
+
+@test "update hook: new version available → still upgrades (the gate must not over-skip)" {
+  _place_kernel "9.9.8"
+  printf '{"tag_name":"v9.9.9"}' >"$BODIES/newer.json"
+  # API tag resolution: every candidate that can answer the release query
+  export FAKE_API_BODYFILE="$BODIES/newer.json" FAKE_GHPROXY_NET_BODYFILE="$BODIES/newer.json"
+  # the actual asset (a runnable fake mihomo reporting 9.9.9) served by gh-proxy,
+  # whose probe completes the whole file (the fast route) — direct/ghproxy keep
+  # their default bodies: unreachable for a valid mihomo, so the ranking falls
+  # through to gh-proxy deterministically.
+  export FAKE_GH_PROXY_BODYFILE="$BODIES/kernel.gz" FAKE_GH_PROXY_PROBE_PARTIAL_BYTES=0
+  : >"$FAKE_CURL_LOG"
+  run bash "$REPO_ROOT/tools/clash/update.sh"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [[ "$output" == *"Upgrading mihomo 9.9.8 -> v9.9.9"* ]] || false
+  [ "$(_log "releases/download")" -ge 1 ] || { echo "no release-asset traffic at all:"; cat "$FAKE_CURL_LOG"; false; }
+  [ "$("$KERNEL_DEST" -v)" = "v9.9.9" ]
+}

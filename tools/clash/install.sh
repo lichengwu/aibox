@@ -8,7 +8,9 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log "Installing the clash module (mihomo kernel)..."
 if [ -x "${KERNEL_DEST}" ]; then
-  log "mihomo already present: ${KERNEL_DEST} ($(installed_kernel_version || echo unknown))"
+  # installed_kernel_version is BARE (comparison contract) — render the tag form here
+  _kv="$(installed_kernel_version || true)"
+  if [ -n "${_kv}" ]; then log "mihomo already present: ${KERNEL_DEST} (v${_kv})"; else log "mihomo already present: ${KERNEL_DEST} (unknown)"; fi
 else
   download_mihomo
 fi

@@ -116,7 +116,12 @@ installed_kernel_version() {
     printf ''
     return 1
   }
-  "${KERNEL_DEST}" -v 2>/dev/null | grep -oE 'v[0-9][0-9.]*' | head -1 || return 1
+  # BARE form (no 'v' prefix) — the canonical shape of latest_mihomo_tag and
+  # the stored KERNEL_TAG. The update hook compares them verbatim; a v-prefixed
+  # return made "v${old}" = "vv1.19.32" against "v${latest}" and EVERY update
+  # re-downloaded the same kernel (live-caught: "Upgrading mihomo v1.19.32 ->
+  # v1.19.32"). Display sites add the 'v' themselves.
+  "${KERNEL_DEST}" -v 2>/dev/null | grep -oE 'v[0-9][0-9.]*' | head -1 | sed 's/^v//' || return 1
 }
 
 # Rate-probe ONE candidate (background worker): bounded partial download of the

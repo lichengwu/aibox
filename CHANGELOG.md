@@ -7,6 +7,35 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.36.0] — 2026-10-19
+
+### Added
+
+- **openmaic: a pre-build config gate for upstream v1.2.1.** OpenMAIC v1.2.1 removed the
+  legacy director-graph classroom chat: a production build now accepts
+  `NEXT_PUBLIC_PI_CHAT_ENABLED` only as unset, empty, `true` or `1` (exact match) and
+  FAILS on anything else — a stale `false` from the once-documented v1.2.0 legacy-chat
+  rollback would burn the whole multi-minute build (backup + fetch + build) before
+  upstream's own guidance surfaced. `openmaic install` / `openmaic upgrade` now block
+  such a value BEFORE the work starts, naming the fix (remove the line from `.env`, or
+  set it to `true`/`1`); pre-v1.2.1 targets keep the documented rollback semantics and
+  are exempt. The rest of the v1.2.1 surface was verified compatible: the compose
+  service/network layout is unchanged, and the access-cookie `COOKIE_SECURE` fix is now
+  upstream-native (aibox's route patch self-disables there; the compose-side
+  `COOKIE_SECURE=0` injection still carries the plain-HTTP opt-out). (openmaic 1.11.0)
+
+### Fixed
+
+- **clash: `aibox update clash` re-downloaded the SAME mihomo kernel every time.**
+  Live-caught on the operator's host: `Upgrading mihomo v1.19.32 -> v1.19.32` on every
+  update — `installed_kernel_version` reported a `v`-prefixed tag while the update
+  hook's same-version guard compared against the bare form (`"v${old}"` became
+  `vv1.19.32`), so "already latest" could never match and each update re-fetched the
+  ~20MB asset through the probe/download machinery. Version tokens are now canonical
+  (bare) across the module: an unchanged version means ZERO release-asset traffic,
+  only the tag query; a genuinely new version still upgrades as before.
+  (clash 1.9.3)
+
 ## [0.35.0] — 2026-10-07
 
 ### Added
@@ -2461,6 +2490,7 @@ Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resol
 
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
 [0.35.0]: https://github.com/lichengwu/aibox/compare/v0.34.0...v0.35.0
+[0.36.0]: https://github.com/lichengwu/aibox/compare/v0.35.0...v0.36.0
 [0.34.0]: https://github.com/lichengwu/aibox/compare/v0.33.3...v0.34.0
 [0.33.3]: https://github.com/lichengwu/aibox/compare/v0.33.2...v0.33.3
 [0.33.2]: https://github.com/lichengwu/aibox/compare/v0.33.1...v0.33.2

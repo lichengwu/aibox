@@ -91,7 +91,9 @@ logs)
 doctor)
   echo "== mihomo =="
   if [ -x "${KERNEL_DEST}" ]; then
-    log "binary: ${KERNEL_DEST} ($(installed_kernel_version || echo unknown))"
+    # installed_kernel_version is BARE (comparison contract) — render the tag form here
+    _kv="$(installed_kernel_version || true)"
+    if [ -n "${_kv}" ]; then log "binary: ${KERNEL_DEST} (v${_kv})"; else log "binary: ${KERNEL_DEST} (unknown)"; fi
   else
     warn "not installed (aibox install clash)"
   fi

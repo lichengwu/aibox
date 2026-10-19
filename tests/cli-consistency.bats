@@ -667,3 +667,85 @@ SH
   [ "$status" -eq 0 ]
 }
 
+
+# ---- openmaic v1.2.1 compat gate (upstream removed the legacy director-graph
+# classroom chat: a production build accepts NEXT_PUBLIC_PI_CHAT_ENABLED only
+# as unset, '', 'true' or '1' (exact match) and FAILS otherwise — a stale
+# 'false' from the documented v1.2.0 legacy-chat rollback would waste the whole
+# multi-minute build; the CLI must block BEFORE it, with the fix) ----
+
+_omc_gate_frag() { # extract version_at_least + compat_pi_chat_gate into $1
+  {
+    sed -n '/^version_at_least() {/,/^}/p' "$REPO_ROOT/tools/openmaic/cli/openmaic"
+    sed -n '/^compat_pi_chat_gate() {/,/^}/p' "$REPO_ROOT/tools/openmaic/cli/openmaic"
+  } >"$1"
+  [ -s "$1" ] || false
+}
+
+@test "openmaic: pi-chat compat gate — build-blocking values are caught before the build" {
+  local frag dir s
+  frag="$(mktemp)"; s="$(mktemp)"; dir="$BATS_TMPDIR/omc-gate"; rm -rf "$dir"; mkdir -p "$dir"
+  _omc_gate_frag "$frag" || { echo "gate functions not found in the CLI"; false; }
+  cat >"$s" <<'SH'
+err() { echo "ERR: $*"; }
+hint() { echo "HINT: $*"; }
+dim() { :; }
+. "$FRAG"
+APP_DIR="$FR_APP"
+compat_pi_chat_gate "$FR_TARGET"
+SH
+  printf 'NEXT_PUBLIC_PI_CHAT_ENABLED=false\n' >"$dir/.env"
+  # (a) bad value + v1.2.1+ target → blocked, with the migration fix named
+  run bash -c "env FRAG='$frag' FR_APP='$dir' FR_TARGET=v1.2.1 bash '$s' 2>&1"
+  [ "$status" -ne 0 ] || { echo "gate did not block a v1.2.1 build-breaking value"; false; }
+  [[ "$output" == *"NEXT_PUBLIC_PI_CHAT_ENABLED=false"* ]] || false
+  [[ "$output" == *"classroom"* ]] || false
+  [[ "$output" == *".env"* ]] || false
+  # (b) the same value on a pre-1.2.1 target is the DOCUMENTED rollback → not blocked
+  run bash -c "env FRAG='$frag' FR_APP='$dir' FR_TARGET=v1.1.9 bash '$s' 2>&1"
+  [ "$status" -eq 0 ] || { echo "gate blocked a legitimate pre-1.2.1 rollback"; false; }
+  # (c) accepted values on v1.2.1+ → not blocked
+  for v in true 1; do
+    printf 'NEXT_PUBLIC_PI_CHAT_ENABLED=%s\n' "$v" >"$dir/.env"
+    run bash -c "env FRAG='$frag' FR_APP='$dir' FR_TARGET=v1.2.1 bash '$s' 2>&1"
+    [ "$status" -eq 0 ] || { echo "blocked accepted value: $v"; false; }
+  done
+  # (d) unset / empty → not blocked
+  printf 'OPENAI_API_KEY=\n' >"$dir/.env"
+  run bash -c "env FRAG='$frag' FR_APP='$dir' FR_TARGET=v1.2.2 bash '$s' 2>&1"
+  [ "$status" -eq 0 ] || false
+  # (e) an exported env value is the one compose interpolates → it is checked too
+  printf 'NEXT_PUBLIC_PI_CHAT_ENABLED=true\n' >"$dir/.env"
+  run bash -c "env FRAG='$frag' FR_APP='$dir' FR_TARGET=v1.2.1 NEXT_PUBLIC_PI_CHAT_ENABLED=false bash '$s' 2>&1"
+  [ "$status" -ne 0 ] || { echo "exported env value escaped the gate"; false; }
+  # (f) non-semver target → conservative no-op (no false blocks)
+  printf 'NEXT_PUBLIC_PI_CHAT_ENABLED=false\n' >"$dir/.env"
+  run bash -c "env FRAG='$frag' FR_APP='$dir' FR_TARGET=main-20261001 bash '$s' 2>&1"
+  [ "$status" -eq 0 ] || false
+  rm -f "$frag" "$s"; rm -rf "$dir"
+}
+
+@test "openmaic: version_at_least — the gate's semver comparison" {
+  local frag s
+  frag="$(mktemp)"; s="$(mktemp)"
+  _omc_gate_frag "$frag" || false
+  cat >"$s" <<'SH'
+. "$FRAG"
+for pair in "v1.2.1 v1.2.1 t" "v1.2.2 v1.2.1 t" "v1.2.10 v1.2.9 t" "v1.1.9 v1.2.1 f" "v1.2.1 v1.2.10 f" "v1.2 v1.2 t" "v1.2 v1.2.1 f" "unknown v1.2.1 f"; do
+  set -- $pair
+  if version_at_least "$1" "$2"; then got=t; else got=f; fi
+  [ "$got" = "$3" ] || echo "version_at_least $1 $2: expected $3 got $got"
+done
+SH
+  run bash -c "env FRAG='$frag' bash '$s' 2>&1"
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ -z "$output" ] || { echo "$output"; false; }
+  rm -f "$frag" "$s"
+}
+
+@test "openmaic: install AND upgrade run the pi-chat gate before building" {
+  # the gate must be wired into both build paths — definition + the two call sites
+  local n
+  n="$(grep -c 'compat_pi_chat_gate' "$REPO_ROOT/tools/openmaic/cli/openmaic")"
+  [ "$n" -ge 3 ] || { echo "only ${n} occurrence(s) — expected definition + install + upgrade calls"; false; }
+}

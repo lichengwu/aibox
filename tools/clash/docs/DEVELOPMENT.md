@@ -31,7 +31,10 @@
 ## Upgrade Procedure
 
 1. Check upstream latest version: mihomo GitHub releases latest (`latest_mihomo_tag` — raced through the download source pool)
-2. `aibox update clash` (upgrades the mihomo binary + refreshes the subscription)
+2. `aibox update clash` (upgrades the mihomo binary + refreshes the subscription; same version → no re-download:
+   `installed_kernel_version` returns the BARE tag so the update-hook comparison with
+   `latest_mihomo_tag` actually matches — a v-prefixed return made every update re-fetch
+   the same kernel)
 3. Verify: `aibox clash status` + `aibox clash test`
 
 ## Download source pool (design)

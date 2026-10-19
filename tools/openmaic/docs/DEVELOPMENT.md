@@ -82,3 +82,18 @@ or manually delete `$APP_DIR/docker-compose.shared.yml`.
 > relies entirely on the CLI-generated override layered on top (`docker compose -f docker-compose.yml -f docker-compose.shared.yml`);
 > downgrading is as simple as deleting the override, clean and reversible. The override file `tools/openmaic/docker-compose.shared.yml` is
 > an in-repo reference copy whose content matches the CLI `_shared_override_write` heredoc (change one and sync the other).
+
+## Upstream version compatibility (v1.2.1, checked 2026-10)
+
+- **compose**: service/network layout unchanged vs v1.2.0 (`openmaic` / `postgres` / `render-service`,
+  `default` + `render` networks); the publish-port interpolation is upstream-native, so
+  `patch_publish_ports` is an idempotent no-op on current tags (kept for older deploys).
+- **access cookie**: upstream now wires the access-code cookie through `cookiesAreSecure()`
+  (own `COOKIE_SECURE=0` opt-out) — `patch_http_auth_cookie`'s route patch self-disables on such
+  trees (it greps for `COOKIE_SECURE` first); the compose-side `COOKIE_SECURE=${COOKIE_SECURE:-0}`
+  injection is still applied and is what actually carries the opt-out to the container.
+- **v1.2.1 build gate**: upstream removed the legacy director-graph classroom chat; a production
+  build accepts `NEXT_PUBLIC_PI_CHAT_ENABLED` only as unset/''/`true`/`1` and FAILS otherwise.
+  `compat_pi_chat_gate` (run before the backup in `upgrade` and after config bootstrap in
+  `install`) blocks a stale `false` (the documented v1.2.0 legacy-chat rollback) BEFORE the
+  multi-minute build, naming the fix; pre-1.2.1 targets are exempt (`version_at_least`).
