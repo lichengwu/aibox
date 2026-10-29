@@ -144,6 +144,7 @@ Fast suite (`bats tests/*.bats`, no docker/network, ~seconds) — **38 files**:
 - `new-api.bats`
 - `node-pool.bats`
 - `pi-web-npm.bats`
+- `pi-web-svc.bats`
 - `preflight.bats`
 - `profile.bats`
 - `module-lib-split.bats`

@@ -6,13 +6,57 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 . "$DIR/lib.sh"
 
+# ---------- launchd error surfacing (measured on macOS 27.0.1) ----------
+# launchctl's CLI error text is not to be trusted. A bootstrap of an
+# already-loaded label is internally errno 37 ("Operation already in
+# progress"), yet the CLI prints "Bootstrap failed: 5: Input/output error"
+# and hints "re-run the command as root" — both misleading. The same EIO-5
+# text also shows when the gui domain is missing (an SSH session while the
+# user has no console login). The old stop/restart swallowed bootout failures
+# (`2>/dev/null || true`), so the follow-up bootstrap died with that raw text
+# and the hook had nothing actionable to say (live-caught 2026-10-29:
+# `aibox pi-web restart` → "Bootstrap failed: 5: Input/output error",
+# service untouched and still running). Keep launchctl's stderr VISIBLE and
+# translate EIO into its two real meanings.
+_launchd_bootout() { # → 0 label unloaded or was never loaded; 1 failed (warn'd)
+  local rc msg
+  rc=0
+  msg="$(launchctl bootout "gui/${UID_}/${LABEL}" 2>&1)" || rc=$?
+  if [ "${rc}" -eq 0 ]; then
+    return 0
+  fi
+  # "not loaded" is a legitimate state for stop/restart (fresh login domain);
+  # the MESSAGE is the reliable signal, not the errno (see above).
+  case "${msg}" in
+  *"No such process"* | *"Could not find service"*) return 0 ;;
+  esac
+  warn "launchctl bootout failed (rc=${rc}): ${msg}"
+  return 1
+}
+
+_launchd_hint() { # $1 = the aibox command to re-run from a real session
+  printf '%s\n' \
+    "on macOS this launchctl error text is misleading: EIO (5) means either" \
+    "  - the ${LABEL} label is still registered in launchd (the bootout above did not take" \
+    "    effect; the old instance keeps running — KeepAlive never dropped it), or" \
+    "  - the gui/${UID_} domain is missing: an SSH session while this user has no console" \
+    "    login — run '${1}' from the logged-in user's Terminal instead." \
+    "check the real state: aibox pi-web status"
+}
+
 action="${1:-status}"
 [ $# -gt 0 ] && shift
 case "$action" in
 start)
   if [ "$OS_KIND" = "Darwin" ]; then
     [ ! -f "$PLIST" ] && die "$PLIST does not exist; run: aibox install pi-web"
-    launchctl bootstrap "gui/${UID_}" "$PLIST" 2>/dev/null || launchctl kickstart -k "gui/${UID_}/${LABEL}"
+    # bootstrap when not loaded; kickstart -k when loaded (start semantics:
+    # make it run — unlike restart, no definition re-read). BOTH failing is
+    # the EIO family — translate instead of dying with launchctl's raw text.
+    launchctl bootstrap "gui/${UID_}" "$PLIST" 2>/dev/null ||
+      launchctl kickstart -k "gui/${UID_}/${LABEL}" ||
+      die "start failed (bootstrap and kickstart both failed)
+$(_launchd_hint 'aibox pi-web start')"
   else
     [ ! -f "$UNIT_FILE" ] && die "${UNIT_FILE} does not exist; run: aibox install pi-web"
     loginctl enable-linger "${UID_}" 2>/dev/null || true
@@ -23,11 +67,20 @@ start)
   ;;
 stop)
   if [ "$OS_KIND" = "Darwin" ]; then
-    launchctl bootout "gui/${UID_}/${LABEL}" 2>/dev/null || true
+    # A failed bootout is NOT "stopped": the label stays registered and the
+    # process keeps running (KeepAlive). The old `2>/dev/null || true` +
+    # unconditional `log "stopped"` reported success over a failure — the
+    # same family as restart's swallowed EIO (see _launchd_bootout).
+    if _launchd_bootout; then
+      log "stopped"
+    else
+      die "stop failed — the ${LABEL} service may still be running
+$(_launchd_hint 'aibox pi-web stop')"
+    fi
   else
     systemctl --user stop "$LABEL" 2>/dev/null || true
+    log "stopped"
   fi
-  log "stopped"
   ;;
 restart)
   # APPLIES CONFIG CHANGES (as the usage line promises): bootout + bootstrap
@@ -36,9 +89,25 @@ restart)
   # `config set` (which rewrites the file) silently did not apply.
   if [ "$OS_KIND" = "Darwin" ]; then
     [ -f "$PLIST" ] || die "$PLIST does not exist; run: aibox install pi-web"
-    launchctl bootout "gui/${UID_}/${LABEL}" 2>/dev/null || true
-    launchctl bootstrap "gui/${UID_}" "$PLIST"
-    ok "restarted (service definition re-read: ${PLIST})"
+    # bootout first; a real failure leaves the label loaded and the bootstrap
+    # below then fails with launchctl's misleading EIO (see _launchd_bootout).
+    _launchd_bootout || warn "the old definition stays loaded — trying bootstrap anyway"
+    lc_rc=0
+    lc_msg="$(launchctl bootstrap "gui/${UID_}" "$PLIST" 2>&1)" || lc_rc=$?
+    if [ "${lc_rc}" -eq 5 ]; then
+      # bootout's teardown is asynchronous: a bootstrap racing the job removal
+      # also gets EIO-5. One bounded retry absorbs the race; a stuck label
+      # fails again and falls through to the translated error below.
+      sleep 1
+      lc_rc=0
+      lc_msg="$(launchctl bootstrap "gui/${UID_}" "$PLIST" 2>&1)" || lc_rc=$?
+    fi
+    if [ "${lc_rc}" -eq 0 ]; then
+      ok "restarted (service definition re-read: ${PLIST})"
+    else
+      die "restart failed (launchctl bootstrap rc=${lc_rc}): ${lc_msg}
+$(_launchd_hint 'aibox pi-web restart')"
+    fi
   else
     [ -f "$UNIT_FILE" ] || die "${UNIT_FILE} does not exist; run: aibox install pi-web"
     systemctl --user daemon-reload 2>/dev/null || true

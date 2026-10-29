@@ -7,6 +7,27 @@ in `bin/aibox`). Each module versions independently (`version:` in its `module.y
 
 GitHub release notes are auto-generated from the previous tag; this file is the curated summary.
 
+## [0.36.1] — 2026-10-29
+
+### Fixed
+
+- **pi-web: service actions no longer swallow launchd failures — the misleading
+  `Bootstrap failed: 5: Input/output error` gets translated.** The restart flow did
+  `launchctl bootout … 2>/dev/null || true` before the bootstrap: a bootout that failed
+  (the label stayed registered) was invisible, and the follow-up bootstrap then died
+  with launchctl's notoriously misleading EIO-5 text. Measured on macOS 27.0.1,
+  live-caught on the deploy host (`aibox pi-web restart` printed exactly that error
+  while the service kept running untouched — no hint that nothing had actually been
+  restarted): internally launchd rejects the bootstrap with errno 37 "Operation already
+  in progress" (the label is already bootstrapped in `gui/$UID`), but the CLI prints
+  "5: Input/output error" plus a wrong "re-run as root" hint; the same EIO-5 also shows
+  when the `gui/$UID` domain does not exist (an SSH session while the user has no console
+  login). Now a failed bootout warns with launchctl's raw stderr, a bootstrap EIO-5
+  exits 1 with the two real causes spelled out plus an `aibox pi-web status` pointer,
+  `stop` refuses to report "stopped" over a failed bootout (it used to claim success
+  while the process kept running), and the bootstrap gets one bounded retry to absorb
+  the asynchronous bootout-teardown race. (pi-web 1.9.4)
+
 ## [0.36.0] — 2026-10-19
 
 ### Added
@@ -2491,6 +2512,7 @@ Compare links (Keep a Changelog convention — the `[x.y.z]` headers above resol
 [0.28.5]: https://github.com/lichengwu/aibox/compare/v0.28.4...v0.28.5
 [0.35.0]: https://github.com/lichengwu/aibox/compare/v0.34.0...v0.35.0
 [0.36.0]: https://github.com/lichengwu/aibox/compare/v0.35.0...v0.36.0
+[0.36.1]: https://github.com/lichengwu/aibox/compare/v0.36.0...v0.36.1
 [0.34.0]: https://github.com/lichengwu/aibox/compare/v0.33.3...v0.34.0
 [0.33.3]: https://github.com/lichengwu/aibox/compare/v0.33.2...v0.33.3
 [0.33.2]: https://github.com/lichengwu/aibox/compare/v0.33.1...v0.33.2

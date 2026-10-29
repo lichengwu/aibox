@@ -455,6 +455,36 @@ against a string that ENDS with the literal before suspecting the shell:
 because pitfall #10 swallows failing mid-test `[[ ]]` — the `|| false`
 discipline is what surfaced it.
 
+### #14 launchctl EIO-5 lies: "Bootstrap failed: 5: Input/output error" means "label already loaded" (or "no gui domain") — and a swallowed bootout is what sets it up
+
+**Symptom**: `aibox pi-web restart` (any launchd module hook) prints
+`Bootstrap failed: 5: Input/output error` + `Try re-running the command as root
+for richer errors.` — while the service itself is (and stays) running.
+
+**Root cause** (measured 2026-10-29, macOS 27.0.1, live-caught on the deploy
+host): launchd internally rejects the bootstrap with errno 37 "Operation
+already in progress" — the label is already bootstrapped in `gui/$UID` — but
+launchctl's CLI prints it as "5: Input/output error" with a wrong "re-run as
+root" hint. The same EIO-5 shows when the `gui/$UID` domain does not exist at
+all (an SSH session while the user has no console login). The setup for the
+error: the restart flow's `launchctl bootout … 2>/dev/null || true` — a failed
+bootout (label stays loaded) was silent, so the bootstrap ran into the loaded
+label. Bonus trap, measured with a self-bootout test job: launchd does NOT
+refuse a bootout requested from the job's own descendant process — it executes
+it and kills the requester, so a restart driven from inside the service's own
+web terminal simply dies mid-command.
+
+**Fix**: never swallow bootout stderr. Distinguish "not loaded" (message
+"Boot-out failed: 3: No such process" / "Could not find service" — the MESSAGE,
+not the errno, is the reliable signal) from real failure; warn on the latter;
+translate EIO-5 into its two real meanings for the human. Implementation:
+`tools/pi-web/svc.sh` (`_launchd_bootout` / `_launchd_hint`).
+
+**Detection**: `launchctl print gui/$(id -u)/<label>` shows the live truth
+(state/pid/runs); the unified log carries launchd's honest errno:
+`log show --last 1h --predicate 'process == "launchctl" OR (process == "launchd" AND eventMessage CONTAINS "bootstrap")'`
+— look for "failed (37: Operation already in progress)".
+
 ## License
 
 MIT.

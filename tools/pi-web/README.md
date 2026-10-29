@@ -27,6 +27,15 @@ aibox pi-web logs
 aibox pi-web diagnose
 ```
 
+`restart` re-reads the service definition — that is how `config set` changes apply.
+On macOS, launchctl's `Bootstrap failed: 5: Input/output error` is misleading: it
+means the label is **already loaded** (the preceding bootout did not take effect)
+or the `gui/$UID` domain is missing (an SSH session while this user has no console
+login). The hook surfaces launchctl's raw stderr and translates that EIO into the
+two real causes. If you hit it from an SSH session, re-run from the logged-in
+user's Terminal (or log in at the console); the running instance is normally
+unaffected either way — `aibox pi-web status` shows the truth.
+
 ## Environment variables
 
 > **`PI_WEB_PORT`'s value below is the DEFAULT profile's port** — a named profile
